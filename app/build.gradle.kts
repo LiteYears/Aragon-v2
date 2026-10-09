@@ -1,4 +1,5 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import java.util.Properties
 
 plugins {
   alias(libs.plugins.android.application)
@@ -20,6 +21,16 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    val envProps = Properties().apply {
+      val example = rootProject.file(".env.example")
+      if (example.exists()) example.inputStream().use { load(it) }
+      val env = rootProject.file(".env")
+      if (env.exists()) env.inputStream().use { load(it) }
+    }
+    val rawNvidiaKey = envProps.getProperty("NVIDIA_API_KEY")?.trim() ?: ""
+    val nvidiaKey = rawNvidiaKey.removeSurrounding("\"").ifEmpty { "MY_NVIDIA_API_KEY" }
+    buildConfigField("String", "NVIDIA_API_KEY", "\"$nvidiaKey\"")
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
@@ -76,7 +87,9 @@ secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
+  ignoreList.add("NVIDIA_API_KEY")
 }
+
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 

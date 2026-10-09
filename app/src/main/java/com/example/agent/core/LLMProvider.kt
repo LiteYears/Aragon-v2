@@ -377,11 +377,19 @@ class AutonomousSandboxProvider : LLMProvider {
     val targetFile = extractTargetFilename(taskIntent, lastUserMsg, lastOutput)
     val lastToolWroteTarget = lastToolMsg?.toolName == "write_file" && (lastOutput.contains(targetFile) || lastOutput.contains("Successfully wrote"))
 
+    val targetInspectSucceeded = toolMessages.any {
+      it.toolName == "inspect_artifact" &&
+      it.content.contains(targetFile) &&
+      !it.content.contains("STATUS: FAILED") &&
+      !it.content.contains("does not exist")
+    }
+
     // Self-healing: If inspect_artifact failed, or verification rejected completion, or deliverable does not exist
-    if ((lastToolFailed && lastToolMsg?.toolName == "inspect_artifact") ||
-        (isVerificationRejection && !lastToolWroteTarget) ||
+    if (!targetInspectSucceeded && (
+        (lastToolFailed && lastToolMsg?.toolName == "inspect_artifact") ||
+        (isVerificationRejection && !lastToolWroteTarget && lastToolMsg?.toolName != "inspect_artifact") ||
         (lastOutput.contains("Artifact does not exist at path: $targetFile") && !lastToolWroteTarget)
-    ) {
+    )) {
       val recoveryContent = if (targetFile.endsWith(".docx", ignoreCase = true) || targetFile.endsWith(".doc", ignoreCase = true)) {
         DEFAULT_SYS_INFO_DOCX_MARKDOWN
       } else {
@@ -431,7 +439,7 @@ class AutonomousSandboxProvider : LLMProvider {
       }
 
       // 1. If sys_info.docx exists and was successfully inspected, complete!
-      if (docxInspectSucceeded && !lastToolFailed && !isVerificationRejection) {
+      if (docxInspectSucceeded && !lastToolFailed) {
         return@withContext LLMDecision.Complete(
           conclusion = "Successfully transformed sys_info.txt into a structured, formatted Word document ('sys_info.docx') using Python 3 and python-docx.",
           thought = "The Word document has been generated and verified in the workspace."
@@ -615,7 +623,7 @@ class AutonomousSandboxProvider : LLMProvider {
 
     // Workflow 3: Analyze data or create python script (data.csv -> report.md)
     if (intentLower.contains("python") || intentLower.contains("data.csv") || intentLower.contains("report")) {
-      if (executedTools.contains("inspect_artifact") && !lastToolFailed && !isVerificationRejection) {
+      if ((targetInspectSucceeded || executedTools.contains("inspect_artifact")) && !lastToolFailed) {
         return@withContext LLMDecision.Complete(
           conclusion = "Successfully analyzed data.csv, generated analyze.py, executed the analysis pipeline, and verified that 'report.md' was created with the calculated financial summary.",
           thought = "All planned actions and artifact verifications have completed successfully."
@@ -850,13 +858,6 @@ class AutonomousSandboxProvider : LLMProvider {
     }
 
     // Default dynamic workflow:
-    val targetInspectSucceeded = toolMessages.any {
-      it.toolName == "inspect_artifact" &&
-      it.content.contains(targetFile) &&
-      !it.content.contains("STATUS: FAILED") &&
-      !it.content.contains("does not exist")
-    }
-
     if (targetInspectSucceeded && !lastToolFailed && !isVerificationRejection) {
       return@withContext LLMDecision.Complete(
         conclusion = "Objective completed: Deliverables were created, inspected, and authoritatively verified on disk.",
@@ -919,13 +920,29 @@ class AutonomousSandboxProvider : LLMProvider {
       return match.groupValues[1].trim('\'', '"')
     }
 
-    // 3. Extract from goal text
-    val words = goal.split("\\s+".toRegex())
+    // 3. Look for explicit target filename verbs (produce, generate, output, into, to, save, create)
+    val explicitRegex = Regex("""(?i)(?:produce|generate|output|into|to|save|create)\s+['"`]?([a-zA-Z0-9_\-./]+\.(?:docx|doc|txt|md|json|py|sh|html))['"`]?""")
+    val explicitMatch = explicitRegex.find(goal)
+    if (explicitMatch != null) {
+      return explicitMatch.groupValues[1].trim('\'', '"', '`')
+    }
+
+    // 4. Extract from goal text (preferring deliverable extensions over input data like csv)
+    val words = goal.split("\\s+".toRegex()).reversed()
     for (word in words) {
       val clean = word.trim('.', ',', '"', '\'', '`', '(', ')')
       if (clean.contains('.') && clean.length > 3) {
         val ext = clean.substringAfterLast('.', "")
-        if (ext in listOf("docx", "doc", "txt", "md", "json", "py", "sh", "csv", "html")) {
+        if (ext in listOf("docx", "doc", "txt", "md", "json", "py", "sh", "html")) {
+          return clean
+        }
+      }
+    }
+    for (word in words) {
+      val clean = word.trim('.', ',', '"', '\'', '`', '(', ')')
+      if (clean.contains('.') && clean.length > 3) {
+        val ext = clean.substringAfterLast('.', "")
+        if (ext in listOf("csv")) {
           return clean
         }
       }
