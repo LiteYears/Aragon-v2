@@ -60,9 +60,9 @@ fun ArtifactItem(
   Surface(
     modifier = modifier
       .fillMaxWidth()
-      .padding(horizontal = 16.dp, vertical = 4.dp)
-      .clip(RoundedCornerShape(8.dp))
-      .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+      .padding(horizontal = 16.dp, vertical = 5.dp)
+      .clip(RoundedCornerShape(10.dp))
+      .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
       .clickable { onOpenPreview(artifact) }
       .testTag("artifact_card_${artifact.name}"),
     color = MaterialTheme.colorScheme.surface
@@ -70,13 +70,13 @@ fun ArtifactItem(
     Row(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(12.dp),
+        .padding(14.dp),
       verticalAlignment = Alignment.CenterVertically
     ) {
       Surface(
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.secondaryContainer,
-        modifier = Modifier.size(40.dp)
+        modifier = Modifier.size(42.dp)
       ) {
         Box(contentAlignment = Alignment.Center) {
           Icon(

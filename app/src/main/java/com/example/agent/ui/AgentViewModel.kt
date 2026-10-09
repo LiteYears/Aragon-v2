@@ -102,9 +102,13 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     return try {
       val field = com.example.BuildConfig::class.java.getField("NVIDIA_API_KEY")
       val rawKey = field.get(null) as? String ?: ""
-      if (rawKey == "MY_NVIDIA_API_KEY") "" else rawKey.trim()
+      if (rawKey.isNotBlank() && rawKey != "MY_NVIDIA_API_KEY" && rawKey != "\"MY_NVIDIA_API_KEY\"") {
+        rawKey.trim()
+      } else {
+        "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"
+      }
     } catch (_: Exception) {
-      ""
+      "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"
     }
   }
 

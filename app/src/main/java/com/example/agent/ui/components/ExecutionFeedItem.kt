@@ -67,7 +67,7 @@ fun ExecutionFeedItem(
     modifier = modifier
       .fillMaxWidth()
       .testTag("step_item_${step.stepNumber}")
-      .padding(horizontal = 16.dp, vertical = 4.dp)
+      .padding(horizontal = 14.dp, vertical = 5.dp)
   ) {
     // Left timeline column with node icon and connecting line
     Column(
@@ -79,41 +79,41 @@ fun ExecutionFeedItem(
         Box(
           modifier = Modifier
             .width(2.dp)
-            .height(36.dp)
-            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            .height(42.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
         )
       }
     }
 
-    Spacer(modifier = Modifier.width(12.dp))
+    Spacer(modifier = Modifier.width(10.dp))
 
     // Right card content
     Surface(
       modifier = Modifier
         .weight(1f)
-        .clip(RoundedCornerShape(8.dp))
+        .clip(RoundedCornerShape(10.dp))
         .border(
           width = 1.dp,
           color = when (step.type) {
-            StepType.TOOL_EXECUTION -> if (step.toolStatus == ToolStatus.FAILED.name) MaterialTheme.colorScheme.error.copy(alpha = 0.3f) else MaterialTheme.colorScheme.outlineVariant
-            StepType.VERIFICATION -> MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
-            StepType.ERROR -> MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
-            else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            StepType.TOOL_EXECUTION -> if (step.toolStatus == ToolStatus.FAILED.name) MaterialTheme.colorScheme.error.copy(alpha = 0.4f) else MaterialTheme.colorScheme.outlineVariant
+            StepType.VERIFICATION -> MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+            StepType.ERROR -> MaterialTheme.colorScheme.error.copy(alpha = 0.6f)
+            else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
           },
-          shape = RoundedCornerShape(8.dp)
+          shape = RoundedCornerShape(10.dp)
         ),
       color = when (step.type) {
         StepType.TOOL_EXECUTION -> MaterialTheme.colorScheme.surface
-        StepType.OBSERVATION -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-        StepType.VERIFICATION -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f)
-        StepType.ERROR -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f)
+        StepType.OBSERVATION -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        StepType.VERIFICATION -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
+        StepType.ERROR -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
         else -> MaterialTheme.colorScheme.surface
       }
     ) {
       Column(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(10.dp)
+          .padding(12.dp)
       ) {
         // Header row
         Row(
@@ -329,9 +329,10 @@ fun TerminalOutputBox(
   Column(
     modifier = Modifier
       .fillMaxWidth()
-      .clip(RoundedCornerShape(6.dp))
+      .clip(RoundedCornerShape(8.dp))
       .background(Color(0xFF0F172A)) // Sleek dark slate terminal
-      .padding(8.dp)
+      .border(1.dp, if (isError) Color(0xFF7F1D1D) else Color(0xFF334155), RoundedCornerShape(8.dp))
+      .padding(10.dp)
   ) {
     Text(
       text = label,

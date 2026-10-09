@@ -72,15 +72,15 @@ class NvidiaNimProviderTest {
     assertFalse(provider.hasApiKey())
 
     // Switch model without modifying agent
-    provider.setModel("deepseek-ai/deepseek-v4.1-flash")
-    assertEquals("deepseek-ai/deepseek-v4.1-flash", provider.config.model)
-    assertEquals("NVIDIA NIM (deepseek-ai/deepseek-v4.1-flash)", provider.providerName)
+    provider.setModel("nvidia/llama-3.1-nemotron-70b-instruct")
+    assertEquals("nvidia/llama-3.1-nemotron-70b-instruct", provider.config.model)
+    assertEquals("NVIDIA NIM (nvidia/llama-3.1-nemotron-70b-instruct)", provider.providerName)
 
     // Verify presets
     assertTrue(NvidiaNimModels.PRESETS.contains("z-ai/glm-5.3"))
     assertTrue(NvidiaNimModels.PRESETS.contains("z-ai/glm-5.3-flash"))
     assertTrue(NvidiaNimModels.PRESETS.contains("moonshotai/kimi-k3"))
-    assertTrue(NvidiaNimModels.PRESETS.contains("deepseek-ai/deepseek-v4.1-flash"))
+    assertTrue(NvidiaNimModels.PRESETS.contains("nvidia/llama-3.1-nemotron-70b-instruct"))
   }
 
   @Test

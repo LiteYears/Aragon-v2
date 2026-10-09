@@ -34,20 +34,184 @@ data class NvidiaNimConfig(
 }
 
 /**
- * Well-tested NVIDIA NIM models with native tool calling and reasoning support.
+ * Comprehensive catalog of free hosted models on build.nvidia.com with native tool calling support.
  */
+data class NvidiaModelEntry(
+  val id: String,
+  val name: String,
+  val category: String,
+  val description: String,
+  val badge: String = ""
+)
+
 object NvidiaNimModels {
   const val GLM_5_3 = "z-ai/glm-5.3"
   const val GLM_5_3_FLASH = "z-ai/glm-5.3-flash"
+  const val NEMOTRON_70B = "nvidia/llama-3.1-nemotron-70b-instruct"
+  const val NEMOTRON_51B = "nvidia/llama-3.1-nemotron-51b-instruct"
+  const val NEMOTRON_4_340B = "nvidia/nemotron-4-340b-instruct"
+  const val MISTRAL_LARGE_2 = "mistralai/mistral-large-2-instruct"
+  const val MIXTRAL_8X22B = "mistralai/mixtral-8x22b-v0.1"
+  const val CODESTRAL_22B = "mistralai/codestral-22b-instruct-v0.1"
+  const val MISTRAL_7B = "mistralai/mistral-7b-instruct-v0.3"
+  const val MISTRAL_NEMO_12B = "nv-mistralai/mistral-nemo-12b-instruct"
+  const val CODELLAMA_70B = "meta/codellama-70b"
+  const val GPT_OSS_20B = "openai/gpt-oss-20b"
   const val KIMI_K3 = "moonshotai/kimi-k3"
-  const val DEEPSEEK_V4_1_FLASH = "deepseek-ai/deepseek-v4.1-flash"
+  const val KIMI_K2_6 = "moonshotai/kimi-k2.6"
+  const val GRANITE_34B_CODE = "ibm/granite-34b-code-instruct"
+  const val GRANITE_8B = "ibm/granite-3.0-8b-instruct"
+  const val GEMMA_3_12B = "google/gemma-3-12b-it"
+  const val CODEGEMMA_7B = "google/codegemma-7b"
+  const val JAMBA_1_5 = "ai21labs/jamba-1.5-large-instruct"
+  const val YI_LARGE = "01-ai/yi-large"
 
-  val PRESETS = listOf(
-    GLM_5_3,
-    GLM_5_3_FLASH,
-    KIMI_K3,
-    DEEPSEEK_V4_1_FLASH
+  val CATALOG: List<NvidiaModelEntry> = listOf(
+    NvidiaModelEntry(
+      id = GLM_5_3,
+      name = "GLM 5.3",
+      category = "Agent & Code",
+      description = "Flagship coding and agentic model with verified structured tool calling",
+      badge = "DEFAULT"
+    ),
+    NvidiaModelEntry(
+      id = GLM_5_3_FLASH,
+      name = "GLM 5.3 Flash",
+      category = "Agent & Code",
+      description = "Fast, low-latency agentic model for high-throughput workflows",
+      badge = "FAST"
+    ),
+    NvidiaModelEntry(
+      id = CODESTRAL_22B,
+      name = "Codestral 22B",
+      category = "Agent & Code",
+      description = "Mistral's state-of-the-art coding and script synthesis specialist",
+      badge = "CODE"
+    ),
+    NvidiaModelEntry(
+      id = CODELLAMA_70B,
+      name = "CodeLlama 70B",
+      category = "Agent & Code",
+      description = "Meta's flagship 70B coding model for architecture and scripts",
+      badge = "CODE"
+    ),
+    NvidiaModelEntry(
+      id = GRANITE_34B_CODE,
+      name = "Granite 34B Code",
+      category = "Agent & Code",
+      description = "IBM enterprise code generation and command synthesis model",
+      badge = "ENTERPRISE"
+    ),
+    NvidiaModelEntry(
+      id = NEMOTRON_70B,
+      name = "Llama Nemotron 70B",
+      category = "Llama & Nemotron",
+      description = "NVIDIA's customized Llama model optimized for AI agents & alignment",
+      badge = "NVIDIA"
+    ),
+    NvidiaModelEntry(
+      id = NEMOTRON_51B,
+      name = "Nemotron 51B",
+      category = "Llama & Nemotron",
+      description = "NVIDIA mid-sized instruct model balanced for speed and reasoning",
+      badge = "BALANCED"
+    ),
+    NvidiaModelEntry(
+      id = NEMOTRON_4_340B,
+      name = "Nemotron 4 340B",
+      category = "Llama & Nemotron",
+      description = "NVIDIA's massive 340B instruction model with deep world knowledge",
+      badge = "340B"
+    ),
+    NvidiaModelEntry(
+      id = MISTRAL_LARGE_2,
+      name = "Mistral Large 2",
+      category = "Mistral & MoE",
+      description = "128k context multilingual flagship with precise tool invocation",
+      badge = "128K"
+    ),
+    NvidiaModelEntry(
+      id = MIXTRAL_8X22B,
+      name = "Mixtral 8x22B",
+      category = "Mistral & MoE",
+      description = "High-throughput sparse Mixture-of-Experts architecture",
+      badge = "MoE"
+    ),
+    NvidiaModelEntry(
+      id = MISTRAL_NEMO_12B,
+      name = "Mistral NeMo 12B",
+      category = "Mistral & MoE",
+      description = "Collaborative NVIDIA & Mistral compact 12B instruction model",
+      badge = "12B"
+    ),
+    NvidiaModelEntry(
+      id = MISTRAL_7B,
+      name = "Mistral 7B v0.3",
+      category = "Mistral & MoE",
+      description = "Lightweight, responsive model with native function calling",
+      badge = "LIGHT"
+    ),
+    NvidiaModelEntry(
+      id = KIMI_K3,
+      name = "Kimi K3",
+      category = "Reasoning & Long-Context",
+      description = "Moonshot AI agentic model with extended context comprehension",
+      badge = "AGENT"
+    ),
+    NvidiaModelEntry(
+      id = KIMI_K2_6,
+      name = "Kimi K2.6",
+      category = "Reasoning & Long-Context",
+      description = "Fast Moonshot model tuned for conversational agent tasks",
+      badge = "FAST"
+    ),
+    NvidiaModelEntry(
+      id = GPT_OSS_20B,
+      name = "GPT-OSS 20B",
+      category = "Reasoning & Long-Context",
+      description = "OpenAI open weights model hosted on NVIDIA infrastructure",
+      badge = "OPENAI"
+    ),
+    NvidiaModelEntry(
+      id = JAMBA_1_5,
+      name = "Jamba 1.5 Large",
+      category = "Reasoning & Long-Context",
+      description = "AI21 Labs hybrid SSM-Transformer architecture for long sequences",
+      badge = "HYBRID"
+    ),
+    NvidiaModelEntry(
+      id = GEMMA_3_12B,
+      name = "Gemma 3 12B",
+      category = "Google & Other",
+      description = "Google's lightweight instruction-tuned open model",
+      badge = "GOOGLE"
+    ),
+    NvidiaModelEntry(
+      id = CODEGEMMA_7B,
+      name = "CodeGemma 7B",
+      category = "Google & Other",
+      description = "Google specialized coding and code completion model",
+      badge = "GOOGLE"
+    ),
+    NvidiaModelEntry(
+      id = YI_LARGE,
+      name = "Yi Large",
+      category = "Google & Other",
+      description = "01.AI frontier multilingual foundation model",
+      badge = "MULTILINGUAL"
+    ),
+    NvidiaModelEntry(
+      id = GRANITE_8B,
+      name = "Granite 3.0 8B",
+      category = "Google & Other",
+      description = "IBM compact enterprise instruction tuned model",
+      badge = "LIGHT"
+    )
   )
+
+  val PRESETS: List<String> = CATALOG.map { it.id }
+
+  val CATEGORIES: List<String> = listOf("All") + CATALOG.map { it.category }.distinct()
 }
 
 /**
