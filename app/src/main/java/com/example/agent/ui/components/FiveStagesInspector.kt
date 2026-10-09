@@ -70,58 +70,58 @@ fun FiveStagesInspector(
     ) {
       Column(modifier = Modifier.weight(1f)) {
         Text(
-          text = "5-Stage Agentic Pipeline",
+          text = "Reasoning & Execution Pipeline",
           style = MaterialTheme.typography.titleMedium,
           fontWeight = FontWeight.SemiBold,
           color = AmoledTextPrimary
         )
         Text(
-          text = "Separation between model synthesis and authoritative environment execution",
+          text = "Live breakdown of model cognition, tool actions, and verified deliverables",
           style = MaterialTheme.typography.bodySmall,
           color = AmoledTextMuted
         )
       }
 
       val fullReport = buildString {
-        appendLine("=== 5-STAGE AGENTIC EXECUTION RECORD ===")
-        appendLine("1. INTENT: ${record.intent}")
-        appendLine("2. PLAN:\n${record.currentPlan.joinToString("\n") { "  - $it" }}")
-        appendLine("3. ACTION:\n${record.actions.joinToString("\n") { "  - $it" }}")
-        appendLine("4. OBSERVATION:\n${record.observations.joinToString("\n") { "  - $it" }}")
-        appendLine("5. CONCLUSION:\n${record.conclusion}")
+        appendLine("=== COGNITIVE & EXECUTION RECORD ===")
+        appendLine("1. GOAL: ${record.intent}")
+        appendLine("2. STRATEGY:\n${record.currentPlan.joinToString("\n") { "  - $it" }}")
+        appendLine("3. ACTIONS:\n${record.actions.joinToString("\n") { "  - $it" }}")
+        appendLine("4. OBSERVATIONS:\n${record.observations.joinToString("\n") { "  - $it" }}")
+        appendLine("5. RESULT:\n${record.conclusion}")
       }
       LittleCopyButton(
         textToCopy = fullReport,
-        label = "Report",
+        label = "Export",
         buttonSize = 32.dp,
         iconSize = 14.dp,
         testTag = "copy_full_5stages_report"
       )
     }
 
-    // 1. INTENT
+    // 1. GOAL
     StageCard(
       stageNumber = 1,
-      stageName = "INTENT",
-      subtitle = "User Objective Specification",
+      stageName = "GOAL",
+      subtitle = "What you asked Aragon to accomplish",
       icon = Icons.AutoMirrored.Filled.Assignment,
-      content = listOf(record.intent.ifBlank { "No active task intent." })
+      content = listOf(record.intent.ifBlank { "Ready for your instructions." })
     )
 
-    // 2. PLAN
+    // 2. STRATEGY
     StageCard(
       stageNumber = 2,
-      stageName = "PLAN",
-      subtitle = "Agentic LLM Decomposition",
+      stageName = "STRATEGY",
+      subtitle = "Decomposed execution plan",
       icon = Icons.Default.FormatListNumbered,
-      content = if (record.currentPlan.isNotEmpty()) record.currentPlan else listOf("Plan is being synthesized...")
+      content = if (record.currentPlan.isNotEmpty()) record.currentPlan else listOf("Strategy generates as soon as a task begins...")
     )
 
     // 3. ACTION
     StageCard(
       stageNumber = 3,
-      stageName = "ACTION",
-      subtitle = "Authoritative Runtime Dispatches",
+      stageName = "ACTIONS",
+      subtitle = "Dispatched tools and terminal commands",
       icon = Icons.Default.PlayArrow,
       content = if (record.actions.isNotEmpty()) record.actions else listOf("No actions dispatched yet.")
     )
@@ -129,17 +129,17 @@ fun FiveStagesInspector(
     // 4. OBSERVATION
     StageCard(
       stageNumber = 4,
-      stageName = "OBSERVATION",
-      subtitle = "Authoritative Sandbox Outputs",
+      stageName = "OBSERVATIONS",
+      subtitle = "Live environment feedback and outputs",
       icon = Icons.Default.Visibility,
-      content = if (record.observations.isNotEmpty()) record.observations else listOf("No observations recorded yet.")
+      content = if (record.observations.isNotEmpty()) record.observations else listOf("Outputs will appear during execution.")
     )
 
     // 5. CONCLUSION
     StageCard(
       stageNumber = 5,
-      stageName = "CONCLUSION",
-      subtitle = "Verified Objective Synthesis",
+      stageName = "DELIVERABLE",
+      subtitle = "Final synthesized outcome and created files",
       icon = Icons.Default.Check,
       content = listOf(record.conclusion ?: "Awaiting verified task completion...")
     )

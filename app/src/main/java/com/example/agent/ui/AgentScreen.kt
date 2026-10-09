@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
@@ -98,6 +99,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
@@ -162,16 +164,13 @@ fun AgentScreen(
   Scaffold(
     modifier = modifier
       .fillMaxSize()
-      .background(AmoledBackground)
-      .imePadding(),
+      .background(AmoledBackground),
     containerColor = AmoledBackground,
     contentWindowInsets = WindowInsets(0, 0, 0, 0),
     topBar = {
       AgentTopHeader(
         status = state.status,
         currentAction = state.currentAction,
-        providerType = providerType,
-        nvidiaModel = nvidiaModel,
         canCancel = state.canCancel,
         onStop = { viewModel.stopExecution() },
         onOpenAbout = { viewModel.selectTab(UiTab.ABOUT_ARAGON) },
@@ -181,7 +180,9 @@ fun AgentScreen(
     },
     bottomBar = {
       Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+          .fillMaxWidth()
+          .imePadding(),
         color = AmoledBackground,
         border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle)
       ) {
@@ -189,21 +190,21 @@ fun AgentScreen(
           modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 6.dp)
         ) {
-          // Preset prompt chips in modern flat pill design
+          // Preset suggestions (human-centric idea starters)
           val chipScrollState = rememberScrollState()
           Row(
             modifier = Modifier
               .fillMaxWidth()
               .horizontalScroll(chipScrollState)
-              .padding(bottom = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+              .padding(bottom = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
           ) {
             viewModel.presets.forEach { preset ->
               Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = Color(0xFF141414),
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0xFF131313),
                 border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
                 modifier = Modifier
                   .clickable {
@@ -212,21 +213,34 @@ fun AgentScreen(
                   }
                   .testTag("preset_chip_${preset.expectedArtifact ?: "custom"}")
               ) {
-                Text(
-                  text = preset.title,
-                  style = MaterialTheme.typography.labelSmall,
-                  fontFamily = InterFontFamily,
-                  color = AmoledIconGreyLight,
-                  fontSize = 11.sp,
-                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                )
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                  Text(
+                    text = when {
+                      preset.expectedArtifact?.endsWith(".md") == true -> "📊 "
+                      preset.expectedArtifact?.endsWith(".docx") == true -> "📄 "
+                      preset.expectedArtifact?.endsWith(".json") == true -> "🔍 "
+                      else -> "⚡ "
+                    },
+                    fontSize = 11.sp
+                  )
+                  Text(
+                    text = preset.title,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = InterFontFamily,
+                    color = AmoledIconGreyLight,
+                    fontSize = 11.sp
+                  )
+                }
               }
             }
           }
 
           // Modern Interactive Floating User Prompt Field
           Surface(
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(14.dp),
             color = Color(0xFF101010),
             border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
             modifier = Modifier.fillMaxWidth()
@@ -234,7 +248,7 @@ fun AgentScreen(
             Column(
               modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 8.dp)
+                .padding(horizontal = 12.dp, vertical = 6.dp)
             ) {
               // Top meta bar inside prompt field: Active model pill & Clear button
               Row(
@@ -242,7 +256,7 @@ fun AgentScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
               ) {
-                // Interactive model switcher pill - navigates to About / Settings
+                // Interactive model switcher pill - placed creatively above input
                 Surface(
                   shape = RoundedCornerShape(6.dp),
                   color = Color(0xFF181818),
@@ -257,17 +271,17 @@ fun AgentScreen(
                       modifier = Modifier
                         .size(5.dp)
                         .clip(CircleShape)
-                        .background(AmoledStatusSuccess)
+                        .background(if (state.canCancel) AmoledActionPrimary else AmoledStatusSuccess)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                      text = nvidiaModel.substringAfterLast('/'),
+                      text = "ENGINE • ${nvidiaModel.substringAfterLast('/')}",
                       style = MaterialTheme.typography.labelSmall,
                       fontFamily = JetBrainsMonoFontFamily,
                       fontSize = 10.sp,
                       color = AmoledIconGreyLight
                     )
-                    Spacer(modifier = Modifier.width(2.dp))
+                    Spacer(modifier = Modifier.width(3.dp))
                     Icon(
                       imageVector = Icons.Default.ArrowDropDown,
                       contentDescription = "Switch model",
@@ -292,9 +306,9 @@ fun AgentScreen(
                 }
               }
 
-              Spacer(modifier = Modifier.height(6.dp))
+              Spacer(modifier = Modifier.height(4.dp))
 
-              // Multiline input area with Flutter style execute button
+              // Multiline input area with execution task button
               Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Bottom
@@ -340,7 +354,7 @@ fun AgentScreen(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Modern Flutter-style flat execution task button
+                // Modern execution task button
                 if (state.canCancel) {
                   Surface(
                     shape = RoundedCornerShape(12.dp),
@@ -481,87 +495,20 @@ fun AgentScreen(
         }
       }
 
-      // Modern Flat AMOLED Tab Row
-      TabRow(
-        selectedTabIndex = activeTab.ordinal,
-        containerColor = AmoledBackground,
-        contentColor = AmoledTextPrimary,
-        divider = {
-          Box(
-            modifier = Modifier
-              .fillMaxWidth()
-              .height(1.dp)
-              .background(AmoledBorderSubtle)
-          )
-        },
-        indicator = { tabPositions ->
-          if (activeTab.ordinal < tabPositions.size) {
-            TabRowDefaults.SecondaryIndicator(
-              modifier = Modifier.tabIndicatorOffset(tabPositions[activeTab.ordinal]),
-              color = AmoledActionPrimary,
-              height = 2.dp
-            )
-          }
-        },
-        modifier = Modifier.fillMaxWidth()
-      ) {
-        UiTab.values().forEach { tab ->
-          val badgeCount = when (tab) {
-            UiTab.EXECUTION_FEED -> state.executionFeed.size
-            UiTab.ARTIFACTS -> state.artifacts.size
-            UiTab.FIVE_STAGES -> null
-            UiTab.ABOUT_ARAGON -> null
-          }
-          Tab(
-            selected = activeTab == tab,
-            onClick = { viewModel.selectTab(tab) },
-            text = {
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(vertical = 10.dp)
-              ) {
-                Text(
-                  text = tab.label,
-                  fontWeight = if (activeTab == tab) FontWeight.SemiBold else FontWeight.Normal,
-                  style = MaterialTheme.typography.bodySmall,
-                  color = if (activeTab == tab) AmoledTextPrimary else AmoledTextMuted
-                )
-                if (badgeCount != null && badgeCount > 0) {
-                  Spacer(modifier = Modifier.width(6.dp))
-                  Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = Color(0xFF181818),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
-                    modifier = Modifier.height(18.dp)
-                  ) {
-                    Box(
-                      contentAlignment = Alignment.Center,
-                      modifier = Modifier.padding(horizontal = 5.dp)
-                    ) {
-                      Text(
-                        text = "$badgeCount",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 10.sp,
-                        color = if (activeTab == tab) AmoledTextPrimary else AmoledTextMuted
-                      )
-                    }
-                  }
-                }
-              }
-            },
-            modifier = Modifier.testTag("tab_${tab.name.lowercase()}")
-          )
-        }
-      }
+      // Premium Segmented Navigation Bar with fluid switching
+      PremiumTabBar(
+        selectedTab = activeTab,
+        feedCount = state.executionFeed.size,
+        artifactCount = state.artifacts.size,
+        onSelectTab = { viewModel.selectTab(it) }
+      )
 
-      // Tab Content Views with smooth, easy-on-the-renderer crossfade transitions
+      // Tab Content Views with smooth, lightweight transitions (no lag)
       AnimatedContent(
         targetState = activeTab,
         transitionSpec = {
-          fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing)) togetherWith
-            fadeOut(animationSpec = tween(130, easing = FastOutSlowInEasing))
+          fadeIn(animationSpec = tween(130, easing = FastOutSlowInEasing)) togetherWith
+            fadeOut(animationSpec = tween(80, easing = FastOutSlowInEasing))
         },
         label = "tab_content_view_transition",
         modifier = Modifier.fillMaxSize()
@@ -570,9 +517,14 @@ fun AgentScreen(
           UiTab.EXECUTION_FEED -> {
             if (state.executionFeed.isEmpty()) {
               EmptyExecutionState(
+                presets = viewModel.presets,
                 onQuickRun = {
                   inputText = viewModel.presets[0].prompt
                   viewModel.submitTask(viewModel.presets[0].prompt, viewModel.presets[0].expectedArtifact)
+                },
+                onSelectPreset = { prompt, artifact ->
+                  inputText = prompt
+                  viewModel.submitTask(prompt, artifact)
                 }
               )
             } else {
@@ -610,7 +562,7 @@ fun AgentScreen(
                   ) {
                     Box(contentAlignment = Alignment.Center) {
                       Icon(
-                        imageVector = Icons.Default.Terminal,
+                        imageVector = Icons.Default.Description,
                         contentDescription = null,
                         tint = AmoledIconGrey,
                         modifier = Modifier.size(26.dp)
@@ -619,14 +571,14 @@ fun AgentScreen(
                   }
                   Spacer(modifier = Modifier.height(12.dp))
                   Text(
-                    text = "No artifacts generated yet",
+                    text = "Workspace is ready",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = AmoledTextPrimary
                   )
                   Spacer(modifier = Modifier.height(4.dp))
                   Text(
-                    text = "Run a task to produce files in the workspace (e.g. data.csv → report.md).",
+                    text = "When Aragon generates reports, documents, datasets, or code files, they will appear here ready to inspect and share.",
                     style = MaterialTheme.typography.bodySmall,
                     color = AmoledTextMuted,
                     textAlign = TextAlign.Center
@@ -709,11 +661,113 @@ fun AgentScreen(
 }
 
 @Composable
+fun PremiumTabBar(
+  selectedTab: UiTab,
+  feedCount: Int,
+  artifactCount: Int,
+  onSelectTab: (UiTab) -> Unit,
+  modifier: Modifier = Modifier
+) {
+  Surface(
+    modifier = modifier.fillMaxWidth(),
+    color = AmoledSurface,
+    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle)
+  ) {
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 10.dp, vertical = 6.dp),
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      UiTab.values().forEach { tab ->
+        val isSelected = selectedTab == tab
+        val tabIcon = when (tab) {
+          UiTab.EXECUTION_FEED -> Icons.Default.Terminal
+          UiTab.ARTIFACTS -> Icons.Default.Description
+          UiTab.FIVE_STAGES -> Icons.Default.AutoAwesome
+          UiTab.ABOUT_ARAGON -> Icons.Default.Settings
+        }
+        val badge = when (tab) {
+          UiTab.EXECUTION_FEED -> if (feedCount > 0) "$feedCount" else null
+          UiTab.ARTIFACTS -> if (artifactCount > 0) "$artifactCount" else null
+          else -> null
+        }
+
+        val bgColor by animateColorAsState(
+          targetValue = if (isSelected) Color(0xFF202020) else Color.Transparent,
+          animationSpec = tween(140),
+          label = "tab_bg"
+        )
+        val contentColor by animateColorAsState(
+          targetValue = if (isSelected) Color.White else AmoledIconGrey,
+          animationSpec = tween(140),
+          label = "tab_content_color"
+        )
+
+        Surface(
+          shape = RoundedCornerShape(8.dp),
+          color = bgColor,
+          border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF333333)) else null,
+          modifier = Modifier
+            .weight(1f)
+            .clickable { onSelectTab(tab) }
+            .testTag("tab_${tab.name.lowercase()}")
+        ) {
+          Row(
+            modifier = Modifier.padding(vertical = 8.dp, horizontal = 2.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Icon(
+              imageVector = tabIcon,
+              contentDescription = tab.label,
+              tint = contentColor,
+              modifier = Modifier.size(14.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+              text = tab.label,
+              style = MaterialTheme.typography.labelSmall,
+              fontFamily = InterFontFamily,
+              fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+              color = contentColor,
+              fontSize = 11.sp,
+              maxLines = 1
+            )
+            if (badge != null) {
+              Spacer(modifier = Modifier.width(3.dp))
+              Surface(
+                shape = RoundedCornerShape(4.dp),
+                color = if (isSelected) AmoledActionPrimary else Color(0xFF1E1E1E),
+                modifier = Modifier.height(15.dp)
+              ) {
+                Box(
+                  contentAlignment = Alignment.Center,
+                  modifier = Modifier.padding(horizontal = 4.dp)
+                ) {
+                  Text(
+                    text = badge,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isSelected) AmoledActionPrimaryOn else AmoledIconGreyLight
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
 fun AgentTopHeader(
   status: AgentStatus,
   currentAction: String?,
-  providerType: ProviderType,
-  nvidiaModel: String,
   canCancel: Boolean,
   onStop: () -> Unit,
   onOpenAbout: () -> Unit,
@@ -729,114 +783,97 @@ fun AgentTopHeader(
       modifier = Modifier
         .fillMaxWidth()
         .statusBarsPadding()
-        .padding(horizontal = 16.dp, vertical = 8.dp)
+        .padding(horizontal = 16.dp, vertical = 9.dp)
     ) {
-      Row(
+      Box(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        contentAlignment = Alignment.Center
       ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-          // Aragon signature pure white emblem badge
-          Surface(
-            shape = RoundedCornerShape(10.dp),
-            color = Color(0xFF101010),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2E2E2E)),
-            modifier = Modifier.size(36.dp)
-          ) {
-            Box(contentAlignment = Alignment.Center) {
-              Icon(
-                painter = painterResource(id = R.drawable.ic_aragon_logo),
-                contentDescription = "Aragon Emblem",
-                tint = Color.White,
-                modifier = Modifier.size(22.dp)
-              )
-            }
-          }
-
-          Spacer(modifier = Modifier.width(10.dp))
-
-          Column {
-            Text(
-              text = "ARAGON",
-              style = MaterialTheme.typography.titleMedium,
-              fontFamily = InterFontFamily,
-              fontWeight = FontWeight.Bold,
-              letterSpacing = 2.sp,
-              color = Color.White
-            )
-            val modelNameShort = nvidiaModel.substringAfterLast('/')
-            val providerSubtitle = when (providerType) {
-              ProviderType.NVIDIA_NIM -> "NVIDIA NIM • $modelNameShort"
-              ProviderType.SANDBOX_ENGINE -> "Autonomous Sandbox Engine"
-              ProviderType.GEMINI_LIVE_API -> "Gemini Live API"
-            }
-            Text(
-              text = providerSubtitle,
-              style = MaterialTheme.typography.labelSmall,
-              fontFamily = JetBrainsMonoFontFamily,
-              color = AmoledIconGrey,
-              fontSize = 10.sp
-            )
-          }
+        // Left: Clean Status Pill
+        Row(
+          modifier = Modifier.align(Alignment.CenterStart),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          StatusPill(status = status)
         }
 
-        // Header Actions: Status pill, Log copy, Reset, About info
-        Row(verticalAlignment = Alignment.CenterVertically) {
-          StatusPill(status = status)
+        // Center: Pure borderless White Aragon Logo + Centered "ARAGON"
+        Row(
+          modifier = Modifier.align(Alignment.Center),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Icon(
+            painter = painterResource(id = R.drawable.ic_aragon_logo),
+            contentDescription = "Aragon Logo",
+            tint = Color.White,
+            modifier = Modifier.size(24.dp)
+          )
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            text = "ARAGON",
+            style = MaterialTheme.typography.titleMedium,
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 3.sp,
+            color = Color.White
+          )
+        }
 
-          Spacer(modifier = Modifier.width(4.dp))
-
+        // Right: Symmetrical header action buttons
+        Row(
+          modifier = Modifier.align(Alignment.CenterEnd),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
           LittleCopyButton(
             textToCopy = onGetTranscript(),
             label = "Log",
             tint = AmoledIconGrey,
-            buttonSize = 32.dp,
-            iconSize = 14.dp,
+            buttonSize = 30.dp,
+            iconSize = 13.dp,
             testTag = "copy_transcript_header"
           )
 
           if (canCancel) {
             IconButton(
               onClick = onStop,
-              modifier = Modifier.size(32.dp)
+              modifier = Modifier.size(30.dp)
             ) {
               Icon(
                 Icons.Default.Stop,
                 contentDescription = "Stop",
                 tint = AmoledStatusError,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(16.dp)
               )
             }
           }
 
           IconButton(
             onClick = onResetWorkspace,
-            modifier = Modifier.size(32.dp)
+            modifier = Modifier.size(30.dp)
           ) {
             Icon(
               Icons.Default.Refresh,
               contentDescription = "Reset Workspace",
               tint = AmoledIconGrey,
-              modifier = Modifier.size(18.dp)
+              modifier = Modifier.size(16.dp)
             )
           }
 
           IconButton(
             onClick = onOpenAbout,
-            modifier = Modifier.size(32.dp)
+            modifier = Modifier.size(30.dp)
           ) {
             Icon(
-              Icons.Default.Info,
-              contentDescription = "About Aragon",
+              Icons.Default.Settings,
+              contentDescription = "System Settings",
               tint = AmoledIconGrey,
-              modifier = Modifier.size(18.dp)
+              modifier = Modifier.size(16.dp)
             )
           }
         }
       }
 
-      // Active status bar
+      // Active status bar (when executing)
       if (!currentAction.isNullOrBlank()) {
         Spacer(modifier = Modifier.height(6.dp))
         Surface(
@@ -859,10 +896,11 @@ fun AgentTopHeader(
             Text(
               text = currentAction,
               style = MaterialTheme.typography.bodySmall,
-              fontFamily = InterFontFamily,
-              color = AmoledTextSecondary,
+              fontFamily = JetBrainsMonoFontFamily,
+              color = AmoledIconGreyLight,
               fontSize = 11.sp,
               maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
               modifier = Modifier.weight(1f)
             )
           }
@@ -910,95 +948,165 @@ fun StatusPill(status: AgentStatus) {
 
 @Composable
 fun EmptyExecutionState(
-  onQuickRun: () -> Unit
+  presets: List<com.example.agent.ui.PromptPreset>,
+  onQuickRun: () -> Unit,
+  onSelectPreset: (String, String?) -> Unit
 ) {
+  val scrollState = rememberScrollState()
   Column(
     modifier = Modifier
       .fillMaxSize()
-      .padding(horizontal = 24.dp, vertical = 32.dp),
+      .verticalScroll(scrollState)
+      .padding(horizontal = 24.dp, vertical = 28.dp),
     horizontalAlignment = Alignment.CenterHorizontally,
     verticalArrangement = Arrangement.Center
   ) {
-    Surface(
-      shape = RoundedCornerShape(18.dp),
-      color = Color(0xFF111111),
-      border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2C2C2C)),
-      modifier = Modifier.size(68.dp)
+    // Pure Aragon White Emblem without border
+    Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier.size(56.dp)
     ) {
-      Box(contentAlignment = Alignment.Center) {
-        Icon(
-          painter = painterResource(id = R.drawable.ic_aragon_logo),
-          contentDescription = "Aragon Logo",
-          tint = Color.White,
-          modifier = Modifier.size(38.dp)
-        )
-      }
+      Icon(
+        painter = painterResource(id = R.drawable.ic_aragon_logo),
+        contentDescription = "Aragon Logo",
+        tint = Color.White,
+        modifier = Modifier.size(46.dp)
+      )
     }
 
-    Spacer(modifier = Modifier.height(16.dp))
+    Spacer(modifier = Modifier.height(12.dp))
 
     Text(
       text = "ARAGON",
       style = MaterialTheme.typography.headlineSmall,
       fontWeight = FontWeight.Bold,
-      letterSpacing = 2.5.sp,
+      letterSpacing = 3.5.sp,
       color = Color.White
     )
 
-    Spacer(modifier = Modifier.height(4.dp))
-
-    Text(
-      text = "Autonomous Intelligence Kernel",
-      style = MaterialTheme.typography.bodySmall,
-      color = AmoledIconGreyLight,
-      fontSize = 12.sp
-    )
-
-    Spacer(modifier = Modifier.height(12.dp))
-
-    Surface(
-      shape = RoundedCornerShape(8.dp),
-      color = Color(0xFF111111),
-      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
-      modifier = Modifier.padding(horizontal = 8.dp)
-    ) {
-      Text(
-        text = "OBJECTIVE → PLAN → TOOL DISPATCH → OBSERVE → VERIFY",
-        style = MaterialTheme.typography.labelSmall,
-        fontFamily = JetBrainsMonoFontFamily,
-        color = AmoledIconGrey,
-        fontSize = 10.sp,
-        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-      )
-    }
-
     Spacer(modifier = Modifier.height(14.dp))
 
+    // Captivating Slogan that attracts the mind
     Text(
-      text = "Execute sandboxed tasks with deterministic tool calling, real Python 3 execution, and verifiable filesystem artifacts.",
-      style = MaterialTheme.typography.bodySmall,
-      color = AmoledTextMuted,
-      lineHeight = 18.sp,
+      text = "Turn Ambitious Thought Into Reality.",
+      style = MaterialTheme.typography.titleMedium,
+      fontFamily = InterFontFamily,
+      fontWeight = FontWeight.SemiBold,
+      color = AmoledTextPrimary,
       textAlign = TextAlign.Center,
-      modifier = Modifier.padding(horizontal = 16.dp)
+      modifier = Modifier.padding(horizontal = 12.dp)
     )
 
-    Spacer(modifier = Modifier.height(20.dp))
+    Spacer(modifier = Modifier.height(8.dp))
 
+    Text(
+      text = "An autonomous execution engine that investigates, writes code, runs Python, and crafts verified deliverables in an isolated environment.",
+      style = MaterialTheme.typography.bodySmall,
+      fontFamily = InterFontFamily,
+      color = AmoledTextMuted,
+      lineHeight = 19.sp,
+      textAlign = TextAlign.Center,
+      modifier = Modifier.padding(horizontal = 8.dp)
+    )
+
+    Spacer(modifier = Modifier.height(24.dp))
+
+    // The improved Middle Button: Starts a New Task
     Button(
       onClick = onQuickRun,
-      shape = RoundedCornerShape(10.dp),
+      shape = RoundedCornerShape(12.dp),
       colors = ButtonDefaults.buttonColors(
         containerColor = AmoledActionPrimary,
         contentColor = AmoledActionPrimaryOn
       ),
       modifier = Modifier
-        .height(42.dp)
+        .fillMaxWidth(0.78f)
+        .height(48.dp)
         .testTag("quick_start_button")
     ) {
-      Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-      Spacer(modifier = Modifier.width(6.dp))
-      Text("Sample Task: data.csv → report.md", style = MaterialTheme.typography.labelMedium)
+      Icon(
+        imageVector = Icons.Default.PlayArrow,
+        contentDescription = null,
+        modifier = Modifier.size(18.dp)
+      )
+      Spacer(modifier = Modifier.width(8.dp))
+      Text(
+        text = "Start a New Task",
+        style = MaterialTheme.typography.labelLarge,
+        fontFamily = InterFontFamily,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 14.sp
+      )
+    }
+
+    Spacer(modifier = Modifier.height(26.dp))
+
+    Text(
+      text = "SUGGESTED OBJECTIVES",
+      style = MaterialTheme.typography.labelSmall,
+      fontFamily = JetBrainsMonoFontFamily,
+      fontSize = 10.sp,
+      letterSpacing = 1.sp,
+      color = AmoledIconGreyDark
+    )
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    Column(
+      modifier = Modifier.fillMaxWidth(),
+      verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+      presets.forEach { preset ->
+        Surface(
+          shape = RoundedCornerShape(10.dp),
+          color = Color(0xFF121212),
+          border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+          modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onSelectPreset(preset.prompt, preset.expectedArtifact) }
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Icon(
+              imageVector = when {
+                preset.expectedArtifact?.endsWith(".md") == true -> Icons.Default.Description
+                preset.expectedArtifact?.endsWith(".docx") == true -> Icons.Default.Description
+                preset.expectedArtifact?.endsWith(".json") == true -> Icons.Default.Code
+                else -> Icons.Default.Terminal
+              },
+              contentDescription = null,
+              tint = AmoledActionPrimary,
+              modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+              Text(
+                text = preset.title,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = AmoledTextPrimary,
+                fontSize = 12.sp
+              )
+              Text(
+                text = preset.prompt,
+                style = MaterialTheme.typography.bodySmall,
+                color = AmoledTextMuted,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+              )
+            }
+            Icon(
+              imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+              contentDescription = null,
+              tint = AmoledIconGrey,
+              modifier = Modifier.size(14.dp)
+            )
+          }
+        }
+      }
     }
   }
 }

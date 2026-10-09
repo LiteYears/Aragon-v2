@@ -111,21 +111,17 @@ fun AboutAragonScreen(
           .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
       ) {
-        // Aragon Pure White Logo Emblem
-        Surface(
-          shape = RoundedCornerShape(16.dp),
-          color = Color(0xFF111111),
-          border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF333333)),
-          modifier = Modifier.size(72.dp)
+        // Aragon Pure White Logo Emblem (Clean borderless)
+        Box(
+          contentAlignment = Alignment.Center,
+          modifier = Modifier.size(64.dp)
         ) {
-          Box(contentAlignment = Alignment.Center) {
-            Icon(
-              painter = painterResource(id = R.drawable.ic_aragon_logo),
-              contentDescription = "Aragon Logo",
-              tint = Color.White,
-              modifier = Modifier.size(42.dp)
-            )
-          }
+          Icon(
+            painter = painterResource(id = R.drawable.ic_aragon_logo),
+            contentDescription = "Aragon Logo",
+            tint = Color.White,
+            modifier = Modifier.size(52.dp)
+          )
         }
 
         Spacer(modifier = Modifier.height(14.dp))

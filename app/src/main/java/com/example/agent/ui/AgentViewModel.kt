@@ -29,10 +29,10 @@ enum class ProviderType {
 }
 
 enum class UiTab(val label: String) {
-  EXECUTION_FEED("Feed"),
-  ARTIFACTS("Artifacts"),
-  FIVE_STAGES("5 Stages"),
-  ABOUT_ARAGON("About")
+  EXECUTION_FEED("Activity"),
+  ARTIFACTS("Deliverables"),
+  FIVE_STAGES("Cognition"),
+  ABOUT_ARAGON("System")
 }
 
 data class PromptPreset(
