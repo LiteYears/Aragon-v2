@@ -143,17 +143,37 @@ data class AgentCheckpoint(
  */
 class ScratchpadMemoryManager(private val workspace: WorkspaceManager) {
 
+  @Volatile
+  var currentSessionId: String = UUID.randomUUID().toString()
+    private set
+
+  fun initSession(sessionId: String = UUID.randomUUID().toString()) {
+    currentSessionId = sessionId
+    try {
+      notesDir.mkdirs()
+    } catch (_: Exception) {}
+  }
+
+  fun clearSessionMemory() {
+    try {
+      notesDir.deleteRecursively()
+      File(workspace.baseDir, "notes").deleteRecursively()
+      File(workspace.baseDir, "plan.md").delete()
+      File(workspace.baseDir, "checkpoint.json").delete()
+    } catch (_: Exception) {}
+  }
+
   private val notesDir: File
-    get() = File(workspace.baseDir, "notes").apply { if (!exists()) mkdirs() }
+    get() = File(workspace.baseDir, "notes/$currentSessionId").apply { if (!exists()) mkdirs() }
 
   val researchFile: File
     get() = File(notesDir, "research.jsonl")
 
   val planFile: File
-    get() = File(workspace.baseDir, "plan.md")
+    get() = File(notesDir, "plan.md")
 
   val checkpointFile: File
-    get() = File(workspace.baseDir, "checkpoint.json")
+    get() = File(notesDir, "checkpoint.json")
 
   /**
    * Appends an atomic research finding to research.jsonl.

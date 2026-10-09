@@ -377,5 +377,35 @@ class AgentKernelTest {
     val downloaded = ArtifactDownloader.downloadArtifact(context, artifact, workspace.baseDir)
     assertTrue(downloaded)
   }
+
+  @Test
+  fun testSeparateSessionsAndArtifactCleaning() {
+    val engine = AgentEngine(
+      workspaceDir = workspace.baseDir,
+      initialProvider = AutonomousSandboxProvider()
+    )
+
+    // Write a dummy artifact in first session
+    workspace.writeWorkspaceFile("task1_result.txt", "Task 1 data")
+    assertEquals(1, workspace.listAllArtifacts().filter { it.path == "task1_result.txt" }.size)
+
+    // Start a new session
+    val session1 = engine.state.value.sessionId
+    val session2 = engine.startNewSession()
+
+    assertFalse("Sessions must have different IDs", session1 == session2)
+    // Artifacts must be completely cleaned
+    assertEquals(0, engine.state.value.artifacts.size)
+    assertFalse(File(workspace.baseDir, "task1_result.txt").exists())
+    assertEquals(0, engine.state.value.executionFeed.size)
+  }
+
+  @Test
+  fun testTemporaryFilesCleaning() {
+    val tempFile = workspace.writeWorkspaceFile("test.tmp", "Temporary content")
+    assertTrue(tempFile.exists())
+    workspace.cleanTemporaryFiles()
+    assertFalse("Temporary file should be removed", tempFile.exists())
+  }
 }
 

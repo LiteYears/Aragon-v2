@@ -301,6 +301,17 @@ class AgentViewModel(
     engine.submitTask(intent, expectedArtifact)
   }
 
+  /**
+   * Starts a completely empty, fresh task with an isolated new session and removed artifacts.
+   */
+  fun startNewTask() {
+    engine.cancel()
+    engine.startNewSession()
+    _selectedArtifactForPreview.value = null
+    _previewContent.value = null
+    _activeTab.value = UiTab.EXECUTION_FEED
+  }
+
   fun stopExecution() {
     engine.cancel()
   }

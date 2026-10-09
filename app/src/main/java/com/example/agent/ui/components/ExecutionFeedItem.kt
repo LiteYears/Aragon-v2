@@ -3,7 +3,6 @@ package com.example.agent.ui.components
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -50,10 +49,10 @@ import com.example.ui.theme.AmoledActionPrimary
 import com.example.ui.theme.AmoledBorder
 import com.example.ui.theme.AmoledBorderSubtle
 import com.example.ui.theme.AmoledIconGrey
+import com.example.ui.theme.AmoledIconGreyDark
 import com.example.ui.theme.AmoledIconGreyLight
 import com.example.ui.theme.AmoledStatusError
 import com.example.ui.theme.AmoledStatusSuccess
-import com.example.ui.theme.AmoledSurfaceElevated
 import com.example.ui.theme.AmoledTextMuted
 import com.example.ui.theme.AmoledTextPrimary
 import com.example.ui.theme.AmoledTextSecondary
@@ -63,11 +62,10 @@ import kotlinx.coroutines.delay
 
 /**
  * Execution Feed Item:
- * - Model responses (Reasoning, Streaming, Thoughts, Conclusion) stream normally without heavy boxes.
- * - Tool calls reside in an animated, premium Tool Call Box with distinct states:
- *   WAITING, ACTIVE/RUNNING, FINISHED/SUCCESS, FAILED.
- * - Pure typography without vector icons.
- * - Butter-smooth performance: memoized animations only when active.
+ * - Badges ([OK], [OBS], [ERR], [RUN], etc.) are positioned on the RIGHT side.
+ * - Tool calls & search results boxes are HIDDEN by default, expanding only when [VIEW] is clicked.
+ * - Model responses stream smoothly without heavy outer card wraps.
+ * - Pure typography without generic icons.
  */
 @Composable
 fun ExecutionFeedItem(
@@ -90,25 +88,30 @@ fun ExecutionFeedItem(
     modifier = modifier
       .fillMaxWidth()
       .testTag("step_item_${step.stepNumber}")
-      .padding(horizontal = 16.dp, vertical = if (isModelResponse) 4.dp else 6.dp)
+      .padding(horizontal = 14.dp, vertical = if (isModelResponse) 4.dp else 5.dp)
   ) {
-    // Left timeline column: Pure text step indicator badge + connecting line
+    // Left timeline column: Minimal step index number + vertical connecting line
     Column(
       horizontalAlignment = Alignment.CenterHorizontally,
-      modifier = Modifier.width(32.dp)
+      modifier = Modifier
+        .width(22.dp)
+        .padding(top = 3.dp)
     ) {
-      StepTextBadge(
-        stepNumber = step.stepNumber,
-        type = step.type,
-        toolStatus = step.toolStatus,
-        isActive = isActive
+      Text(
+        text = String.format("%02d", step.stepNumber),
+        style = MaterialTheme.typography.labelSmall,
+        fontFamily = JetBrainsMonoFontFamily,
+        fontSize = 9.sp,
+        fontWeight = FontWeight.Medium,
+        color = if (isActive) AmoledActionPrimary else AmoledIconGreyDark
       )
       if (!isLast) {
+        Spacer(modifier = Modifier.height(3.dp))
         Box(
           modifier = Modifier
             .width(1.dp)
-            .height(if (isModelResponse) 32.dp else 42.dp)
-            .background(if (isActive) AmoledActionPrimary.copy(alpha = 0.6f) else AmoledBorderSubtle)
+            .height(if (isModelResponse) 30.dp else 40.dp)
+            .background(if (isActive) AmoledActionPrimary.copy(alpha = 0.5f) else AmoledBorderSubtle)
         )
       }
     }
@@ -119,25 +122,21 @@ fun ExecutionFeedItem(
     Box(modifier = Modifier.weight(1f)) {
       when {
         isModelResponse -> {
-          // Model response: Stream naturally without outer boxes or cards
           ModelResponseView(
             step = step,
             isActive = isActive
           )
         }
         isToolCall -> {
-          // Tool calls: Premium styled Tool Call Box with animated states
           ToolCallBoxView(
             step = step,
             isActive = isActive
           )
         }
         isObjective -> {
-          // Task objective view
           TaskObjectiveView(step = step)
         }
         else -> {
-          // Observation, verification, or generic steps
           ObservationStepView(step = step)
         }
       }
@@ -146,7 +145,8 @@ fun ExecutionFeedItem(
 }
 
 /**
- * Clean text badge for step indicator: Pure typography (no icons).
+ * Clean text badge for step indicator on the RIGHT: Pure typography (no icons).
+ * Displays [OK], [OBS], [RUN], [ERR], [AI], [END], [VRF], [TASK].
  */
 @Composable
 fun StepTextBadge(
@@ -164,13 +164,14 @@ fun StepTextBadge(
     type == StepType.CONCLUSION -> "END"
     type == StepType.VERIFICATION -> "VRF"
     type == StepType.OBSERVATION -> "OBS"
-    else -> String.format("%02d", stepNumber)
+    else -> "OK"
   }
 
   val textColor = when {
     isActive -> AmoledActionPrimary
     toolStatus == ToolStatus.FAILED.name || type == StepType.ERROR -> AmoledStatusError
     toolStatus == ToolStatus.SUCCEEDED.name || type == StepType.CONCLUSION -> AmoledStatusSuccess
+    type == StepType.TASK_INTENT -> AmoledActionPrimary
     else -> AmoledIconGreyLight
   }
 
@@ -178,25 +179,29 @@ fun StepTextBadge(
     isActive -> Color(0xFF1F1A12)
     toolStatus == ToolStatus.FAILED.name || type == StepType.ERROR -> Color(0xFF221111)
     toolStatus == ToolStatus.SUCCEEDED.name || type == StepType.CONCLUSION -> Color(0xFF101C12)
-    else -> Color(0xFF121212)
+    type == StepType.TASK_INTENT -> Color(0xFF1A1812)
+    else -> Color(0xFF141414)
   }
 
   Surface(
-    shape = RoundedCornerShape(5.dp),
+    shape = RoundedCornerShape(4.dp),
     color = bgColor,
     border = androidx.compose.foundation.BorderStroke(
       1.dp,
       if (isActive) AmoledActionPrimary.copy(alpha = 0.5f) else AmoledBorderSubtle
     ),
-    modifier = Modifier.size(24.dp)
+    modifier = Modifier.padding(horizontal = 1.dp)
   ) {
-    Box(contentAlignment = Alignment.Center) {
+    Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+    ) {
       Text(
         text = label,
         style = MaterialTheme.typography.labelSmall,
         fontFamily = JetBrainsMonoFontFamily,
         fontWeight = FontWeight.Bold,
-        fontSize = 8.sp,
+        fontSize = 9.sp,
         color = textColor
       )
     }
@@ -205,7 +210,7 @@ fun StepTextBadge(
 
 /**
  * Model Response View:
- * Shows the Model response streaming normally without any boxes or cards.
+ * Streamed thoughts or conclusions with status badge and copy button on the RIGHT.
  */
 @Composable
 fun ModelResponseView(
@@ -217,7 +222,7 @@ fun ModelResponseView(
       .fillMaxWidth()
       .padding(vertical = 4.dp)
   ) {
-    // Discreet header row
+    // Header row
     Row(
       modifier = Modifier.fillMaxWidth(),
       verticalAlignment = Alignment.CenterVertically,
@@ -246,12 +251,25 @@ fun ModelResponseView(
         }
       }
 
-      LittleCopyButton(
-        textToCopy = step.content,
-        label = "COPY",
-        buttonSize = 22.dp,
-        testTag = "copy_model_response_${step.stepNumber}"
-      )
+      // BADGE AND ACTIONS ALIGNED ON THE RIGHT
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+      ) {
+        StepTextBadge(
+          stepNumber = step.stepNumber,
+          type = step.type,
+          toolStatus = step.toolStatus,
+          isActive = isActive
+        )
+
+        LittleCopyButton(
+          textToCopy = step.content,
+          label = "COPY",
+          buttonSize = 22.dp,
+          testTag = "copy_model_response_${step.stepNumber}"
+        )
+      }
     }
 
     Spacer(modifier = Modifier.height(4.dp))
@@ -266,14 +284,17 @@ fun ModelResponseView(
 
 /**
  * Premium Tool Call Box:
- * Beautifully animated when active, finished, failed, or waiting.
+ * - Details & search results HIDDEN by default.
+ * - Only viewable when user clicks [VIEW].
+ * - Status badge [OK], [RUN], etc. on the RIGHT.
  */
 @Composable
 fun ToolCallBoxView(
   step: ExecutionStep,
   isActive: Boolean
 ) {
-  var isExpanded by remember { mutableStateOf(true) }
+  // HIDDEN BY DEFAULT! ONLY VIEW WHEN USER CLICKS [VIEW]
+  var isExpanded by remember { mutableStateOf(false) }
 
   val toolState = when {
     isActive -> "ACTIVE"
@@ -328,53 +349,19 @@ fun ToolCallBoxView(
         .fillMaxWidth()
         .padding(10.dp)
     ) {
-      // Header row
+      // Header row: Tool name & metrics on LEFT, Status Badge & [VIEW] on RIGHT
       Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
       ) {
+        // LEFT: Tool name and execution metrics
         Row(
           verticalAlignment = Alignment.CenterVertically,
           modifier = Modifier
             .weight(1f)
             .clickable { isExpanded = !isExpanded }
         ) {
-          // Status pill (Pure text)
-          val statusBadgeText = when (toolState) {
-            "ACTIVE" -> "RUNNING"
-            "WAITING" -> "WAITING"
-            "FAILED" -> "FAILED"
-            "FINISHED" -> "SUCCESS"
-            else -> "TOOL"
-          }
-          val statusBadgeColor = when (toolState) {
-            "ACTIVE" -> AmoledActionPrimary
-            "WAITING" -> Color(0xFFCCA033)
-            "FAILED" -> AmoledStatusError
-            "FINISHED" -> AmoledStatusSuccess
-            else -> AmoledIconGreyLight
-          }
-
-          Surface(
-            shape = RoundedCornerShape(4.dp),
-            color = Color(0xFF181818),
-            border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle)
-          ) {
-            Text(
-              text = statusBadgeText,
-              style = MaterialTheme.typography.labelSmall,
-              fontFamily = JetBrainsMonoFontFamily,
-              fontWeight = FontWeight.Bold,
-              fontSize = 9.sp,
-              color = statusBadgeColor,
-              modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-            )
-          }
-
-          Spacer(modifier = Modifier.width(8.dp))
-
-          // Tool name
           Text(
             text = step.toolName ?: step.title,
             style = MaterialTheme.typography.labelMedium,
@@ -417,8 +404,37 @@ fun ToolCallBoxView(
           }
         }
 
-        // Actions: Copy & Expand toggle (Pure text)
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // RIGHT: Status badge ("OK", "RUN", "ERR", etc.), [VIEW] toggle, and [COPY] button
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+          // Status badge on the RIGHT
+          StepTextBadge(
+            stepNumber = step.stepNumber,
+            type = step.type,
+            toolStatus = step.toolStatus,
+            isActive = isActive
+          )
+
+          // VIEW / HIDE toggle button
+          Surface(
+            shape = RoundedCornerShape(4.dp),
+            color = if (isExpanded) Color(0xFF1E1E1E) else Color(0xFF141414),
+            border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+            modifier = Modifier.clickable { isExpanded = !isExpanded }
+          ) {
+            Text(
+              text = if (isExpanded) "HIDE" else "VIEW",
+              style = MaterialTheme.typography.labelSmall,
+              fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = FontWeight.Medium,
+              fontSize = 9.sp,
+              color = if (isExpanded) AmoledActionPrimary else AmoledIconGreyLight,
+              modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+            )
+          }
+
           LittleCopyButton(
             textToCopy = buildString {
               append(step.toolName ?: step.title)
@@ -430,40 +446,26 @@ fun ToolCallBoxView(
             buttonSize = 22.dp,
             testTag = "copy_tool_${step.stepNumber}"
           )
-
-          Spacer(modifier = Modifier.width(6.dp))
-
-          Text(
-            text = if (isExpanded) "[HIDE]" else "[VIEW]",
-            style = MaterialTheme.typography.labelSmall,
-            fontFamily = JetBrainsMonoFontFamily,
-            fontWeight = FontWeight.Medium,
-            fontSize = 9.sp,
-            color = AmoledIconGrey,
-            modifier = Modifier
-              .clickable { isExpanded = !isExpanded }
-              .padding(horizontal = 3.dp, vertical = 2.dp)
-          )
         }
       }
 
-      // Arguments preview / description
-      if (step.content.isNotBlank()) {
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-          text = step.content,
-          style = MaterialTheme.typography.bodySmall.copy(
-            fontFamily = JetBrainsMonoFontFamily,
-            fontSize = 11.sp,
-            lineHeight = 15.sp
-          ),
-          color = AmoledTextSecondary
-        )
-      }
-
-      // Collapsible output details
+      // HIDDEN BY DEFAULT: Arguments and search results box only viewable when user clicks [VIEW]
       AnimatedVisibility(visible = isExpanded) {
         Column(modifier = Modifier.padding(top = 8.dp)) {
+          // Arguments preview / description
+          if (step.content.isNotBlank()) {
+            Text(
+              text = step.content,
+              style = MaterialTheme.typography.bodySmall.copy(
+                fontFamily = JetBrainsMonoFontFamily,
+                fontSize = 11.sp,
+                lineHeight = 15.sp
+              ),
+              color = AmoledTextSecondary,
+              modifier = Modifier.padding(bottom = 6.dp)
+            )
+          }
+
           if (step.toolCallId != null) {
             Text(
               text = "ID: ${step.toolCallId}",
@@ -481,8 +483,9 @@ fun ToolCallBoxView(
           }
 
           if (stdoutDisplay != null) {
+            val isSearchTool = step.toolName in listOf("web_search", "web_browse", "deep_research", "search")
             TerminalOutputBox(
-              label = "STDOUT",
+              label = if (isSearchTool) "SEARCH RESULTS" else "STDOUT",
               text = stdoutDisplay,
               isError = false
             )
@@ -504,7 +507,7 @@ fun ToolCallBoxView(
 
 /**
  * Task Objective View:
- * Renders the user-assigned task goal.
+ * Renders the user-assigned task goal with [TASK] badge and [COPY] on the RIGHT.
  */
 @Composable
 fun TaskObjectiveView(step: ExecutionStep) {
@@ -530,11 +533,24 @@ fun TaskObjectiveView(step: ExecutionStep) {
           color = AmoledActionPrimary
         )
 
-        LittleCopyButton(
-          textToCopy = step.content,
-          label = "COPY",
-          testTag = "copy_task_objective"
-        )
+        // BADGE AND ACTIONS ON THE RIGHT
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+          StepTextBadge(
+            stepNumber = step.stepNumber,
+            type = step.type,
+            toolStatus = step.toolStatus,
+            isActive = false
+          )
+
+          LittleCopyButton(
+            textToCopy = step.content,
+            label = "COPY",
+            testTag = "copy_task_objective"
+          )
+        }
       }
 
       Spacer(modifier = Modifier.height(4.dp))
@@ -552,12 +568,15 @@ fun TaskObjectiveView(step: ExecutionStep) {
 
 /**
  * Observation and Verification Step View:
- * Clean, lightweight presentation for sensory data.
+ * Clean presentation with [OBS] / [VRF] / [ERR] badge on the RIGHT,
+ * and collapsible detail view for lengthy sensory data.
  */
 @Composable
 fun ObservationStepView(step: ExecutionStep) {
   val isError = step.type == StepType.ERROR
   val isVerify = step.type == StepType.VERIFICATION
+  var isExpanded by remember { mutableStateOf(false) }
+  val isLongContent = step.content.length > 180 || !step.stdout.isNullOrBlank() || !step.stderr.isNullOrBlank()
 
   Surface(
     shape = RoundedCornerShape(8.dp),
@@ -591,17 +610,55 @@ fun ObservationStepView(step: ExecutionStep) {
           }
         )
 
-        LittleCopyButton(
-          textToCopy = step.content,
-          label = "COPY",
-          testTag = "copy_obs_${step.stepNumber}"
-        )
+        // BADGE AND ACTIONS ON THE RIGHT!
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+          StepTextBadge(
+            stepNumber = step.stepNumber,
+            type = step.type,
+            toolStatus = step.toolStatus,
+            isActive = false
+          )
+
+          if (isLongContent) {
+            Surface(
+              shape = RoundedCornerShape(4.dp),
+              color = if (isExpanded) Color(0xFF1E1E1E) else Color(0xFF141414),
+              border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+              modifier = Modifier.clickable { isExpanded = !isExpanded }
+            ) {
+              Text(
+                text = if (isExpanded) "HIDE" else "VIEW",
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = JetBrainsMonoFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = 9.sp,
+                color = if (isExpanded) AmoledActionPrimary else AmoledIconGreyLight,
+                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+              )
+            }
+          }
+
+          LittleCopyButton(
+            textToCopy = step.content,
+            label = "COPY",
+            testTag = "copy_obs_${step.stepNumber}"
+          )
+        }
       }
 
       Spacer(modifier = Modifier.height(4.dp))
 
+      val textToShow = if (isLongContent && !isExpanded) {
+        step.content.take(150) + "..."
+      } else {
+        step.content
+      }
+
       Text(
-        text = step.content,
+        text = textToShow,
         style = MaterialTheme.typography.bodySmall.copy(
           fontFamily = JetBrainsMonoFontFamily,
           fontSize = 11.sp,
@@ -699,7 +756,7 @@ fun TerminalOutputBox(
         textToCopy = text,
         label = "COPY",
         tint = AmoledIconGrey,
-        testTag = "copy_${label.lowercase()}"
+        testTag = "copy_${label.lowercase().replace(' ', '_')}"
       )
     }
 

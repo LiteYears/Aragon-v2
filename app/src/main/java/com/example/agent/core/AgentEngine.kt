@@ -85,8 +85,31 @@ class AgentEngine(
   }
 
   /**
-   * Dispatches a new task to the Agent.
-   * Cancels any previously running execution to enforce single-loop concurrency.
+   * Starts an isolated new session for a task, removing all previous artifacts and memory.
+   */
+  fun startNewSession(newSessionId: String = UUID.randomUUID().toString()): String {
+    activeJob?.cancel()
+    workspace.cleanAllArtifacts()
+    scratchpad.initSession(newSessionId)
+    scratchpad.clearSessionMemory()
+    _state.value = AgentState(
+      sessionId = newSessionId,
+      task = null,
+      status = AgentStatus.IDLE,
+      currentAction = null,
+      artifacts = emptyList(),
+      executionFeed = emptyList(),
+      messages = emptyList(),
+      plan = emptyList(),
+      fiveStageRecord = FiveStageRecord(),
+      canCancel = false
+    )
+    return newSessionId
+  }
+
+  /**
+   * Dispatches a new task to the Agent in an isolated separate session.
+   * Cancels any previously running execution and removes old artifacts to start clean.
    */
   fun submitTask(intent: String, expectedArtifact: String? = null) {
     if (intent.isBlank()) return
@@ -94,10 +117,45 @@ class AgentEngine(
     // Cancel any running job
     activeJob?.cancel()
 
+    // Isolated new session per task to prevent state/scratchpad mix-up
+    val sessionId = UUID.randomUUID().toString()
+    workspace.cleanAllArtifacts()
+    scratchpad.initSession(sessionId)
+
     val task = Task(
+      id = UUID.randomUUID().toString(),
+      sessionId = sessionId,
       goal = intent.trim(),
       status = AgentStatus.THINKING,
       expectedArtifact = expectedArtifact
+    )
+
+    _state.value = AgentState(
+      sessionId = sessionId,
+      task = task,
+      status = AgentStatus.THINKING,
+      currentAction = "Understanding task objective: '${task.goal}'",
+      artifacts = emptyList(),
+      plan = emptyList(),
+      fiveStageRecord = FiveStageRecord(intent = task.goal),
+      executionFeed = listOf(
+        ExecutionStep(
+          stepNumber = 1,
+          type = StepType.TASK_INTENT,
+          title = "Task Received",
+          content = task.goal
+        )
+      ),
+      messages = listOf(
+        AgentMessage(
+          role = MessageRole.USER,
+          content = "Task Objective: ${task.goal}"
+        )
+      ),
+      error = null,
+      verification = null,
+      completionSummary = null,
+      canCancel = true
     )
 
     activeJob = scope.launch {
@@ -123,6 +181,7 @@ class AgentEngine(
 
     // Initialize clean AgentState
     var currentState = _state.value.copy(
+      sessionId = task.sessionId,
       task = task,
       status = AgentStatus.THINKING,
       currentAction = if (isResuming) "Resuming from checkpoint turn ${existingCheckpoint?.currentTurn ?: 0}..." else "Understanding task objective: '${task.goal}'",
@@ -406,8 +465,9 @@ class AgentEngine(
                 )
               )
 
-              // Update deliverables state
-              val finalArtifacts = workspace.listAllArtifacts()
+              // Clean up temporary scratch files (.tmp, partial files) and update deliverables state
+              workspace.cleanTemporaryFiles()
+              val finalArtifacts = workspace.listAllArtifacts().filter { it.exists }
 
               // Final checkpoint update
               scratchpad.saveCheckpoint(
@@ -728,14 +788,11 @@ class AgentEngine(
   /**
    * Resets the agent and optionally cleans workspace files.
    */
-  fun reset(cleanWorkspace: Boolean = false) {
+  fun reset(cleanWorkspace: Boolean = true) {
     activeJob?.cancel()
     if (cleanWorkspace) {
-      workspace.resetWorkspace()
-      workspace.seedWorkspaceDefaults()
+      workspace.cleanAllArtifacts()
     }
-    _state.value = AgentState(
-      artifacts = workspace.listAllArtifacts()
-    )
+    startNewSession()
   }
 }

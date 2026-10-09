@@ -150,6 +150,35 @@ class WorkspaceManager(val baseDir: File) {
   }
 
   /**
+   * Removes all artifacts and files from the workspace so that the user starts completely fresh and clean.
+   */
+  fun cleanAllArtifacts() {
+    try {
+      if (baseDir.exists() && baseDir.isDirectory) {
+        baseDir.listFiles()?.forEach { file ->
+          file.deleteRecursively()
+        }
+      }
+      baseDir.mkdirs()
+    } catch (_: Exception) {}
+  }
+
+  /**
+   * Removes temporary files (e.g. .tmp, partial files).
+   */
+  fun cleanTemporaryFiles() {
+    try {
+      if (baseDir.exists() && baseDir.isDirectory) {
+        baseDir.walkTopDown().forEach { file ->
+          if (file.isFile && (file.name.endsWith(".tmp") || file.name.startsWith(".part_"))) {
+            file.delete()
+          }
+        }
+      }
+    } catch (_: Exception) {}
+  }
+
+  /**
    * Initializes workspace with sample project files if empty (e.g. data.csv).
    */
   fun seedWorkspaceDefaults() {

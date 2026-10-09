@@ -45,6 +45,7 @@ data class AgentMessage(
  */
 data class Task(
   val id: String = UUID.randomUUID().toString(),
+  val sessionId: String = UUID.randomUUID().toString(),
   val goal: String,
   val status: AgentStatus = AgentStatus.IDLE,
   val createdAt: Long = System.currentTimeMillis(),
@@ -136,6 +137,7 @@ data class FiveStageRecord(
  * The single authoritative live state of the Agent Engine.
  */
 data class AgentState(
+  val sessionId: String = UUID.randomUUID().toString(),
   val task: Task? = null,
   val status: AgentStatus = AgentStatus.IDLE,
   val currentAction: String? = null,

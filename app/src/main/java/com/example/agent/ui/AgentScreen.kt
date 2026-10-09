@@ -158,8 +158,15 @@ fun AgentScreen(
         currentAction = state.currentAction,
         canCancel = state.canCancel,
         onStop = { viewModel.stopExecution() },
+        onStartNewTask = {
+          inputText = ""
+          viewModel.startNewTask()
+        },
         onOpenAbout = { viewModel.selectTab(UiTab.ABOUT_ARAGON) },
-        onResetWorkspace = { viewModel.resetWorkspace() },
+        onResetWorkspace = {
+          inputText = ""
+          viewModel.resetWorkspace()
+        },
         onGetTranscript = { viewModel.getExecutionTranscript() }
       )
     },
@@ -499,9 +506,9 @@ fun AgentScreen(
           UiTab.EXECUTION_FEED -> {
             if (state.executionFeed.isEmpty()) {
               EmptyExecutionState(
-                onQuickRun = {
-                  inputText = viewModel.presets[0].prompt
-                  viewModel.submitTask(viewModel.presets[0].prompt, viewModel.presets[0].expectedArtifact)
+                onStartNewTask = {
+                  inputText = ""
+                  viewModel.startNewTask()
                 }
               )
             } else {
@@ -769,6 +776,7 @@ fun AgentTopHeader(
   currentAction: String?,
   canCancel: Boolean,
   onStop: () -> Unit,
+  onStartNewTask: () -> Unit,
   onOpenAbout: () -> Unit,
   onResetWorkspace: () -> Unit,
   onGetTranscript: () -> String
@@ -818,6 +826,26 @@ fun AgentTopHeader(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+          // New task action: Starts empty task in separate new session
+          Surface(
+            shape = RoundedCornerShape(4.dp),
+            color = Color(0xFF181510),
+            border = androidx.compose.foundation.BorderStroke(1.dp, AmoledActionPrimary.copy(alpha = 0.5f)),
+            modifier = Modifier
+              .clickable { onStartNewTask() }
+              .testTag("header_new_task_btn")
+          ) {
+            Text(
+              text = "+ NEW",
+              style = MaterialTheme.typography.labelSmall,
+              fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = FontWeight.Bold,
+              fontSize = 9.sp,
+              color = AmoledActionPrimary,
+              modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+            )
+          }
+
           LittleCopyButton(
             textToCopy = onGetTranscript(),
             label = "LOG",
@@ -958,10 +986,11 @@ fun StatusPill(status: AgentStatus) {
  * Home Screen (Empty State):
  * Keeps ONLY the Logo, Slogan, and "Start a New Task" button.
  * All suggestion cards are removed from the home screen as requested.
+ * Clicking "Start a New Task" starts an empty task with a separate new session.
  */
 @Composable
 fun EmptyExecutionState(
-  onQuickRun: () -> Unit
+  onStartNewTask: () -> Unit
 ) {
   val scrollState = rememberScrollState()
   Column(
@@ -1024,7 +1053,7 @@ fun EmptyExecutionState(
 
     // "Start a New Task" Button: Pure text (No icon)
     Button(
-      onClick = onQuickRun,
+      onClick = onStartNewTask,
       shape = RoundedCornerShape(10.dp),
       colors = ButtonDefaults.buttonColors(
         containerColor = AmoledActionPrimary,
