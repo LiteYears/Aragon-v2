@@ -329,7 +329,68 @@ class WriteFileTool(private val workspace: WorkspaceManager) : Tool {
       try {
         val file = workspace.resolveSafe(path)
         file.parentFile?.mkdirs()
-        file.writeText(content)
+
+        val isDocx = path.endsWith(".docx", ignoreCase = true) || path.endsWith(".doc", ignoreCase = true)
+        val isJson = path.endsWith(".json", ignoreCase = true)
+
+        if (isDocx) {
+          if (content.trim().length < 50) {
+            return@withContext ToolResult(
+              callId = callId,
+              toolName = name,
+              status = ToolStatus.FAILED,
+              arguments = arguments,
+              output = null,
+              error = "Deliverable validation failed: Content is too thin (${content.trim().length} chars) to be a valid Word briefing. Do not write placeholder section headers; write the full synthesized findings.",
+              duration = System.currentTimeMillis() - startTime,
+              stdout = null,
+              stderr = "Content too thin for .docx deliverable",
+              exitCode = 1
+            )
+          }
+
+          // Build authentic OpenXML ZIP archive with RTL Arabic support
+          DocxBuilder.fromMarkdownOrText(content).save(file)
+
+          if (!file.exists() || !DocxBuilder.isZipFile(file)) {
+            return@withContext ToolResult(
+              callId = callId,
+              toolName = name,
+              status = ToolStatus.FAILED,
+              arguments = arguments,
+              output = null,
+              error = "Deliverable validation failed: Generated file '$path' is not a valid OpenXML Word document (missing PK zip structure).",
+              duration = System.currentTimeMillis() - startTime,
+              stdout = null,
+              stderr = "Invalid DOCX zip archive",
+              exitCode = 1
+            )
+          }
+        } else if (isJson) {
+          try {
+            if (content.trim().startsWith("[")) {
+              org.json.JSONArray(content)
+            } else {
+              org.json.JSONObject(content)
+            }
+          } catch (je: Exception) {
+            return@withContext ToolResult(
+              callId = callId,
+              toolName = name,
+              status = ToolStatus.FAILED,
+              arguments = arguments,
+              output = null,
+              error = "JSON validation error for '$path': ${je.message}. Content must be valid JSON.",
+              duration = System.currentTimeMillis() - startTime,
+              stdout = null,
+              stderr = "Malformed JSON syntax: ${je.message}",
+              exitCode = 1
+            )
+          }
+          file.writeText(content)
+        } else {
+          file.writeText(content)
+        }
 
         // Strict authoritative verification that write succeeded on filesystem
         if (!file.exists()) {
@@ -347,24 +408,9 @@ class WriteFileTool(private val workspace: WorkspaceManager) : Tool {
           )
         }
 
-        val expectedBytes = content.toByteArray(Charsets.UTF_8).size.toLong()
-        if (file.length() != expectedBytes) {
-          return@withContext ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.FAILED,
-            arguments = arguments,
-            output = null,
-            error = "Filesystem verification failed: expected $expectedBytes bytes on disk, found ${file.length()} bytes.",
-            duration = System.currentTimeMillis() - startTime,
-            stdout = null,
-            stderr = "Byte count mismatch after write",
-            exitCode = 1
-          )
-        }
-
+        val actualBytes = file.length()
         val artifact = workspace.createArtifactFromFile(file, callId)
-        val successMsg = "Successfully wrote ${content.length} characters ($expectedBytes bytes) to '$path' and verified on disk."
+        val successMsg = "Successfully wrote and verified deliverable '$path' ($actualBytes bytes on disk)."
 
         ToolResult(
           callId = callId,

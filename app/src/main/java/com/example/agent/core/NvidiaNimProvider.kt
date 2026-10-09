@@ -263,14 +263,16 @@ class NvidiaNimProvider(
       )
     }
 
-    // Candidate models to try in sequence: requested model first, then verified free fallbacks
+    // Candidate models to try in sequence: requested model first, then verified free agentic/coding fallbacks
     val candidateModels = buildList {
       add(activeConfig.model)
       val fallbacks = listOf(
         NvidiaNimConfig.DEFAULT_MODEL,
-        NvidiaNimModels.LLAMA_3_2_11B,
+        NvidiaNimModels.GLM_5_3_FLASH,
         NvidiaNimModels.NEMOTRON_3_5_LIGHTNING,
-        NvidiaNimModels.MISTRAL_LARGE_2
+        NvidiaNimModels.CODESTRAL_22B,
+        NvidiaNimModels.MISTRAL_LARGE_2,
+        NvidiaNimModels.KIMI_K3
       )
       for (f in fallbacks) {
         if (!contains(f)) add(f)

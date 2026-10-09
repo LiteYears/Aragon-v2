@@ -10,6 +10,7 @@ import java.util.zip.ZipOutputStream
  * Pure Kotlin/Java OpenXML .docx builder with zero external dependencies.
  * Creates authentic Microsoft Word .docx files (valid ZIP archives) that open
  * natively in Microsoft Word, Google Docs, LibreOffice, and mobile Office apps.
+ * Supports Bi-directional Right-to-Left (RTL) Arabic & complex script rendering.
  */
 class DocxBuilder {
 
@@ -17,28 +18,30 @@ class DocxBuilder {
     val text: String,
     val headingLevel: Int = 0, // 0 = normal paragraph, 1 = Title/H1, 2 = H2, 3 = H3
     val isBold: Boolean = false,
-    val isItalic: Boolean = false
+    val isItalic: Boolean = false,
+    val isRtl: Boolean = false
   )
 
   data class Table(
     val headers: List<String>,
-    val rows: List<List<String>>
+    val rows: List<List<String>>,
+    val isRtl: Boolean = false
   )
 
-  private val elements = mutableListOf<Any>() // Paragraph or Table
+  private val elements = mutableListOf<Any>()
 
-  fun addHeading(text: String, level: Int = 1): DocxBuilder {
-    elements.add(Paragraph(text = text, headingLevel = level.coerceIn(1, 3), isBold = true))
+  fun addHeading(text: String, level: Int = 1, isRtl: Boolean = containsRtl(text)): DocxBuilder {
+    elements.add(Paragraph(text = text, headingLevel = level.coerceIn(1, 3), isBold = true, isRtl = isRtl))
     return this
   }
 
-  fun addParagraph(text: String, isBold: Boolean = false, isItalic: Boolean = false): DocxBuilder {
-    elements.add(Paragraph(text = text, headingLevel = 0, isBold = isBold, isItalic = isItalic))
+  fun addParagraph(text: String, isBold: Boolean = false, isItalic: Boolean = false, isRtl: Boolean = containsRtl(text)): DocxBuilder {
+    elements.add(Paragraph(text = text, headingLevel = 0, isBold = isBold, isItalic = isItalic, isRtl = isRtl))
     return this
   }
 
-  fun addTable(headers: List<String>, rows: List<List<String>>): DocxBuilder {
-    elements.add(Table(headers = headers, rows = rows))
+  fun addTable(headers: List<String>, rows: List<List<String>>, isRtl: Boolean = headers.any { containsRtl(it) }): DocxBuilder {
+    elements.add(Table(headers = headers, rows = rows, isRtl = isRtl))
     return this
   }
 
@@ -101,7 +104,7 @@ class DocxBuilder {
       <w:docDefaults>
         <w:rPrDefault>
           <w:rPr>
-            <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/>
+            <w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/>
             <w:sz w:val="22"/>
             <w:color w:val="262626"/>
           </w:rPr>
@@ -140,6 +143,11 @@ class DocxBuilder {
     sb.append("<w:p>")
     sb.append("<w:pPr>")
 
+    val isRtl = p.isRtl || containsRtl(p.text)
+    if (isRtl) {
+      sb.append("<w:bidi/><w:jc w:val=\"right\"/>")
+    }
+
     val (fontSizeHalfPt, colorHex, spacingBefore, spacingAfter) = when (p.headingLevel) {
       1 -> Quad(36, "1F497D", 280, 160) // 18pt bold
       2 -> Quad(28, "2E74B5", 200, 100) // 14pt bold
@@ -156,8 +164,12 @@ class DocxBuilder {
       if (idx > 0) {
         sb.append("<w:r><w:br/></w:r>")
       }
+      val lineIsRtl = isRtl || containsRtl(line)
       sb.append("<w:r>")
       sb.append("<w:rPr>")
+      if (lineIsRtl) {
+        sb.append("<w:rtl/><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/>")
+      }
       sb.append("""<w:sz w:val="$fontSizeHalfPt"/>""")
       sb.append("""<w:color w:val="$colorHex"/>""")
       if (p.isBold || p.headingLevel > 0) sb.append("<w:b/>")
@@ -172,11 +184,11 @@ class DocxBuilder {
 
   private fun appendTableXml(sb: StringBuilder, t: Table) {
     sb.append("<w:tbl>")
-    // Table properties: borders & center alignment
     sb.append("""
       <w:tblPr>
         <w:tblW w:w="5000" w:type="pct"/>
-        <w:jc w:val="center"/>
+        <w:jc w:val="${if (t.isRtl) "right" else "center"}"/>
+        ${if (t.isRtl) "<w:bidiVisual/>" else ""}
         <w:tblBorders>
           <w:top w:val="single" w:sz="6" w:space="0" w:color="D3D3D3"/>
           <w:left w:val="single" w:sz="6" w:space="0" w:color="D3D3D3"/>
@@ -188,31 +200,28 @@ class DocxBuilder {
       </w:tblPr>
     """.trimIndent())
 
-    // Headers row
     if (t.headers.isNotEmpty()) {
       sb.append("<w:tr>")
       sb.append("<w:trPr><w:tblHeader/></w:trPr>")
       for (h in t.headers) {
-        appendCellXml(sb, h, isHeader = true)
+        appendCellXml(sb, h, isHeader = true, isRtl = t.isRtl || containsRtl(h))
       }
       sb.append("</w:tr>")
     }
 
-    // Data rows
     for (row in t.rows) {
       sb.append("<w:tr>")
       for (cell in row) {
-        appendCellXml(sb, cell, isHeader = false)
+        appendCellXml(sb, cell, isHeader = false, isRtl = t.isRtl || containsRtl(cell))
       }
       sb.append("</w:tr>")
     }
 
     sb.append("</w:tbl>")
-    // Spacer after table
     sb.append("<w:p><w:pPr><w:spacing w:after=\"160\"/></w:pPr></w:p>")
   }
 
-  private fun appendCellXml(sb: StringBuilder, text: String, isHeader: Boolean) {
+  private fun appendCellXml(sb: StringBuilder, text: String, isHeader: Boolean, isRtl: Boolean) {
     sb.append("<w:tc>")
     sb.append("<w:tcPr>")
     val bgColor = if (isHeader) "F2F4F7" else "FFFFFF"
@@ -220,8 +229,14 @@ class DocxBuilder {
     sb.append("""<w:tcMar><w:top w:w="120" w:type="dxa"/><w:bottom w:w="120" w:type="dxa"/><w:left w:w="160" w:type="dxa"/><w:right w:w="160" w:type="dxa"/></w:tcMar>""")
     sb.append("</w:tcPr>")
     sb.append("<w:p>")
+    if (isRtl) {
+      sb.append("<w:pPr><w:bidi/><w:jc w:val=\"right\"/></w:pPr>")
+    }
     sb.append("<w:r>")
     sb.append("<w:rPr>")
+    if (isRtl) {
+      sb.append("<w:rtl/><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/>")
+    }
     sb.append("""<w:sz w:val="20"/>""")
     if (isHeader) {
       sb.append("<w:b/>")
@@ -244,4 +259,63 @@ class DocxBuilder {
       .replace("'", "&apos;")
 
   private data class Quad(val a: Int, val b: String, val c: Int, val d: Int)
+
+  companion object {
+    /**
+     * Checks if text contains Right-to-Left (Arabic/Hebrew) unicode characters.
+     */
+    fun containsRtl(text: String): Boolean {
+      for (ch in text) {
+        val dir = Character.getDirectionality(ch)
+        if (dir == Character.DIRECTIONALITY_RIGHT_TO_LEFT || dir == Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC) {
+          return true
+        }
+      }
+      return false
+    }
+
+    /**
+     * Checks if a file is a valid ZIP archive (magic bytes PK\x03\x04).
+     */
+    fun isZipFile(file: File): Boolean {
+      if (!file.exists() || file.length() < 4) return false
+      return try {
+        file.inputStream().use {
+          val b = ByteArray(4)
+          val read = it.read(b)
+          read == 4 && b[0] == 0x50.toByte() && b[1] == 0x4B.toByte() && b[2] == 0x03.toByte() && b[3] == 0x04.toByte()
+        }
+      } catch (_: Exception) {
+        false
+      }
+    }
+
+    /**
+     * Parses structured markdown or text with headings and builds a verified OpenXML .docx document.
+     */
+    fun fromMarkdownOrText(text: String): DocxBuilder {
+      val builder = DocxBuilder()
+      val lines = text.lines()
+      for (line in lines) {
+        val trimmed = line.trim()
+        when {
+          trimmed.startsWith("# ") -> builder.addHeading(trimmed.removePrefix("# ").trim(), 1)
+          trimmed.startsWith("## ") -> builder.addHeading(trimmed.removePrefix("## ").trim(), 2)
+          trimmed.startsWith("### ") -> builder.addHeading(trimmed.removePrefix("### ").trim(), 3)
+          trimmed.startsWith("- ") || trimmed.startsWith("* ") -> {
+            val itemText = trimmed.removePrefix("- ").removePrefix("* ").trim()
+            val isBold = itemText.startsWith("**") && itemText.endsWith("**")
+            val clean = if (isBold) itemText.removePrefix("**").removeSuffix("**") else itemText
+            builder.addParagraph("• $clean", isBold = isBold)
+          }
+          trimmed.isNotBlank() -> {
+            val isBold = trimmed.startsWith("**") && trimmed.endsWith("**")
+            val cleanText = if (isBold) trimmed.removePrefix("**").removeSuffix("**") else trimmed
+            builder.addParagraph(cleanText, isBold = isBold)
+          }
+        }
+      }
+      return builder
+    }
+  }
 }
