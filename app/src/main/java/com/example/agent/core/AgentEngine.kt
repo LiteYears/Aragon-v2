@@ -24,7 +24,7 @@ import java.util.UUID
 class AgentEngine(
   val workspaceDir: File,
   initialProvider: LLMProvider = AutonomousSandboxProvider(),
-  private val maxSteps: Int = 10000
+  private val maxSteps: Int = 35
 ) {
 
   val workspace = WorkspaceManager(workspaceDir)
@@ -44,6 +44,8 @@ class AgentEngine(
   val state: StateFlow<AgentState> = _state.asStateFlow()
 
   init {
+    workspace.seedWorkspaceDefaults()
+
     // Register canonical sandbox tools
     registry.register(TerminalTool(workspace), "bash", "sh")
     registry.register(PythonTool(workspace), "python", "py", "python3")
@@ -90,6 +92,7 @@ class AgentEngine(
   fun startNewSession(newSessionId: String = UUID.randomUUID().toString()): String {
     activeJob?.cancel()
     workspace.cleanAllArtifacts()
+    workspace.seedWorkspaceDefaults()
     scratchpad.initSession(newSessionId)
     scratchpad.clearSessionMemory()
     _state.value = AgentState(
@@ -120,6 +123,7 @@ class AgentEngine(
     // Isolated new session per task to prevent state/scratchpad mix-up
     val sessionId = UUID.randomUUID().toString()
     workspace.cleanAllArtifacts()
+    workspace.seedWorkspaceDefaults()
     scratchpad.initSession(sessionId)
 
     val task = Task(
@@ -214,6 +218,8 @@ class AgentEngine(
     val actionSignatureHistory = mutableListOf<String>()
     var turnCounter = if (isResuming) existingCheckpoint?.currentTurn ?: 0 else 0
     var providerDropRetries = 0
+    var consecutiveVerificationFailures = 0
+    var totalVerificationRejections = 0
 
     try {
       while (turnCounter < maxSteps) {
@@ -495,7 +501,37 @@ class AgentEngine(
               return
             } else {
               // DO NOT COMPLETE: Verification rejected premature or unverified completion
+              consecutiveVerificationFailures++
+              totalVerificationRejections++
               val rejectionMsg = "Objective Verification Incomplete: ${verificationResult.details}. The task cannot be concluded until the required deliverables exist on disk."
+
+              if (consecutiveVerificationFailures >= 3 || totalVerificationRejections >= 3) {
+                val failureFeed = currentState.executionFeed + listOf(
+                  ExecutionStep(
+                    stepNumber = ++stepCounter,
+                    type = StepType.VERIFICATION,
+                    title = "Verification Incomplete",
+                    content = rejectionMsg
+                  ),
+                  ExecutionStep(
+                    stepNumber = ++stepCounter,
+                    type = StepType.ERROR,
+                    title = "Objective Verification Halted",
+                    content = "Task halted: Deliverables could not be verified after repeated completion attempts ($totalVerificationRejections verification rejections). Details: ${verificationResult.details}"
+                  )
+                )
+
+                currentState = currentState.copy(
+                  status = AgentStatus.FAILED,
+                  currentAction = "Verification rejected completion: ${verificationResult.details}",
+                  error = "Verification incomplete: ${verificationResult.details}",
+                  verification = verificationResult,
+                  executionFeed = failureFeed,
+                  canCancel = false
+                )
+                _state.value = currentState
+                return
+              }
 
               val feed = currentState.executionFeed + ExecutionStep(
                 stepNumber = ++stepCounter,

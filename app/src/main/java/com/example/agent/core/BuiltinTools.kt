@@ -53,6 +53,25 @@ class TerminalTool(private val workspace: WorkspaceManager) : Tool {
         )
       }
 
+      // Seamless execution of Python/Pip commands via native PythonRuntime on Android sandbox
+      if (PythonRuntime.matches(command)) {
+        val pyResult = PythonRuntime.execute(command, workspace.baseDir)
+        val currentArtifacts = workspace.listAllArtifacts()
+        return@withContext ToolResult(
+          callId = callId,
+          toolName = name,
+          status = if (pyResult.exitCode == 0) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
+          arguments = arguments,
+          output = pyResult.stdout.ifEmpty { null },
+          error = if (pyResult.exitCode != 0) pyResult.stderr.ifBlank { "Python execution failed" } else null,
+          artifacts = currentArtifacts,
+          duration = System.currentTimeMillis() - startTime,
+          stdout = pyResult.stdout,
+          stderr = pyResult.stderr,
+          exitCode = pyResult.exitCode
+        )
+      }
+
       var process: Process? = null
       try {
         workspace.baseDir.mkdirs()

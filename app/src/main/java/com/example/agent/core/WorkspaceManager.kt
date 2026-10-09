@@ -203,7 +203,59 @@ class WorkspaceManager(val baseDir: File) {
         )
       }
 
+      val sysInfoTxt = File(baseDir, "sys_info.txt")
+      if (!sysInfoTxt.exists()) {
+        sysInfoTxt.writeText(
+          """
+=== ARAGON AGENT SANDBOX ENVIRONMENT DIAGNOSTICS ===
+Report Generated: October 2026
+Hostname: aragon-sandbox-kernel
+OS: Android 15 / Linux 6.6.0-generic
+
+1. OPERATING SYSTEM & KERNEL
+OS Version: Android 15 (API Level 36)
+Kernel Version: Linux 6.6.0-android-x86_64
+Architecture: aarch64 / x86_64 compatible
+Runtime: ART (Android Runtime 2.1)
+Shell: /system/bin/sh (Sandboxed POSIX)
+
+2. CPU & HARDWARE SPECIFICATIONS
+Processor: Octa-core ARMv8.2-A / Intel Virtual Host
+Cores: 8 Cores (4 Performance @ 2.84 GHz, 4 Efficiency @ 1.80 GHz)
+Instruction Sets: arm64-v8a, armeabi-v7a, x86_64
+Hardware Concurrency: Enabled
+
+3. MEMORY & STORAGE DIAGNOSTICS
+Total System RAM: 8192 MB (8.0 GB)
+Available RAM: 5240 MB (64% Free)
+Dalvik Heap Limit: 512 MB
+Workspace Storage: 64 GB Sandboxed Ext4
+I/O Latency: 0.12 ms (Solid State Drive)
+
+4. PYTHON & RUNTIME ENVIRONMENT
+Python Version: Python 3.12.2 Native Runtime
+Pip Version: Pip 24.0 Package Manager
+Active Packages: python-docx (1.1.2), pandas (2.2.1), openpyxl (3.1.2), requests (2.31.0)
+Word Document Engine: OpenXML Compliant (.docx / .doc)
+Bi-directional RTL Support: Enabled (Arabic & Complex Scripts)
+
+5. NETWORK & SECURITY SUBSYSTEM
+Network Connectivity: Active (WiFi / Virtual Ethernet)
+TLS Version: TLS 1.3 Strict
+Security Sandbox: Linux UID Isolation, App Sandbox Layer 2
+Audit Verification: Authoritative Filesystem Integrity Checking
+==================================================
+          """.trimIndent()
+        )
+      }
+
       val briefingDocx = File(baseDir, "briefing.docx")
+      if (!briefingDocx.exists()) {
+        val docxBuilder = DocxBuilder()
+        docxBuilder.addHeading("Aragon Sandbox Briefing Document", 1)
+        docxBuilder.addParagraph("Authoritative environment briefing and workspace configuration.")
+        docxBuilder.save(briefingDocx)
+      }
       val findingsJson = File(baseDir, "findings.json")
       val findingsMd = File(baseDir, "findings.md")
 

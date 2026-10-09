@@ -407,5 +407,70 @@ class AgentKernelTest {
     workspace.cleanTemporaryFiles()
     assertFalse("Temporary file should be removed", tempFile.exists())
   }
+
+  @Test
+  fun testTransformSysInfoWordDocExecutionAndVerification() = runBlocking {
+    val workspaceDir = tempFolder.newFolder("word_workspace")
+    val engine = AgentEngine(
+      workspaceDir = workspaceDir,
+      initialProvider = AutonomousSandboxProvider(),
+      maxSteps = 15
+    )
+
+    engine.submitTask(
+      intent = "Transform sys_info.txt into a structured Word document (sys_info.docx) using Python 3 and python-docx.",
+      expectedArtifact = "sys_info.docx"
+    )
+
+    var attempts = 0
+    while (engine.state.value.status != AgentStatus.COMPLETED && attempts < 80) {
+      delay(100)
+      attempts++
+    }
+
+    val finalState = engine.state.value
+    assertEquals(AgentStatus.COMPLETED, finalState.status)
+    assertTrue(File(workspaceDir, "sys_info.docx").exists())
+    assertTrue(finalState.executionFeed.size < 30) // No brute-force loop explosion
+  }
+
+  @Test
+  fun testVerificationRejectionCircuitBreakerPreventsInfiniteLoop() = runBlocking {
+    val workspaceDir = tempFolder.newFolder("circuit_breaker_workspace")
+    // Provider that always proposes complete without executing any tools
+    val prematureCompleteProvider = object : com.example.agent.core.LLMProvider {
+      override val providerName: String = "StubPrematureComplete"
+      override suspend fun decideNextAction(
+        systemPrompt: String,
+        taskIntent: String,
+        messages: List<com.example.agent.core.AgentMessage>,
+        tools: List<com.example.agent.core.Tool>
+      ): com.example.agent.core.LLMDecision = com.example.agent.core.LLMDecision.Complete("Premature done")
+    }
+
+    val engine = AgentEngine(
+      workspaceDir = workspaceDir,
+      initialProvider = prematureCompleteProvider,
+      maxSteps = 20
+    )
+
+    engine.submitTask(
+      intent = "Create missing_file.docx",
+      expectedArtifact = "missing_file.docx"
+    )
+
+    var attempts = 0
+    while (engine.state.value.status != AgentStatus.FAILED && attempts < 80) {
+      delay(100)
+      attempts++
+    }
+
+    val finalState = engine.state.value
+    assertEquals(AgentStatus.FAILED, finalState.status)
+    // Verify that it halted without unbounded loops (rejections capped by circuit breaker)
+    val rejectionsCount = finalState.executionFeed.count { it.title.contains("Verification Incomplete") }
+    assertTrue("Verification rejections must be capped by circuit breaker", rejectionsCount in 1..3)
+  }
 }
+
 
