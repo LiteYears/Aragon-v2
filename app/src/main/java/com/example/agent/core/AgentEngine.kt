@@ -182,6 +182,16 @@ class AgentEngine(
       existingCheckpoint.status == "IN_PROGRESS"
 
     val initialPlan = if (isResuming) existingCheckpoint!!.planItems else scratchpad.loadPlan()
+    val planner = TaskPlanner(task.goal)
+    if (initialPlan.isNotEmpty()) {
+      planner.acceptModelPlan(initialPlan.joinToString("\n"))
+      if (isResuming) {
+        planner.restoreProgress(
+          completed = existingCheckpoint?.completedSections.orEmpty(),
+          pending = existingCheckpoint?.pendingSections.orEmpty()
+        )
+      }
+    }
 
     // Initialize clean AgentState
     var currentState = _state.value.copy(
@@ -235,7 +245,7 @@ class AgentEngine(
         _state.value = currentState
 
         // Layer 0.3: Context budget accounting — inject pinned user goal, scratchpad findings, and plan
-        val systemPrompt = buildSystemContext(task, currentState)
+        val systemPrompt = buildSystemContext(task, currentState, planner)
 
         val decision = activeProvider.decideNextAction(
           systemPrompt = systemPrompt,
@@ -261,7 +271,8 @@ class AgentEngine(
 
             // Record Plan & Thought
             val updatedPlan = if (decision.plan != null) {
-              val parsedLines = decision.plan.lines().filter { it.isNotBlank() }
+              planner.acceptModelPlan(decision.plan)
+              val parsedLines = planner.planDescriptions()
               scratchpad.savePlan(parsedLines)
               parsedLines
             } else currentState.plan
@@ -338,6 +349,7 @@ class AgentEngine(
 
               // Pacing between tool display and execution
               delay(100)
+              planner.markToolStarted(toolCall.toolName)
 
               val (toolResult, observation) = if (recentIdenticalCount >= 2) {
                 // Anti-stagnation safeguard: Do not execute identical tool call more than twice!
@@ -407,6 +419,8 @@ class AgentEngine(
               val updatedObservations = currentState.fiveStageRecord.observations +
                 observation.summary
 
+              planner.recordToolResult(toolResult, observation.summary)
+
               // Continuously scan and organize artifacts on filesystem
               val updatedArtifacts = workspace.listAllArtifacts()
 
@@ -415,7 +429,9 @@ class AgentEngine(
                 AgentCheckpoint(
                   taskGoal = task.goal,
                   currentTurn = turnCounter,
-                  planItems = currentState.plan,
+                  completedSections = planner.completedDescriptions(),
+                  pendingSections = planner.pendingDescriptions(),
+                  planItems = planner.planDescriptions(),
                   artifactPaths = updatedArtifacts.map { it.path },
                   totalFindingsCount = scratchpad.loadAllFindings().size,
                   status = "IN_PROGRESS"
@@ -439,12 +455,20 @@ class AgentEngine(
                 observations = currentState.observations + observation,
                 artifacts = updatedArtifacts,
                 executionFeed = updatedFeed,
+                plan = planner.planDescriptions(),
                 fiveStageRecord = currentState.fiveStageRecord.copy(
+                  currentPlan = planner.planDescriptions(),
                   actions = updatedActions,
                   observations = updatedObservations
                 )
               )
               _state.value = currentState
+
+              if (toolResult.status == ToolStatus.FAILED) {
+                // Dependent calls in the same model batch are unsafe after a failure.
+                // Stop here and let the next turn replan from the authoritative error.
+                break
+              }
             }
           }
 
@@ -485,11 +509,13 @@ class AgentEngine(
               val finalArtifacts = workspace.listAllArtifacts().filter { it.exists }
 
               // Final checkpoint update
-              scratchpad.saveCheckpoint(
-                AgentCheckpoint(
-                  taskGoal = task.goal,
-                  currentTurn = turnCounter,
-                  planItems = currentState.plan,
+      scratchpad.saveCheckpoint(
+        AgentCheckpoint(
+          taskGoal = task.goal,
+          currentTurn = turnCounter,
+          completedSections = planner.completedDescriptions(),
+          pendingSections = planner.pendingDescriptions(),
+          planItems = currentState.plan,
                   artifactPaths = finalArtifacts.map { it.path },
                   totalFindingsCount = scratchpad.loadAllFindings().size,
                   status = "COMPLETED"
@@ -512,6 +538,7 @@ class AgentEngine(
               // DO NOT COMPLETE: Verification rejected premature or unverified completion
               consecutiveVerificationFailures++
               totalVerificationRejections++
+              planner.markCompletionRejected(verificationResult.details)
               val rejectionMsg = "Objective Verification Incomplete: ${verificationResult.details}. The task cannot be concluded until the required deliverables exist on disk."
 
               if (consecutiveVerificationFailures >= 3 || totalVerificationRejections >= 3) {
@@ -566,6 +593,7 @@ class AgentEngine(
           }
 
           is LLMDecision.ProviderError -> {
+            planner.markProviderFailure(decision.message)
             if (providerDropRetries < 2) {
               providerDropRetries++
               val retryFeed = currentState.executionFeed + ExecutionStep(
@@ -640,6 +668,8 @@ class AgentEngine(
         AgentCheckpoint(
           taskGoal = task.goal,
           currentTurn = turnCounter,
+          completedSections = planner.completedDescriptions(),
+          pendingSections = planner.pendingDescriptions(),
           planItems = currentState.plan,
           artifactPaths = workspace.listAllArtifacts().map { it.path },
           totalFindingsCount = scratchpad.loadAllFindings().size,
@@ -763,7 +793,7 @@ class AgentEngine(
   /**
    * Constructs the prioritized LLM context string.
    */
-  private fun buildSystemContext(task: Task, state: AgentState): String {
+  private fun buildSystemContext(task: Task, state: AgentState, planner: TaskPlanner): String {
     val sb = StringBuilder()
     sb.appendLine(DEFAULT_AGENT_SYSTEM_PROMPT)
     sb.appendLine()
@@ -775,6 +805,8 @@ class AgentEngine(
       sb.appendLine("CURRENT PLAN (from plan.md):")
       state.plan.forEach { sb.appendLine("- $it") }
     }
+    sb.appendLine()
+    sb.appendLine(planner.context())
 
     // Layer 0.1 & 0.3: Inject externalized research memory so model never acts blind
     val researchSummary = scratchpad.getStructuredResearchSummary(maxFindings = 8)
