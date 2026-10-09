@@ -36,19 +36,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.AmoledIconGrey
+import com.example.ui.theme.AmoledStatusSuccess
 import kotlinx.coroutines.delay
 
 /**
- * Compact, tactile copy button with immediate visual feedback and clipboard integration.
- * Enables 1-tap copying for assistant responses, errors, terminal outputs, and artifacts.
+ * Modern tactile Flutter-style flat copy button with sleek grey icons and instantaneous feedback.
  */
 @Composable
 fun LittleCopyButton(
   textToCopy: String,
   modifier: Modifier = Modifier,
   label: String? = null,
-  tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
-  iconSize: Dp = 15.dp,
+  tint: Color = AmoledIconGrey,
+  iconSize: Dp = 14.dp,
   buttonSize: Dp = 28.dp,
   testTag: String = "copy_button"
 ) {
@@ -57,14 +58,14 @@ fun LittleCopyButton(
 
   LaunchedEffect(hasCopied) {
     if (hasCopied) {
-      delay(1800)
+      delay(1600)
       hasCopied = false
     }
   }
 
   Surface(
-    shape = RoundedCornerShape(6.dp),
-    color = if (hasCopied) Color(0xFF10B981).copy(alpha = 0.15f) else Color.Transparent,
+    shape = RoundedCornerShape(8.dp),
+    color = if (hasCopied) AmoledStatusSuccess.copy(alpha = 0.12f) else Color.Transparent,
     modifier = modifier
   ) {
     Row(
@@ -85,45 +86,30 @@ fun LittleCopyButton(
         if (hasCopied) {
           Icon(
             imageVector = Icons.Default.Check,
-            contentDescription = "Copied to clipboard",
-            tint = Color(0xFF10B981),
+            contentDescription = "Copied",
+            tint = AmoledStatusSuccess,
             modifier = Modifier.size(iconSize)
           )
         } else {
           Icon(
             imageVector = Icons.Default.ContentCopy,
-            contentDescription = "Copy to clipboard",
+            contentDescription = "Copy",
             tint = tint,
             modifier = Modifier.size(iconSize)
           )
         }
       }
 
-      if (label != null || hasCopied) {
-        AnimatedVisibility(
-          visible = hasCopied,
-          enter = fadeIn(),
-          exit = fadeOut()
-        ) {
-          Text(
-            text = "Copied!",
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF10B981),
-            fontSize = 10.sp,
-            modifier = Modifier.padding(end = 4.dp)
-          )
-        }
-
-        if (!hasCopied && label != null) {
-          Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = tint,
-            fontSize = 10.sp,
-            modifier = Modifier.padding(end = 4.dp)
-          )
-        }
+      if (label != null) {
+        Spacer(modifier = Modifier.width(2.dp))
+        Text(
+          text = if (hasCopied) "Copied" else label,
+          style = MaterialTheme.typography.labelSmall,
+          fontWeight = FontWeight.Medium,
+          fontSize = 10.sp,
+          color = if (hasCopied) AmoledStatusSuccess else tint,
+          modifier = Modifier.padding(end = 6.dp)
+        )
       }
     }
   }

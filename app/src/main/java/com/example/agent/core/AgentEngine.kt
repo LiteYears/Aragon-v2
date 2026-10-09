@@ -179,6 +179,7 @@ class AgentEngine(
             // 2. AUTHORITATIVE TOOL EXECUTION PHASE (Support multiple tool calls)
             for (toolCall in toolCalls) {
               currentCoroutineContext().ensureActive()
+              kotlinx.coroutines.delay(300) // Smooth transition pacing between steps
 
               val runningStepId = UUID.randomUUID().toString()
               val currentFeed = currentState.executionFeed.toMutableList()
@@ -205,6 +206,7 @@ class AgentEngine(
 
               // Execute tool authoritatively via ToolExecutor
               val toolResult = executor.execute(toolCall)
+              kotlinx.coroutines.delay(250) // Deliberate observation reveal pacing
 
               // 3. CONVERT RESULT TO AUTHORITATIVE OBSERVATION
               val observation = executor.createObservation(toolResult)
@@ -305,6 +307,7 @@ class AgentEngine(
             val verificationResult = verifyObjective(task, currentState)
 
             if (verificationResult.isSatisfied) {
+              kotlinx.coroutines.delay(250) // Smooth completion transition
               // Task COMPLETED based on authoritative evidence
               val conclusionText = decision.conclusion.ifBlank {
                 "Task completed successfully and verified."

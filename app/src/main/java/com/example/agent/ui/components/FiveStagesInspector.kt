@@ -14,12 +14,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Assignment
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Visibility
@@ -36,7 +35,18 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.agent.core.FiveStageRecord
+import com.example.ui.theme.AmoledBorder
+import com.example.ui.theme.AmoledBorderSubtle
+import com.example.ui.theme.AmoledIconGrey
+import com.example.ui.theme.AmoledIconGreyLight
+import com.example.ui.theme.AmoledSurfaceElevated
+import com.example.ui.theme.AmoledSurfaceVariant
+import com.example.ui.theme.AmoledTextMuted
+import com.example.ui.theme.AmoledTextPrimary
+import com.example.ui.theme.AmoledTextSecondary
+import com.example.ui.theme.JetBrainsMonoFontFamily
 
 @Composable
 fun FiveStagesInspector(
@@ -51,7 +61,7 @@ fun FiveStagesInspector(
       .verticalScroll(scrollState)
       .padding(16.dp)
       .testTag("five_stages_inspector"),
-    verticalArrangement = Arrangement.spacedBy(16.dp)
+    verticalArrangement = Arrangement.spacedBy(14.dp)
   ) {
     Row(
       modifier = Modifier.fillMaxWidth(),
@@ -60,15 +70,15 @@ fun FiveStagesInspector(
     ) {
       Column(modifier = Modifier.weight(1f)) {
         Text(
-          text = "Authoritative 5-Stage Agentic Architecture",
+          text = "5-Stage Agentic Pipeline",
           style = MaterialTheme.typography.titleMedium,
-          fontWeight = FontWeight.Bold,
-          color = MaterialTheme.colorScheme.onSurface
+          fontWeight = FontWeight.SemiBold,
+          color = AmoledTextPrimary
         )
         Text(
-          text = "Strict computational separation between model-proposed reasoning (Intent, Plan, Conclusion) and environment-executed truth (Action, Observation).",
+          text = "Separation between model synthesis and authoritative environment execution",
           style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant
+          color = AmoledTextMuted
         )
       }
 
@@ -82,9 +92,9 @@ fun FiveStagesInspector(
       }
       LittleCopyButton(
         textToCopy = fullReport,
-        label = "Full Report",
-        buttonSize = 34.dp,
-        iconSize = 16.dp,
+        label = "Report",
+        buttonSize = 32.dp,
+        iconSize = 14.dp,
         testTag = "copy_full_5stages_report"
       )
     }
@@ -93,8 +103,7 @@ fun FiveStagesInspector(
     StageCard(
       stageNumber = 1,
       stageName = "INTENT",
-      subtitle = "What the user wants (Objective Contract)",
-      badgeColor = Color(0xFF3B82F6),
+      subtitle = "User Objective Specification",
       icon = Icons.AutoMirrored.Filled.Assignment,
       content = listOf(record.intent.ifBlank { "No active task intent." })
     )
@@ -103,8 +112,7 @@ fun FiveStagesInspector(
     StageCard(
       stageNumber = 2,
       stageName = "PLAN",
-      subtitle = "What the agent intends to do (LLM Decomposition)",
-      badgeColor = Color(0xFF8B5CF6),
+      subtitle = "Agentic LLM Decomposition",
       icon = Icons.Default.FormatListNumbered,
       content = if (record.currentPlan.isNotEmpty()) record.currentPlan else listOf("Plan is being synthesized...")
     )
@@ -113,8 +121,7 @@ fun FiveStagesInspector(
     StageCard(
       stageNumber = 3,
       stageName = "ACTION",
-      subtitle = "Authoritative dispatches recorded ONLY by the engine",
-      badgeColor = Color(0xFFF59E0B),
+      subtitle = "Authoritative Runtime Dispatches",
       icon = Icons.Default.PlayArrow,
       content = if (record.actions.isNotEmpty()) record.actions else listOf("No actions dispatched yet.")
     )
@@ -123,8 +130,7 @@ fun FiveStagesInspector(
     StageCard(
       stageNumber = 4,
       stageName = "OBSERVATION",
-      subtitle = "Authoritative outputs returned by the environment",
-      badgeColor = Color(0xFF10B981),
+      subtitle = "Authoritative Sandbox Outputs",
       icon = Icons.Default.Visibility,
       content = if (record.observations.isNotEmpty()) record.observations else listOf("No observations recorded yet.")
     )
@@ -133,13 +139,12 @@ fun FiveStagesInspector(
     StageCard(
       stageNumber = 5,
       stageName = "CONCLUSION",
-      subtitle = "What the agent synthesizes based on verified evidence",
-      badgeColor = Color(0xFF06B6D4),
-      icon = Icons.Default.CheckCircle,
+      subtitle = "Verified Objective Synthesis",
+      icon = Icons.Default.Check,
       content = listOf(record.conclusion ?: "Awaiting verified task completion...")
     )
 
-    Spacer(modifier = Modifier.height(32.dp))
+    Spacer(modifier = Modifier.height(28.dp))
   }
 }
 
@@ -148,16 +153,15 @@ private fun StageCard(
   stageNumber: Int,
   stageName: String,
   subtitle: String,
-  badgeColor: Color,
   icon: ImageVector,
   content: List<String>
 ) {
   Surface(
     modifier = Modifier
       .fillMaxWidth()
-      .clip(RoundedCornerShape(8.dp))
-      .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
-    color = MaterialTheme.colorScheme.surface
+      .clip(RoundedCornerShape(12.dp))
+      .border(1.dp, AmoledBorderSubtle, RoundedCornerShape(12.dp)),
+    color = AmoledSurfaceElevated
   ) {
     Column(modifier = Modifier.padding(14.dp)) {
       Row(
@@ -170,18 +174,20 @@ private fun StageCard(
           horizontalArrangement = Arrangement.spacedBy(10.dp),
           modifier = Modifier.weight(1f)
         ) {
+          // Flutter squircle badge in monochrome/grey
           Box(
             modifier = Modifier
               .size(28.dp)
-              .clip(CircleShape)
-              .background(badgeColor),
+              .clip(RoundedCornerShape(8.dp))
+              .background(Color(0xFF1C1C1C))
+              .border(1.dp, AmoledBorder, RoundedCornerShape(8.dp)),
             contentAlignment = Alignment.Center
           ) {
             Icon(
               imageVector = icon,
               contentDescription = stageName,
-              tint = Color.White,
-              modifier = Modifier.size(16.dp)
+              tint = AmoledIconGreyLight,
+              modifier = Modifier.size(15.dp)
             )
           }
 
@@ -190,21 +196,22 @@ private fun StageCard(
               Text(
                 text = "$stageNumber. $stageName",
                 style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
+                fontWeight = FontWeight.SemiBold,
+                color = AmoledTextPrimary
               )
               Spacer(modifier = Modifier.width(8.dp))
               Text(
-                text = if (stageNumber in listOf(3, 4)) "AUTHORITATIVE TRUTH" else "AGENT SYNTHESIS",
+                text = if (stageNumber in listOf(3, 4)) "AUTHORITATIVE" else "SYNTHESIS",
                 style = MaterialTheme.typography.labelSmall,
-                color = if (stageNumber in listOf(3, 4)) Color(0xFF059669) else Color(0xFF6366F1),
-                fontWeight = FontWeight.SemiBold
+                fontFamily = JetBrainsMonoFontFamily,
+                color = AmoledTextMuted,
+                fontSize = 9.sp
               )
             }
             Text(
               text = subtitle,
               style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant
+              color = AmoledTextMuted
             )
           }
         }
@@ -213,7 +220,7 @@ private fun StageCard(
           textToCopy = content.joinToString("\n"),
           testTag = "copy_stage_${stageNumber}",
           buttonSize = 28.dp,
-          iconSize = 14.dp
+          iconSize = 13.dp
         )
       }
 
@@ -223,8 +230,9 @@ private fun StageCard(
         verticalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier
           .fillMaxWidth()
-          .clip(RoundedCornerShape(6.dp))
-          .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+          .clip(RoundedCornerShape(8.dp))
+          .background(Color(0xFF0C0C0C))
+          .border(1.dp, AmoledBorderSubtle, RoundedCornerShape(8.dp))
           .padding(10.dp)
       ) {
         for ((idx, item) in content.withIndex()) {
@@ -233,14 +241,15 @@ private fun StageCard(
               Text(
                 text = "${idx + 1}. ",
                 style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
+                fontFamily = JetBrainsMonoFontFamily,
+                fontWeight = FontWeight.SemiBold,
+                color = AmoledTextMuted
               )
             }
             Text(
               text = item,
               style = MaterialTheme.typography.bodySmall,
-              color = MaterialTheme.colorScheme.onSurface
+              color = AmoledTextSecondary
             )
           }
         }

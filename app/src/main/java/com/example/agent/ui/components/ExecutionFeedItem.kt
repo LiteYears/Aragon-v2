@@ -1,6 +1,14 @@
 package com.example.agent.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,22 +30,23 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -47,13 +56,25 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.agent.core.ExecutionStep
 import com.example.agent.core.StepType
 import com.example.agent.core.ToolStatus
+import com.example.ui.theme.AmoledBorder
+import com.example.ui.theme.AmoledBorderSubtle
+import com.example.ui.theme.AmoledIconGrey
+import com.example.ui.theme.AmoledIconGreyLight
+import com.example.ui.theme.AmoledStatusError
+import com.example.ui.theme.AmoledStatusSuccess
+import com.example.ui.theme.AmoledSurfaceElevated
+import com.example.ui.theme.AmoledSurfaceVariant
+import com.example.ui.theme.AmoledTextMuted
+import com.example.ui.theme.AmoledTextPrimary
+import com.example.ui.theme.AmoledTextSecondary
+import com.example.ui.theme.JetBrainsMonoFontFamily
+import kotlinx.coroutines.delay
 
 @Composable
 fun ExecutionFeedItem(
@@ -62,7 +83,11 @@ fun ExecutionFeedItem(
   modifier: Modifier = Modifier
 ) {
   var isExpanded by remember {
-    mutableStateOf(step.type == StepType.TOOL_EXECUTION || step.type == StepType.ERROR || step.type == StepType.CONCLUSION)
+    mutableStateOf(
+      step.type == StepType.TOOL_EXECUTION ||
+        step.type == StepType.ERROR ||
+        step.type == StepType.CONCLUSION
+    )
   }
 
   // Aggregate step text for easy copying
@@ -83,49 +108,46 @@ fun ExecutionFeedItem(
     modifier = modifier
       .fillMaxWidth()
       .testTag("step_item_${step.stepNumber}")
-      .padding(horizontal = 14.dp, vertical = 5.dp)
+      .padding(horizontal = 14.dp, vertical = 4.dp)
   ) {
-    // Left timeline column with node icon and connecting line
+    // Left timeline column with reshaped Flutter squircle badge and connecting line
     Column(
       horizontalAlignment = Alignment.CenterHorizontally,
-      modifier = Modifier.width(32.dp)
+      modifier = Modifier.width(30.dp)
     ) {
       StepIconBadge(type = step.type, toolStatus = step.toolStatus)
       if (!isLast) {
         Box(
           modifier = Modifier
-            .width(2.dp)
-            .height(42.dp)
-            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+            .width(1.dp)
+            .height(36.dp)
+            .background(AmoledBorderSubtle)
         )
       }
     }
 
     Spacer(modifier = Modifier.width(10.dp))
 
-    // Right card content
+    // Right card content: Flat modern Flutter style AMOLED card
     Surface(
       modifier = Modifier
         .weight(1f)
-        .clip(RoundedCornerShape(10.dp))
+        .clip(RoundedCornerShape(12.dp))
         .border(
           width = 1.dp,
           color = when (step.type) {
-            StepType.TOOL_EXECUTION -> if (step.toolStatus == ToolStatus.FAILED.name) MaterialTheme.colorScheme.error.copy(alpha = 0.4f) else MaterialTheme.colorScheme.outlineVariant
-            StepType.VERIFICATION -> MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-            StepType.CONCLUSION -> MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-            StepType.ERROR -> MaterialTheme.colorScheme.error.copy(alpha = 0.6f)
-            else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+            StepType.ERROR -> AmoledStatusError.copy(alpha = 0.5f)
+            StepType.CONCLUSION -> AmoledBorder
+            else -> AmoledBorderSubtle
           },
-          shape = RoundedCornerShape(10.dp)
-        ),
+          shape = RoundedCornerShape(12.dp)
+        )
+        .animateContentSize(animationSpec = tween(240, easing = FastOutSlowInEasing)),
       color = when (step.type) {
-        StepType.TOOL_EXECUTION -> MaterialTheme.colorScheme.surface
-        StepType.OBSERVATION -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-        StepType.VERIFICATION -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
-        StepType.CONCLUSION -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-        StepType.ERROR -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
-        else -> MaterialTheme.colorScheme.surface
+        StepType.TOOL_EXECUTION -> AmoledSurfaceElevated
+        StepType.CONCLUSION -> AmoledSurfaceVariant
+        StepType.ERROR -> Color(0xFF160A0A)
+        else -> Color(0xFF0F0F0F)
       }
     ) {
       Column(
@@ -133,7 +155,7 @@ fun ExecutionFeedItem(
           .fillMaxWidth()
           .padding(12.dp)
       ) {
-        // Header row
+        // Top header row: Category pill, Title, Meta metrics, Copy button, Expand/collapse
         Row(
           modifier = Modifier.fillMaxWidth(),
           verticalAlignment = Alignment.CenterVertically,
@@ -145,54 +167,89 @@ fun ExecutionFeedItem(
               .weight(1f)
               .clickable { isExpanded = !isExpanded }
           ) {
+            // Category tag pill
+            val categoryLabel = when (step.type) {
+              StepType.TASK_INTENT -> "OBJECTIVE"
+              StepType.THINKING, StepType.PLAN -> "REASONING"
+              StepType.TOOL_CALL -> "DISPATCH"
+              StepType.TOOL_EXECUTION -> "TOOL CALL"
+              StepType.OBSERVATION -> "OBSERVATION"
+              StepType.VERIFICATION -> "VERIFY"
+              StepType.CONCLUSION -> "AGENT"
+              StepType.ERROR -> "ERROR"
+            }
+
+            Surface(
+              shape = RoundedCornerShape(6.dp),
+              color = Color(0xFF1E1E1E),
+              border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+              modifier = Modifier.padding(end = 8.dp)
+            ) {
+              Text(
+                text = categoryLabel,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = JetBrainsMonoFontFamily,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 9.sp,
+                color = when (step.type) {
+                  StepType.ERROR -> AmoledStatusError
+                  StepType.CONCLUSION -> AmoledTextPrimary
+                  else -> AmoledIconGreyLight
+                },
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+              )
+            }
+
             Text(
               text = step.title,
               style = MaterialTheme.typography.titleSmall,
-              fontWeight = FontWeight.SemiBold,
+              fontWeight = FontWeight.Medium,
               color = when (step.type) {
-                StepType.ERROR -> MaterialTheme.colorScheme.error
-                StepType.VERIFICATION, StepType.CONCLUSION -> MaterialTheme.colorScheme.primary
-                else -> MaterialTheme.colorScheme.onSurface
+                StepType.ERROR -> AmoledStatusError
+                else -> AmoledTextPrimary
               }
             )
 
             // Duration badge for tools
             if (step.durationMs != null) {
-              Spacer(modifier = Modifier.width(8.dp))
+              Spacer(modifier = Modifier.width(6.dp))
               Text(
                 text = "${(step.durationMs / 1000.0).let { String.format("%.2fs", it) }}",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = JetBrainsMonoFontFamily,
+                fontSize = 10.sp,
+                color = AmoledTextMuted,
                 modifier = Modifier
-                  .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
-                  .padding(horizontal = 6.dp, vertical = 2.dp)
+                  .background(Color(0xFF161616), RoundedCornerShape(4.dp))
+                  .padding(horizontal = 5.dp, vertical = 1.dp)
               )
             }
 
             // Exit code badge
             if (step.exitCode != null) {
-              Spacer(modifier = Modifier.width(6.dp))
+              Spacer(modifier = Modifier.width(5.dp))
               Text(
                 text = "exit ${step.exitCode}",
                 style = MaterialTheme.typography.labelSmall,
-                color = if (step.exitCode == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                fontFamily = JetBrainsMonoFontFamily,
+                fontSize = 10.sp,
+                color = if (step.exitCode == 0) AmoledStatusSuccess else AmoledStatusError,
                 modifier = Modifier
                   .background(
-                    if (step.exitCode == 0) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer,
+                    if (step.exitCode == 0) AmoledStatusSuccess.copy(alpha = 0.12f) else AmoledStatusError.copy(alpha = 0.12f),
                     RoundedCornerShape(4.dp)
                   )
-                  .padding(horizontal = 6.dp, vertical = 2.dp)
+                  .padding(horizontal = 5.dp, vertical = 1.dp)
               )
             }
           }
 
           Row(verticalAlignment = Alignment.CenterVertically) {
-            // Little Copy Button for this step
             LittleCopyButton(
               textToCopy = stepFullText,
               testTag = "copy_step_${step.stepNumber}",
               buttonSize = 26.dp,
-              iconSize = 14.dp
+              iconSize = 13.dp
             )
 
             Spacer(modifier = Modifier.width(2.dp))
@@ -204,14 +261,14 @@ fun ExecutionFeedItem(
               Icon(
                 imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                 contentDescription = if (isExpanded) "Collapse" else "Expand",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp)
+                tint = AmoledIconGrey,
+                modifier = Modifier.size(18.dp)
               )
             }
           }
         }
 
-        // Summary content
+        // Summary content / streaming presentation
         if (step.content.isNotBlank()) {
           Spacer(modifier = Modifier.height(6.dp))
           Row(
@@ -219,22 +276,30 @@ fun ExecutionFeedItem(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.Top
           ) {
-            Text(
-              text = step.content,
-              style = MaterialTheme.typography.bodySmall,
-              color = when (step.type) {
-                StepType.ERROR -> MaterialTheme.colorScheme.error
-                StepType.CONCLUSION -> MaterialTheme.colorScheme.onSurface
-                else -> MaterialTheme.colorScheme.onSurfaceVariant
-              },
-              modifier = Modifier.weight(1f)
-            )
+            // If it's a conclusion or reasoning, render with ChatGPT-style streaming presentation
+            if (step.type == StepType.CONCLUSION || step.type == StepType.THINKING) {
+              StreamingTextContent(
+                fullText = step.content,
+                isCompleted = step.isCompleted,
+                modifier = Modifier.weight(1f)
+              )
+            } else {
+              Text(
+                text = step.content,
+                style = MaterialTheme.typography.bodySmall,
+                color = when (step.type) {
+                  StepType.ERROR -> AmoledStatusError
+                  else -> AmoledTextSecondary
+                },
+                modifier = Modifier.weight(1f)
+              )
+            }
 
             if (step.type == StepType.CONCLUSION || step.type == StepType.ERROR) {
               Spacer(modifier = Modifier.width(4.dp))
               LittleCopyButton(
                 textToCopy = step.content,
-                label = if (step.type == StepType.CONCLUSION) "Copy Response" else "Copy Error",
+                label = if (step.type == StepType.CONCLUSION) "Copy" else "Copy Error",
                 testTag = "copy_content_${step.stepNumber}"
               )
             }
@@ -250,16 +315,16 @@ fun ExecutionFeedItem(
               verticalAlignment = Alignment.CenterVertically
             ) {
               Text(
-                text = "Call ID: ${step.toolCallId}",
-                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                color = MaterialTheme.colorScheme.outline,
+                text = "ID: ${step.toolCallId}",
+                style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMonoFontFamily),
+                color = AmoledTextMuted,
                 fontSize = 10.sp
               )
               LittleCopyButton(
                 textToCopy = step.toolCallId ?: "",
                 label = "Copy ID",
-                buttonSize = 22.dp,
-                iconSize = 12.dp,
+                buttonSize = 20.dp,
+                iconSize = 11.dp,
                 testTag = "copy_call_id_${step.stepNumber}"
               )
             }
@@ -267,16 +332,18 @@ fun ExecutionFeedItem(
         }
 
         // Terminal / Raw output block
-        AnimatedVisibility(visible = isExpanded && (step.type == StepType.TOOL_EXECUTION || !step.stdout.isNullOrBlank() || !step.stderr.isNullOrBlank())) {
+        AnimatedVisibility(
+          visible = isExpanded && (step.type == StepType.TOOL_EXECUTION || !step.stdout.isNullOrBlank() || !step.stderr.isNullOrBlank())
+        ) {
           Column(modifier = Modifier.padding(top = 8.dp)) {
             val stdoutDisplay = when {
               !step.stdout.isNullOrBlank() -> step.stdout
-              step.type == StepType.TOOL_EXECUTION && step.isCompleted -> "STDOUT: empty (0 bytes)"
+              step.type == StepType.TOOL_EXECUTION && step.isCompleted -> "STDOUT: (completed 0 bytes)"
               else -> null
             }
             if (stdoutDisplay != null) {
               TerminalOutputBox(
-                label = "STDOUT / OUTPUT",
+                label = "OUTPUT",
                 text = stdoutDisplay,
                 isError = false
               )
@@ -284,7 +351,7 @@ fun ExecutionFeedItem(
             if (!step.stderr.isNullOrBlank()) {
               Spacer(modifier = Modifier.height(6.dp))
               TerminalOutputBox(
-                label = "STDERR / ERROR",
+                label = "STDERR",
                 text = step.stderr,
                 isError = true
               )
@@ -296,96 +363,126 @@ fun ExecutionFeedItem(
   }
 }
 
+/**
+ * ChatGPT-style smooth streaming typewriter text component with an animated pulsing cursor.
+ */
 @Composable
-fun StepIconBadge(type: StepType, toolStatus: String?) {
-  val icon: ImageVector
-  val bgColor: Color
-  val tintColor: Color
+fun StreamingTextContent(
+  fullText: String,
+  isCompleted: Boolean,
+  modifier: Modifier = Modifier
+) {
+  var displayedCharCount by remember(fullText) {
+    mutableIntStateOf(if (fullText.length < 40) fullText.length else (fullText.length / 3).coerceAtLeast(10))
+  }
 
-  when (type) {
-    StepType.TASK_INTENT -> {
-      icon = Icons.Default.PlayArrow
-      bgColor = MaterialTheme.colorScheme.primaryContainer
-      tintColor = MaterialTheme.colorScheme.onPrimaryContainer
-    }
-    StepType.PLAN, StepType.THINKING -> {
-      icon = Icons.Default.Lightbulb
-      bgColor = MaterialTheme.colorScheme.secondaryContainer
-      tintColor = MaterialTheme.colorScheme.onSecondaryContainer
-    }
-    StepType.TOOL_CALL -> {
-      icon = Icons.Default.Code
-      bgColor = MaterialTheme.colorScheme.tertiaryContainer
-      tintColor = MaterialTheme.colorScheme.onTertiaryContainer
-    }
-    StepType.TOOL_EXECUTION -> {
-      when (toolStatus) {
-        ToolStatus.RUNNING.name -> {
-          Box(
-            modifier = Modifier
-              .size(24.dp)
-              .clip(CircleShape)
-              .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
-            contentAlignment = Alignment.Center
-          ) {
-            CircularProgressIndicator(
-              modifier = Modifier.size(16.dp),
-              strokeWidth = 2.dp,
-              color = MaterialTheme.colorScheme.primary
-            )
-          }
-          return
-        }
-        ToolStatus.FAILED.name -> {
-          icon = Icons.Default.Close
-          bgColor = MaterialTheme.colorScheme.errorContainer
-          tintColor = MaterialTheme.colorScheme.onErrorContainer
-        }
-        else -> {
-          icon = Icons.Default.Check
-          bgColor = MaterialTheme.colorScheme.primaryContainer
-          tintColor = MaterialTheme.colorScheme.onPrimaryContainer
-        }
+  // Typewriter progressive reveal
+  LaunchedEffect(fullText) {
+    if (displayedCharCount < fullText.length) {
+      val step = ((fullText.length - displayedCharCount) / 12).coerceAtLeast(3)
+      while (displayedCharCount < fullText.length) {
+        delay(16)
+        displayedCharCount = (displayedCharCount + step).coerceAtMost(fullText.length)
       }
     }
-    StepType.OBSERVATION -> {
-      icon = Icons.Default.Info
-      bgColor = MaterialTheme.colorScheme.surfaceVariant
-      tintColor = MaterialTheme.colorScheme.onSurfaceVariant
+  }
+
+  // Cursor blink transition
+  val infiniteTransition = rememberInfiniteTransition(label = "cursor_pulse")
+  val cursorAlpha by infiniteTransition.animateFloat(
+    initialValue = 1f,
+    targetValue = 0f,
+    animationSpec = infiniteRepeatable(
+      animation = tween(450, easing = LinearEasing),
+      repeatMode = RepeatMode.Reverse
+    ),
+    label = "cursor_blink"
+  )
+
+  val visibleText = fullText.take(displayedCharCount)
+  val isStreaming = displayedCharCount < fullText.length
+
+  Text(
+    text = buildString {
+      append(visibleText)
+      if (isStreaming) {
+        append(" ▊")
+      }
+    },
+    style = MaterialTheme.typography.bodySmall,
+    color = AmoledTextPrimary,
+    lineHeight = 18.sp,
+    modifier = modifier
+  )
+}
+
+/**
+ * Modern Flutter squircle icon badge using neutral grey icons and AMOLED background.
+ */
+@Composable
+fun StepIconBadge(type: StepType, toolStatus: String?) {
+  val icon: ImageVector = when (type) {
+    StepType.TASK_INTENT -> Icons.Default.PlayArrow
+    StepType.PLAN, StepType.THINKING -> Icons.Default.Lightbulb
+    StepType.TOOL_CALL -> Icons.Default.Code
+    StepType.TOOL_EXECUTION -> {
+      if (toolStatus == ToolStatus.RUNNING.name) {
+        // Return custom running spinner inside squircle
+        Box(
+          modifier = Modifier
+            .size(24.dp)
+            .clip(RoundedCornerShape(7.dp))
+            .background(Color(0xFF141414))
+            .border(1.dp, AmoledBorder, RoundedCornerShape(7.dp)),
+          contentAlignment = Alignment.Center
+        ) {
+          CircularProgressIndicator(
+            modifier = Modifier.size(13.dp),
+            strokeWidth = 1.5.dp,
+            color = AmoledIconGreyLight
+          )
+        }
+        return
+      } else if (toolStatus == ToolStatus.FAILED.name) {
+        Icons.Default.Close
+      } else {
+        Icons.Default.Check
+      }
     }
-    StepType.VERIFICATION -> {
-      icon = Icons.Default.Search
-      bgColor = MaterialTheme.colorScheme.primaryContainer
-      tintColor = MaterialTheme.colorScheme.primary
-    }
-    StepType.CONCLUSION -> {
-      icon = Icons.Default.Verified
-      bgColor = MaterialTheme.colorScheme.primary
-      tintColor = MaterialTheme.colorScheme.onPrimary
-    }
-    StepType.ERROR -> {
-      icon = Icons.Default.Close
-      bgColor = MaterialTheme.colorScheme.errorContainer
-      tintColor = MaterialTheme.colorScheme.error
-    }
+    StepType.OBSERVATION -> Icons.Default.Info
+    StepType.VERIFICATION -> Icons.Default.Search
+    StepType.CONCLUSION -> Icons.Default.Done
+    StepType.ERROR -> Icons.Default.Close
   }
 
   Box(
     modifier = Modifier
       .size(24.dp)
-      .clip(CircleShape)
-      .background(bgColor),
+      .clip(RoundedCornerShape(7.dp))
+      .background(Color(0xFF141414))
+      .border(
+        width = 1.dp,
+        color = if (type == StepType.ERROR || toolStatus == ToolStatus.FAILED.name) AmoledStatusError.copy(alpha = 0.5f) else AmoledBorderSubtle,
+        shape = RoundedCornerShape(7.dp)
+      ),
     contentAlignment = Alignment.Center
   ) {
     Icon(
       imageVector = icon,
       contentDescription = type.name,
-      tint = tintColor,
-      modifier = Modifier.size(14.dp)
+      tint = when {
+        type == StepType.ERROR || toolStatus == ToolStatus.FAILED.name -> AmoledStatusError
+        type == StepType.CONCLUSION -> AmoledTextPrimary
+        else -> AmoledIconGrey
+      },
+      modifier = Modifier.size(13.dp)
     )
   }
 }
 
+/**
+ * Professional AMOLED dark terminal block with JetBrains Mono monospace font.
+ */
 @Composable
 fun TerminalOutputBox(
   label: String,
@@ -398,9 +495,13 @@ fun TerminalOutputBox(
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(8.dp))
-      .background(Color(0xFF0F172A)) // Sleek dark slate terminal
-      .border(1.dp, if (isError) Color(0xFF7F1D1D) else Color(0xFF334155), RoundedCornerShape(8.dp))
-      .padding(10.dp)
+      .background(Color(0xFF080808))
+      .border(
+        1.dp,
+        if (isError) AmoledStatusError.copy(alpha = 0.4f) else AmoledBorderSubtle,
+        RoundedCornerShape(8.dp)
+      )
+      .padding(9.dp)
   ) {
     Row(
       modifier = Modifier.fillMaxWidth(),
@@ -410,22 +511,23 @@ fun TerminalOutputBox(
       Text(
         text = label,
         style = MaterialTheme.typography.labelSmall,
-        color = if (isError) Color(0xFFF87171) else Color(0xFF94A3B8),
-        fontWeight = FontWeight.Bold,
-        fontSize = 10.sp
+        fontFamily = JetBrainsMonoFontFamily,
+        color = if (isError) AmoledStatusError else AmoledTextMuted,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 9.sp
       )
 
       LittleCopyButton(
         textToCopy = text,
         label = "Copy",
-        tint = if (isError) Color(0xFFFCA5A5) else Color(0xFF94A3B8),
-        buttonSize = 22.dp,
-        iconSize = 12.dp,
+        tint = AmoledIconGrey,
+        buttonSize = 20.dp,
+        iconSize = 11.dp,
         testTag = "copy_${label.lowercase().replace('/', '_').replace(' ', '_')}"
       )
     }
 
-    Spacer(modifier = Modifier.height(4.dp))
+    Spacer(modifier = Modifier.height(3.dp))
     Box(
       modifier = Modifier
         .fillMaxWidth()
@@ -434,11 +536,11 @@ fun TerminalOutputBox(
       Text(
         text = text,
         style = MaterialTheme.typography.bodySmall.copy(
-          fontFamily = FontFamily.Monospace,
+          fontFamily = JetBrainsMonoFontFamily,
           fontSize = 11.sp,
           lineHeight = 15.sp
         ),
-        color = if (isError) Color(0xFFFCA5A5) else Color(0xFFE2E8F0)
+        color = if (isError) AmoledStatusError else AmoledIconGreyLight
       )
     }
   }

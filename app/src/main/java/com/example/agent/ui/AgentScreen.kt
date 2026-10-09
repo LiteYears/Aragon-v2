@@ -1,6 +1,10 @@
 package com.example.agent.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,16 +32,18 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -58,10 +64,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -75,8 +84,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -91,6 +101,24 @@ import com.example.agent.ui.components.ArtifactPreviewDialog
 import com.example.agent.ui.components.ExecutionFeedItem
 import com.example.agent.ui.components.FiveStagesInspector
 import com.example.agent.ui.components.LittleCopyButton
+import com.example.ui.theme.AmoledActionPrimary
+import com.example.ui.theme.AmoledActionPrimaryOn
+import com.example.ui.theme.AmoledBackground
+import com.example.ui.theme.AmoledBorder
+import com.example.ui.theme.AmoledBorderSubtle
+import com.example.ui.theme.AmoledIconGrey
+import com.example.ui.theme.AmoledIconGreyDark
+import com.example.ui.theme.AmoledIconGreyLight
+import com.example.ui.theme.AmoledStatusError
+import com.example.ui.theme.AmoledStatusSuccess
+import com.example.ui.theme.AmoledSurface
+import com.example.ui.theme.AmoledSurfaceElevated
+import com.example.ui.theme.AmoledSurfaceVariant
+import com.example.ui.theme.AmoledTextMuted
+import com.example.ui.theme.AmoledTextPrimary
+import com.example.ui.theme.AmoledTextSecondary
+import com.example.ui.theme.InterFontFamily
+import com.example.ui.theme.JetBrainsMonoFontFamily
 
 @Composable
 fun AgentScreen(
@@ -115,7 +143,7 @@ fun AgentScreen(
 
   val listState = rememberLazyListState()
 
-  // Auto-scroll feed on new items
+  // Smooth scroll to newly added steps
   LaunchedEffect(state.executionFeed.size) {
     if (state.executionFeed.isNotEmpty()) {
       listState.animateScrollToItem(state.executionFeed.size - 1)
@@ -125,7 +153,9 @@ fun AgentScreen(
   Scaffold(
     modifier = modifier
       .fillMaxSize()
+      .background(AmoledBackground)
       .imePadding(),
+    containerColor = AmoledBackground,
     contentWindowInsets = WindowInsets(0, 0, 0, 0),
     topBar = {
       AgentTopHeader(
@@ -143,66 +173,101 @@ fun AgentScreen(
     bottomBar = {
       Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 4.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+        color = AmoledBackground,
+        border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle)
       ) {
         Column(
           modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(bottom = 6.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
-          // Preset prompt suggestion chips with smooth padding
+          // Preset prompt chips in modern Flutter flat pill design
           val chipScrollState = rememberScrollState()
           Row(
             modifier = Modifier
               .fillMaxWidth()
               .horizontalScroll(chipScrollState)
-              .padding(horizontal = 14.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+              .padding(bottom = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
           ) {
             viewModel.presets.forEach { preset ->
-              FilterChip(
-                selected = false,
-                onClick = {
-                  inputText = preset.prompt
-                  viewModel.submitTask(preset.prompt, preset.expectedArtifact)
-                },
-                label = {
-                  Text(
-                    text = preset.title,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Medium
-                  )
-                },
-                shape = RoundedCornerShape(10.dp),
-                colors = FilterChipDefaults.filterChipColors(
-                  containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                ),
-                modifier = Modifier.testTag("preset_chip_${preset.expectedArtifact ?: "custom"}")
-              )
+              Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xFF141414),
+                border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+                modifier = Modifier
+                  .clickable {
+                    inputText = preset.prompt
+                    viewModel.submitTask(preset.prompt, preset.expectedArtifact)
+                  }
+                  .testTag("preset_chip_${preset.expectedArtifact ?: "custom"}")
+              ) {
+                Text(
+                  text = preset.title,
+                  style = MaterialTheme.typography.labelSmall,
+                  fontFamily = InterFontFamily,
+                  color = AmoledIconGreyLight,
+                  fontSize = 11.sp,
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                )
+              }
             }
           }
 
-          // Input row with generous touch targets and padding
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .padding(horizontal = 14.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
+          // Modern Interactive Floating User Prompt Field
+          Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFF101010),
+            border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
+            modifier = Modifier.fillMaxWidth()
           ) {
-            OutlinedTextField(
-              value = inputText,
-              onValueChange = { inputText = it },
-              placeholder = {
-                Text(
-                  "Assign an objective (e.g., analyze data.csv → report.md)...",
-                  style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                )
-              },
-              trailingIcon = {
+            Column(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+              // Top meta bar inside prompt field: Active model pill & Clear button
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                // Interactive model switcher pill
+                Surface(
+                  shape = RoundedCornerShape(6.dp),
+                  color = Color(0xFF181818),
+                  border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+                  modifier = Modifier.clickable { showSettingsDialog = true }
+                ) {
+                  Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                  ) {
+                    Box(
+                      modifier = Modifier
+                        .size(5.dp)
+                        .clip(CircleShape)
+                        .background(AmoledStatusSuccess)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                      text = nvidiaModel.substringAfterLast('/'),
+                      style = MaterialTheme.typography.labelSmall,
+                      fontFamily = JetBrainsMonoFontFamily,
+                      fontSize = 10.sp,
+                      color = AmoledIconGreyLight
+                    )
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Icon(
+                      imageVector = Icons.Default.ArrowDropDown,
+                      contentDescription = "Switch model",
+                      tint = AmoledIconGrey,
+                      modifier = Modifier.size(14.dp)
+                    )
+                  }
+                }
+
                 if (inputText.isNotBlank()) {
                   IconButton(
                     onClick = { inputText = "" },
@@ -210,63 +275,122 @@ fun AgentScreen(
                   ) {
                     Icon(
                       imageVector = Icons.Default.Clear,
-                      contentDescription = "Clear input",
-                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                      modifier = Modifier.size(16.dp)
+                      contentDescription = "Clear text",
+                      tint = AmoledIconGrey,
+                      modifier = Modifier.size(15.dp)
                     )
                   }
                 }
-              },
-              modifier = Modifier
-                .weight(1f)
-                .testTag("agent_input_field"),
-              shape = RoundedCornerShape(14.dp),
-              singleLine = false,
-              maxLines = 3,
-              keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-              keyboardActions = KeyboardActions(onSend = {
-                if (inputText.isNotBlank()) {
-                  val taskText = inputText
-                  viewModel.submitTask(taskText)
-                }
-              }),
-              textStyle = MaterialTheme.typography.bodyMedium
-            )
-
-            Spacer(modifier = Modifier.width(10.dp))
-
-            if (state.canCancel) {
-              Button(
-                onClick = { viewModel.stopExecution() },
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier
-                  .size(48.dp)
-                  .testTag("stop_execution_button"),
-                contentPadding = PaddingValues(0.dp)
-              ) {
-                Icon(Icons.Default.Stop, contentDescription = "Stop execution", modifier = Modifier.size(22.dp))
               }
-            } else {
-              Button(
-                onClick = {
-                  if (inputText.isNotBlank()) {
-                    val taskText = inputText
-                    viewModel.submitTask(taskText)
-                  }
-                },
-                enabled = inputText.isNotBlank(),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(
-                  containerColor = MaterialTheme.colorScheme.primary,
-                  disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant
-                ),
-                modifier = Modifier
-                  .size(48.dp)
-                  .testTag("run_task_button"),
-                contentPadding = PaddingValues(0.dp)
+
+              Spacer(modifier = Modifier.height(6.dp))
+
+              // Multiline input area with Flutter style execute button
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Bottom
               ) {
-                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Run task", modifier = Modifier.size(20.dp))
+                Box(
+                  modifier = Modifier
+                    .weight(1f)
+                    .padding(vertical = 4.dp)
+                ) {
+                  if (inputText.isEmpty()) {
+                    Text(
+                      text = "Assign task (e.g., analyze data.csv → report.md)...",
+                      style = MaterialTheme.typography.bodyMedium.copy(
+                        color = AmoledTextMuted,
+                        fontSize = 13.sp
+                      )
+                    )
+                  }
+
+                  BasicTextField(
+                    value = inputText,
+                    onValueChange = { inputText = it },
+                    textStyle = TextStyle(
+                      fontFamily = InterFontFamily,
+                      fontSize = 13.sp,
+                      color = AmoledTextPrimary,
+                      lineHeight = 18.sp
+                    ),
+                    cursorBrush = SolidColor(AmoledActionPrimary),
+                    maxLines = 4,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = {
+                      if (inputText.isNotBlank()) {
+                        val taskText = inputText
+                        viewModel.submitTask(taskText)
+                      }
+                    }),
+                    modifier = Modifier
+                      .fillMaxWidth()
+                      .testTag("agent_input_field")
+                  )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // Modern Flutter-style flat execution task button
+                if (state.canCancel) {
+                  Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF221111),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledStatusError.copy(alpha = 0.5f)),
+                    modifier = Modifier
+                      .size(38.dp)
+                      .clickable { viewModel.stopExecution() }
+                      .testTag("stop_execution_button")
+                  ) {
+                    Box(contentAlignment = Alignment.Center) {
+                      Icon(
+                        imageVector = Icons.Default.Stop,
+                        contentDescription = "Stop execution",
+                        tint = AmoledStatusError,
+                        modifier = Modifier.size(18.dp)
+                      )
+                    }
+                  }
+                } else {
+                  val isReady = inputText.isNotBlank()
+                  val buttonColor by animateColorAsState(
+                    targetValue = if (isReady) AmoledActionPrimary else Color(0xFF1C1C1C),
+                    animationSpec = tween(200),
+                    label = "btn_color"
+                  )
+                  val iconColor by animateColorAsState(
+                    targetValue = if (isReady) AmoledActionPrimaryOn else AmoledIconGreyDark,
+                    animationSpec = tween(200),
+                    label = "icon_color"
+                  )
+
+                  Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = buttonColor,
+                    border = androidx.compose.foundation.BorderStroke(
+                      1.dp,
+                      if (isReady) AmoledActionPrimary else AmoledBorderSubtle
+                    ),
+                    modifier = Modifier
+                      .size(38.dp)
+                      .clickable(enabled = isReady) {
+                        if (isReady) {
+                          val taskText = inputText
+                          viewModel.submitTask(taskText)
+                        }
+                      }
+                      .testTag("run_task_button")
+                  ) {
+                    Box(contentAlignment = Alignment.Center) {
+                      Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Execute task",
+                        tint = iconColor,
+                        modifier = Modifier.size(18.dp)
+                      )
+                    }
+                  }
+                }
               }
             }
           }
@@ -277,15 +401,16 @@ fun AgentScreen(
     Column(
       modifier = Modifier
         .fillMaxSize()
+        .background(AmoledBackground)
         .padding(paddingValues)
     ) {
-      // Prominent Error Banner with 1-tap Copy Error Button
+      // Discrete Error Banner
       AnimatedVisibility(visible = state.error != null) {
         state.error?.let { errText ->
           Surface(
             shape = RoundedCornerShape(10.dp),
-            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.95f),
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+            color = Color(0xFF140A0A),
+            border = androidx.compose.foundation.BorderStroke(1.dp, AmoledStatusError.copy(alpha = 0.5f)),
             modifier = Modifier
               .fillMaxWidth()
               .padding(horizontal = 14.dp, vertical = 6.dp)
@@ -301,22 +426,23 @@ fun AgentScreen(
                   Icon(
                     imageVector = Icons.Default.Close,
                     contentDescription = "Error",
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(18.dp)
+                    tint = AmoledStatusError,
+                    modifier = Modifier.size(16.dp)
                   )
                   Spacer(modifier = Modifier.width(6.dp))
                   Text(
-                    text = "EXECUTION ISSUE DETECTED",
+                    text = "EXECUTION ISSUE",
                     style = MaterialTheme.typography.labelSmall,
+                    fontFamily = JetBrainsMonoFontFamily,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.error
+                    color = AmoledStatusError
                   )
                 }
 
                 LittleCopyButton(
                   textToCopy = errText,
-                  label = "Copy Error",
-                  tint = MaterialTheme.colorScheme.error,
+                  label = "Copy",
+                  tint = AmoledStatusError,
                   testTag = "copy_error_banner_btn"
                 )
               }
@@ -325,7 +451,7 @@ fun AgentScreen(
               Text(
                 text = errText,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onErrorContainer
+                color = AmoledIconGreyLight
               )
 
               if (providerType == ProviderType.NVIDIA_NIM && nvidiaModel != NvidiaNimConfig.DEFAULT_MODEL) {
@@ -333,7 +459,9 @@ fun AgentScreen(
                 Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                   OutlinedButton(
                     onClick = { viewModel.retryWithDefaultModel() },
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(6.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledTextPrimary)
                   ) {
                     Text("Retry with Flagship GLM 5.3", style = MaterialTheme.typography.labelSmall)
                   }
@@ -344,11 +472,28 @@ fun AgentScreen(
         }
       }
 
-      // Tab navigation bar
+      // Modern Flat AMOLED Tab Row
       TabRow(
         selectedTabIndex = activeTab.ordinal,
-        containerColor = MaterialTheme.colorScheme.surface,
-        contentColor = MaterialTheme.colorScheme.primary,
+        containerColor = AmoledBackground,
+        contentColor = AmoledTextPrimary,
+        divider = {
+          Box(
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(1.dp)
+              .background(AmoledBorderSubtle)
+          )
+        },
+        indicator = { tabPositions ->
+          if (activeTab.ordinal < tabPositions.size) {
+            TabRowDefaults.SecondaryIndicator(
+              modifier = Modifier.tabIndicatorOffset(tabPositions[activeTab.ordinal]),
+              color = AmoledActionPrimary,
+              height = 2.dp
+            )
+          }
+        },
         modifier = Modifier.fillMaxWidth()
       ) {
         UiTab.values().forEach { tab ->
@@ -363,30 +508,33 @@ fun AgentScreen(
             text = {
               Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(vertical = 12.dp)
+                modifier = Modifier.padding(vertical = 10.dp)
               ) {
                 Text(
                   text = tab.label,
-                  fontWeight = if (activeTab == tab) FontWeight.Bold else FontWeight.Medium,
-                  style = MaterialTheme.typography.bodyMedium
+                  fontWeight = if (activeTab == tab) FontWeight.SemiBold else FontWeight.Normal,
+                  style = MaterialTheme.typography.bodySmall,
+                  color = if (activeTab == tab) AmoledTextPrimary else AmoledTextMuted
                 )
                 if (badgeCount != null && badgeCount > 0) {
                   Spacer(modifier = Modifier.width(6.dp))
                   Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = if (activeTab == tab) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier.height(20.dp)
+                    shape = RoundedCornerShape(6.dp),
+                    color = Color(0xFF181818),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+                    modifier = Modifier.height(18.dp)
                   ) {
                     Box(
                       contentAlignment = Alignment.Center,
-                      modifier = Modifier.padding(horizontal = 6.dp)
+                      modifier = Modifier.padding(horizontal = 5.dp)
                     ) {
                       Text(
                         text = "$badgeCount",
                         style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp,
-                        color = if (activeTab == tab) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 10.sp,
+                        color = if (activeTab == tab) AmoledTextPrimary else AmoledTextMuted
                       )
                     }
                   }
@@ -398,7 +546,7 @@ fun AgentScreen(
         }
       }
 
-      // Tab Content View
+      // Tab Content Views
       when (activeTab) {
         UiTab.EXECUTION_FEED -> {
           if (state.executionFeed.isEmpty()) {
@@ -413,8 +561,9 @@ fun AgentScreen(
               state = listState,
               modifier = Modifier
                 .fillMaxSize()
-                .testTag("execution_feed_list"),
-              contentPadding = PaddingValues(vertical = 12.dp, horizontal = 4.dp)
+                .testTag("execution_feed_list")
+                .animateContentSize(),
+              contentPadding = PaddingValues(vertical = 10.dp, horizontal = 2.dp)
             ) {
               itemsIndexed(state.executionFeed) { index, step ->
                 ExecutionFeedItem(
@@ -436,16 +585,17 @@ fun AgentScreen(
             ) {
               Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Surface(
-                  shape = RoundedCornerShape(16.dp),
-                  color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                  modifier = Modifier.size(56.dp)
+                  shape = RoundedCornerShape(12.dp),
+                  color = Color(0xFF141414),
+                  border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+                  modifier = Modifier.size(52.dp)
                 ) {
                   Box(contentAlignment = Alignment.Center) {
                     Icon(
                       imageVector = Icons.Default.Terminal,
                       contentDescription = null,
-                      tint = MaterialTheme.colorScheme.outline,
-                      modifier = Modifier.size(28.dp)
+                      tint = AmoledIconGrey,
+                      modifier = Modifier.size(26.dp)
                     )
                   }
                 }
@@ -454,14 +604,13 @@ fun AgentScreen(
                   text = "No artifacts generated yet",
                   style = MaterialTheme.typography.titleSmall,
                   fontWeight = FontWeight.SemiBold,
-                  color = MaterialTheme.colorScheme.onSurface
+                  color = AmoledTextPrimary
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                  text = "Run a task that produces files in the workspace (e.g. data.csv → report.md).",
+                  text = "Run a task to produce files in the workspace (e.g. data.csv → report.md).",
                   style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant,
-                  lineHeight = 20.sp
+                  color = AmoledTextMuted
                 )
               }
             }
@@ -470,7 +619,7 @@ fun AgentScreen(
               modifier = Modifier
                 .fillMaxSize()
                 .testTag("artifacts_list"),
-              contentPadding = PaddingValues(vertical = 14.dp)
+              contentPadding = PaddingValues(vertical = 10.dp)
             ) {
               itemsIndexed(state.artifacts) { _, artifact ->
                 ArtifactItem(
@@ -498,7 +647,7 @@ fun AgentScreen(
     )
   }
 
-  // Provider & Settings Dialog
+  // Improved AMOLED Settings & Provider Dialog
   if (showSettingsDialog) {
     SettingsProviderDialog(
       currentProvider = providerType,
@@ -541,9 +690,8 @@ fun AgentTopHeader(
 ) {
   Surface(
     modifier = Modifier.fillMaxWidth(),
-    color = MaterialTheme.colorScheme.surface,
-    tonalElevation = 2.dp,
-    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    color = AmoledSurface,
+    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle)
   ) {
     Column(
       modifier = Modifier
@@ -557,17 +705,19 @@ fun AgentTopHeader(
         verticalAlignment = Alignment.CenterVertically
       ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+          // Modern Flutter squircle logo badge in graphite with grey icon
           Surface(
             shape = RoundedCornerShape(10.dp),
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(36.dp)
+            color = Color(0xFF161616),
+            border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
+            modifier = Modifier.size(34.dp)
           ) {
             Box(contentAlignment = Alignment.Center) {
               Icon(
                 imageVector = Icons.Default.Terminal,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(20.dp)
+                tint = AmoledIconGreyLight,
+                modifier = Modifier.size(18.dp)
               )
             }
           }
@@ -577,93 +727,107 @@ fun AgentTopHeader(
           Column {
             Text(
               text = "Agent Kernel",
-              style = MaterialTheme.typography.titleMedium,
-              fontWeight = FontWeight.Bold
+              style = MaterialTheme.typography.titleSmall,
+              fontWeight = FontWeight.SemiBold,
+              color = AmoledTextPrimary
             )
             val modelNameShort = nvidiaModel.substringAfterLast('/')
             val providerSubtitle = when (providerType) {
-              ProviderType.NVIDIA_NIM -> "NVIDIA NIM ($modelNameShort)"
+              ProviderType.NVIDIA_NIM -> "NVIDIA NIM • $modelNameShort"
               ProviderType.SANDBOX_ENGINE -> "Autonomous Sandbox Engine"
-              ProviderType.GEMINI_LIVE_API -> "Google Gemini Live API"
+              ProviderType.GEMINI_LIVE_API -> "Gemini Live API"
             }
             Text(
               text = providerSubtitle,
               style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.primary,
-              fontWeight = FontWeight.SemiBold
+              fontFamily = JetBrainsMonoFontFamily,
+              color = AmoledIconGrey,
+              fontSize = 10.sp
             )
           }
         }
 
+        // Header Actions: Status pill, Log copy, Reset, Settings
         Row(verticalAlignment = Alignment.CenterVertically) {
           StatusPill(status = status)
 
           Spacer(modifier = Modifier.width(4.dp))
 
-          // Copy Full Transcript button
           LittleCopyButton(
             textToCopy = onGetTranscript(),
             label = "Log",
-            buttonSize = 34.dp,
-            iconSize = 16.dp,
+            tint = AmoledIconGrey,
+            buttonSize = 32.dp,
+            iconSize = 14.dp,
             testTag = "copy_transcript_header"
           )
 
           if (canCancel) {
             IconButton(
               onClick = onStop,
-              modifier = Modifier.size(36.dp)
+              modifier = Modifier.size(32.dp)
             ) {
-              Icon(Icons.Default.Stop, contentDescription = "Stop", tint = MaterialTheme.colorScheme.error)
+              Icon(
+                Icons.Default.Stop,
+                contentDescription = "Stop",
+                tint = AmoledStatusError,
+                modifier = Modifier.size(18.dp)
+              )
             }
           }
 
           IconButton(
             onClick = onResetWorkspace,
-            modifier = Modifier.size(36.dp)
+            modifier = Modifier.size(32.dp)
           ) {
-            Icon(Icons.Default.Refresh, contentDescription = "Reset Workspace", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(
+              Icons.Default.Refresh,
+              contentDescription = "Reset Workspace",
+              tint = AmoledIconGrey,
+              modifier = Modifier.size(18.dp)
+            )
           }
 
           IconButton(
             onClick = onOpenSettings,
-            modifier = Modifier.size(36.dp)
+            modifier = Modifier.size(32.dp)
           ) {
-            Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(
+              Icons.Default.Settings,
+              contentDescription = "Settings",
+              tint = AmoledIconGrey,
+              modifier = Modifier.size(18.dp)
+            )
           }
         }
       }
 
+      // Active status bar
       if (!currentAction.isNullOrBlank()) {
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
         Surface(
           modifier = Modifier.fillMaxWidth(),
           shape = RoundedCornerShape(8.dp),
-          color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-          border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+          color = Color(0xFF101010),
+          border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle)
         ) {
           Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically
           ) {
             Box(
               modifier = Modifier
-                .size(7.dp)
+                .size(6.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary)
+                .background(AmoledActionPrimary)
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-              text = "ACTIVE:",
-              style = MaterialTheme.typography.labelSmall,
-              fontWeight = FontWeight.Bold,
-              color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
               text = currentAction,
               style = MaterialTheme.typography.bodySmall,
-              color = MaterialTheme.colorScheme.onSurface,
+              fontFamily = InterFontFamily,
+              color = AmoledTextSecondary,
+              fontSize = 11.sp,
               maxLines = 1,
               modifier = Modifier.weight(1f)
             )
@@ -677,32 +841,34 @@ fun AgentTopHeader(
 @Composable
 fun StatusPill(status: AgentStatus) {
   val (bgColor, textColor, label) = when (status) {
-    AgentStatus.IDLE -> Triple(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant, "IDLE")
-    AgentStatus.THINKING -> Triple(MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer, "THINKING")
-    AgentStatus.PLANNING -> Triple(Color(0xFFE0E7FF), Color(0xFF3730A3), "PLANNING")
-    AgentStatus.EXECUTING_TOOL -> Triple(Color(0xFFFEF3C7), Color(0xFF92400E), "EXECUTING")
-    AgentStatus.OBSERVING -> Triple(Color(0xFFD1FAE5), Color(0xFF065F46), "OBSERVING")
-    AgentStatus.VERIFYING -> Triple(Color(0xFFEDE9FE), Color(0xFF5B21B6), "VERIFYING")
-    AgentStatus.COMPLETED -> Triple(Color(0xFFDCFCE7), Color(0xFF166534), "COMPLETED")
-    AgentStatus.FAILED -> Triple(MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer, "FAILED")
-    AgentStatus.CANCELLED -> Triple(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.outline, "STOPPED")
+    AgentStatus.IDLE -> Triple(Color(0xFF141414), AmoledTextMuted, "IDLE")
+    AgentStatus.THINKING -> Triple(Color(0xFF181818), AmoledIconGreyLight, "THINKING")
+    AgentStatus.PLANNING -> Triple(Color(0xFF181818), AmoledIconGreyLight, "PLANNING")
+    AgentStatus.EXECUTING_TOOL -> Triple(Color(0xFF1A1A1A), AmoledTextPrimary, "TOOL CALL")
+    AgentStatus.OBSERVING -> Triple(Color(0xFF161616), AmoledIconGreyLight, "OBSERVING")
+    AgentStatus.VERIFYING -> Triple(Color(0xFF181818), AmoledIconGreyLight, "VERIFYING")
+    AgentStatus.COMPLETED -> Triple(Color(0xFF102015), AmoledStatusSuccess, "COMPLETED")
+    AgentStatus.FAILED -> Triple(Color(0xFF221111), AmoledStatusError, "FAILED")
+    AgentStatus.CANCELLED -> Triple(Color(0xFF141414), AmoledTextMuted, "STOPPED")
   }
 
   Surface(
-    shape = RoundedCornerShape(12.dp),
+    shape = RoundedCornerShape(8.dp),
     color = bgColor,
-    modifier = Modifier.height(26.dp)
+    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+    modifier = Modifier.height(24.dp)
   ) {
     Box(
       contentAlignment = Alignment.Center,
-      modifier = Modifier.padding(horizontal = 9.dp)
+      modifier = Modifier.padding(horizontal = 8.dp)
     ) {
       Text(
         text = label,
         style = MaterialTheme.typography.labelSmall,
-        fontWeight = FontWeight.Bold,
+        fontFamily = JetBrainsMonoFontFamily,
+        fontWeight = FontWeight.Medium,
         color = textColor,
-        fontSize = 11.sp
+        fontSize = 10.sp
       )
     }
   }
@@ -720,16 +886,17 @@ fun EmptyExecutionState(
     verticalArrangement = Arrangement.Center
   ) {
     Surface(
-      shape = RoundedCornerShape(20.dp),
-      color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
-      modifier = Modifier.size(68.dp)
+      shape = RoundedCornerShape(16.dp),
+      color = Color(0xFF141414),
+      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
+      modifier = Modifier.size(60.dp)
     ) {
       Box(contentAlignment = Alignment.Center) {
         Icon(
-          imageVector = Icons.Default.AutoAwesome,
+          imageVector = Icons.Default.Terminal,
           contentDescription = null,
-          tint = MaterialTheme.colorScheme.primary,
-          modifier = Modifier.size(34.dp)
+          tint = AmoledIconGreyLight,
+          modifier = Modifier.size(28.dp)
         )
       }
     }
@@ -739,51 +906,61 @@ fun EmptyExecutionState(
     Text(
       text = "Autonomous AI Agent Kernel",
       style = MaterialTheme.typography.titleMedium,
-      fontWeight = FontWeight.Bold,
-      color = MaterialTheme.colorScheme.onSurface
+      fontWeight = FontWeight.SemiBold,
+      color = AmoledTextPrimary
     )
 
     Spacer(modifier = Modifier.height(6.dp))
 
     Surface(
       shape = RoundedCornerShape(8.dp),
-      color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+      color = Color(0xFF111111),
+      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
       modifier = Modifier.padding(horizontal = 8.dp)
     ) {
       Text(
-        text = "GOAL → PLAN → THINK → TOOL CALL → EXECUTE → OBSERVE → VERIFY",
-        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-        color = MaterialTheme.colorScheme.primary,
-        fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+        text = "GOAL → PLAN → TOOL CALL → EXECUTE → VERIFY",
+        style = MaterialTheme.typography.labelSmall,
+        fontFamily = JetBrainsMonoFontFamily,
+        color = AmoledIconGrey,
+        fontSize = 10.sp,
+        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
       )
     }
 
-    Spacer(modifier = Modifier.height(16.dp))
+    Spacer(modifier = Modifier.height(14.dp))
 
     Text(
-      text = "The agent executes sandboxed tools with verification. Powered by NVIDIA NIM models with native structured tool calling and automatic fallback recovery.",
-      style = MaterialTheme.typography.bodyMedium,
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-      lineHeight = 22.sp
+      text = "Execute sandboxed tasks with multi-turn tool calling, verifiable filesystem artifacts, and fallback recovery.",
+      style = MaterialTheme.typography.bodySmall,
+      color = AmoledTextMuted,
+      lineHeight = 18.sp,
+      modifier = Modifier.padding(horizontal = 16.dp)
     )
 
-    Spacer(modifier = Modifier.height(24.dp))
+    Spacer(modifier = Modifier.height(20.dp))
 
     Button(
       onClick = onQuickRun,
-      shape = RoundedCornerShape(12.dp),
+      shape = RoundedCornerShape(10.dp),
+      colors = ButtonDefaults.buttonColors(
+        containerColor = AmoledActionPrimary,
+        contentColor = AmoledActionPrimaryOn
+      ),
       modifier = Modifier
-        .height(48.dp)
+        .height(42.dp)
         .testTag("quick_start_button")
     ) {
-      Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
-      Spacer(modifier = Modifier.width(8.dp))
-      Text("Run Sample: data.csv → report.md", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+      Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+      Spacer(modifier = Modifier.width(6.dp))
+      Text("Sample: data.csv → report.md", style = MaterialTheme.typography.labelMedium)
     }
   }
 }
 
+/**
+ * Improved AMOLED Dark Settings & Model Picker Dialog
+ */
 @Composable
 fun SettingsProviderDialog(
   currentProvider: ProviderType,
@@ -818,11 +995,13 @@ fun SettingsProviderDialog(
       onResetConnectionStatus()
       onDismiss()
     },
+    containerColor = AmoledSurface,
     title = {
       Text(
         text = "Provider & Model Configuration",
         style = MaterialTheme.typography.titleMedium,
-        fontWeight = FontWeight.Bold
+        fontWeight = FontWeight.SemiBold,
+        color = AmoledTextPrimary
       )
     },
     text = {
@@ -832,16 +1011,21 @@ fun SettingsProviderDialog(
           .fillMaxWidth()
           .verticalScroll(scrollState)
       ) {
-        Text("Select Execution Mode:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        Text(
+          "Execution Engine:",
+          style = MaterialTheme.typography.labelMedium,
+          color = AmoledIconGreyLight,
+          fontWeight = FontWeight.SemiBold
+        )
         Spacer(modifier = Modifier.height(8.dp))
 
         // Option 1: NVIDIA NIM (Primary)
         Surface(
           shape = RoundedCornerShape(10.dp),
-          color = if (selectedType == ProviderType.NVIDIA_NIM) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surface,
+          color = if (selectedType == ProviderType.NVIDIA_NIM) Color(0xFF181818) else Color(0xFF0F0F0F),
           border = androidx.compose.foundation.BorderStroke(
             1.dp,
-            if (selectedType == ProviderType.NVIDIA_NIM) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+            if (selectedType == ProviderType.NVIDIA_NIM) AmoledActionPrimary else AmoledBorderSubtle
           ),
           modifier = Modifier
             .fillMaxWidth()
@@ -853,31 +1037,40 @@ fun SettingsProviderDialog(
           ) {
             RadioButton(
               selected = selectedType == ProviderType.NVIDIA_NIM,
-              onClick = { selectedType = ProviderType.NVIDIA_NIM }
+              onClick = { selectedType = ProviderType.NVIDIA_NIM },
+              colors = RadioButtonDefaults.colors(
+                selectedColor = AmoledActionPrimary,
+                unselectedColor = AmoledIconGrey
+              )
             )
             Column(modifier = Modifier.padding(start = 6.dp)) {
               Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("NVIDIA NIM (Hosted)", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                Text(
+                  "NVIDIA NIM Cloud",
+                  style = MaterialTheme.typography.bodyMedium,
+                  fontWeight = FontWeight.SemiBold,
+                  color = AmoledTextPrimary
+                )
                 Spacer(modifier = Modifier.width(6.dp))
                 Surface(
                   shape = RoundedCornerShape(4.dp),
-                  color = MaterialTheme.colorScheme.primary,
-                  modifier = Modifier.padding(horizontal = 2.dp)
+                  color = Color(0xFF222222),
+                  border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder)
                 ) {
                   Text(
                     text = "FREE MODELS",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onPrimary,
+                    color = AmoledIconGreyLight,
                     fontSize = 9.sp,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                   )
                 }
               }
               Text(
-                "OpenAI-compatible native structured tool calling API with seamless fallback",
+                "Structured tool calling with automatic model fallback recovery",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = AmoledTextMuted
               )
             }
           }
@@ -885,12 +1078,12 @@ fun SettingsProviderDialog(
 
         // Expanded NVIDIA NIM settings
         AnimatedVisibility(visible = selectedType == ProviderType.NVIDIA_NIM) {
-          Column(modifier = Modifier.padding(top = 12.dp)) {
+          Column(modifier = Modifier.padding(top = 10.dp)) {
             // Live Connection Test Button and Status
             Surface(
               shape = RoundedCornerShape(8.dp),
-              color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-              border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+              color = Color(0xFF121212),
+              border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
               modifier = Modifier.fillMaxWidth()
             ) {
               Column(modifier = Modifier.padding(10.dp)) {
@@ -901,27 +1094,33 @@ fun SettingsProviderDialog(
                 ) {
                   Text(
                     text = "Endpoint Verification",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AmoledIconGreyLight,
+                    fontWeight = FontWeight.SemiBold
                   )
                   Button(
                     onClick = onTestConnection,
                     enabled = connectionStatus !is ConnectionStatus.Testing,
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    modifier = Modifier.height(32.dp)
+                    colors = ButtonDefaults.buttonColors(
+                      containerColor = Color(0xFF222222),
+                      contentColor = AmoledTextPrimary
+                    ),
+                    shape = RoundedCornerShape(6.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    modifier = Modifier.height(30.dp)
                   ) {
                     if (connectionStatus is ConnectionStatus.Testing) {
                       CircularProgressIndicator(
-                        modifier = Modifier.size(14.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary
+                        modifier = Modifier.size(12.dp),
+                        strokeWidth = 1.5.dp,
+                        color = AmoledTextPrimary
                       )
                       Spacer(modifier = Modifier.width(6.dp))
                       Text("Testing...", style = MaterialTheme.typography.labelSmall)
                     } else {
-                      Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                      Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(13.dp))
                       Spacer(modifier = Modifier.width(4.dp))
-                      Text("Test Endpoint", style = MaterialTheme.typography.labelSmall)
+                      Text("Test NIM", style = MaterialTheme.typography.labelSmall)
                     }
                   }
                 }
@@ -931,20 +1130,20 @@ fun SettingsProviderDialog(
                     Spacer(modifier = Modifier.height(6.dp))
                     Surface(
                       shape = RoundedCornerShape(6.dp),
-                      color = Color(0xFF10B981).copy(alpha = 0.15f),
+                      color = Color(0xFF102015),
+                      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledStatusSuccess.copy(alpha = 0.3f)),
                       modifier = Modifier.fillMaxWidth()
                     ) {
                       Row(
                         modifier = Modifier.padding(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                       ) {
-                        Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Check, contentDescription = null, tint = AmoledStatusSuccess, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                          text = "Live: ${status.modelCount} models verified on build.nvidia.com",
+                          text = "Verified: ${status.modelCount} models online on build.nvidia.com",
                           style = MaterialTheme.typography.labelSmall,
-                          color = Color(0xFF047857),
-                          fontWeight = FontWeight.SemiBold
+                          color = AmoledStatusSuccess
                         )
                       }
                     }
@@ -953,19 +1152,20 @@ fun SettingsProviderDialog(
                     Spacer(modifier = Modifier.height(6.dp))
                     Surface(
                       shape = RoundedCornerShape(6.dp),
-                      color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                      color = Color(0xFF221111),
+                      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledStatusError.copy(alpha = 0.3f)),
                       modifier = Modifier.fillMaxWidth()
                     ) {
                       Row(
                         modifier = Modifier.padding(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                       ) {
-                        Icon(Icons.Default.Close, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Close, contentDescription = null, tint = AmoledStatusError, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                           text = status.message,
                           style = MaterialTheme.typography.labelSmall,
-                          color = MaterialTheme.colorScheme.error
+                          color = AmoledStatusError
                         )
                       }
                     }
@@ -981,13 +1181,13 @@ fun SettingsProviderDialog(
             OutlinedTextField(
               value = modelSearchQuery,
               onValueChange = { modelSearchQuery = it },
-              label = { Text("Search Models") },
-              placeholder = { Text("Filter models (e.g. glm, llama, nemotron)...") },
-              leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+              label = { Text("Filter Models") },
+              placeholder = { Text("glm, llama, nemotron...") },
+              leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = AmoledIconGrey, modifier = Modifier.size(16.dp)) },
               trailingIcon = {
                 if (modelSearchQuery.isNotBlank()) {
                   IconButton(onClick = { modelSearchQuery = "" }) {
-                    Icon(Icons.Default.Clear, contentDescription = "Clear", modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Clear, contentDescription = "Clear", tint = AmoledIconGrey, modifier = Modifier.size(15.dp))
                   }
                 }
               },
@@ -999,7 +1199,7 @@ fun SettingsProviderDialog(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Category filter chips
+            // Category filter chips in Flutter flat pill style
             val catScrollState = rememberScrollState()
             Row(
               modifier = Modifier
@@ -1008,16 +1208,21 @@ fun SettingsProviderDialog(
               horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
               NvidiaNimModels.CATEGORIES.forEach { category ->
-                FilterChip(
-                  selected = selectedCategory == category,
-                  onClick = { selectedCategory = category },
-                  label = { Text(category, style = MaterialTheme.typography.labelSmall) },
-                  shape = RoundedCornerShape(8.dp),
-                  colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                val isCatSelected = selectedCategory == category
+                Surface(
+                  shape = RoundedCornerShape(6.dp),
+                  color = if (isCatSelected) AmoledActionPrimary else Color(0xFF161616),
+                  border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+                  modifier = Modifier.clickable { selectedCategory = category }
+                ) {
+                  Text(
+                    text = category,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontSize = 11.sp,
+                    color = if (isCatSelected) AmoledActionPrimaryOn else AmoledIconGreyLight,
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
                   )
-                )
+                }
               }
             }
 
@@ -1027,9 +1232,9 @@ fun SettingsProviderDialog(
             val filteredModels = NvidiaNimModels.CATALOG.filter { model ->
               val matchesCat = selectedCategory == "All" || model.category == selectedCategory
               val matchesQuery = modelSearchQuery.isBlank() ||
-                  model.id.contains(modelSearchQuery, ignoreCase = true) ||
-                  model.name.contains(modelSearchQuery, ignoreCase = true) ||
-                  model.description.contains(modelSearchQuery, ignoreCase = true)
+                model.id.contains(modelSearchQuery, ignoreCase = true) ||
+                model.name.contains(modelSearchQuery, ignoreCase = true) ||
+                model.description.contains(modelSearchQuery, ignoreCase = true)
               matchesCat && matchesQuery
             }
 
@@ -1037,17 +1242,17 @@ fun SettingsProviderDialog(
               verticalArrangement = Arrangement.spacedBy(6.dp),
               modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 240.dp)
+                .heightIn(max = 220.dp)
                 .verticalScroll(rememberScrollState())
             ) {
               filteredModels.forEach { modelEntry ->
                 val isSelected = nvidiaModelInput == modelEntry.id && !isCustomModelMode
                 Surface(
                   shape = RoundedCornerShape(8.dp),
-                  color = if (isSelected) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                  color = if (isSelected) Color(0xFF1E1E1E) else Color(0xFF101010),
                   border = androidx.compose.foundation.BorderStroke(
                     1.dp,
-                    if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                    if (isSelected) AmoledActionPrimary else AmoledBorderSubtle
                   ),
                   modifier = Modifier
                     .fillMaxWidth()
@@ -1065,21 +1270,21 @@ fun SettingsProviderDialog(
                         Text(
                           text = modelEntry.name,
                           style = MaterialTheme.typography.bodySmall,
-                          fontWeight = FontWeight.Bold,
-                          color = MaterialTheme.colorScheme.onSurface
+                          fontWeight = FontWeight.SemiBold,
+                          color = AmoledTextPrimary
                         )
                         if (modelEntry.badge.isNotBlank()) {
                           Spacer(modifier = Modifier.width(6.dp))
                           Surface(
                             shape = RoundedCornerShape(4.dp),
-                            color = if (modelEntry.isVerified) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.outlineVariant
+                            color = Color(0xFF222222)
                           ) {
                             Text(
                               text = modelEntry.badge,
                               style = MaterialTheme.typography.labelSmall,
+                              fontFamily = JetBrainsMonoFontFamily,
                               fontSize = 9.sp,
-                              color = if (modelEntry.isVerified) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                              fontWeight = FontWeight.Bold,
+                              color = AmoledIconGreyLight,
                               modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                             )
                           }
@@ -1087,15 +1292,15 @@ fun SettingsProviderDialog(
                       }
                       Text(
                         text = modelEntry.id,
-                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMonoFontFamily),
                         fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.outline
+                        color = AmoledTextMuted
                       )
                       Text(
                         text = modelEntry.description,
                         style = MaterialTheme.typography.labelSmall,
                         fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = AmoledTextSecondary
                       )
                     }
 
@@ -1103,7 +1308,7 @@ fun SettingsProviderDialog(
                       LittleCopyButton(
                         textToCopy = modelEntry.id,
                         buttonSize = 24.dp,
-                        iconSize = 13.dp,
+                        iconSize = 12.dp,
                         testTag = "copy_model_id_${modelEntry.id.substringAfterLast('/')}"
                       )
 
@@ -1112,8 +1317,8 @@ fun SettingsProviderDialog(
                         Icon(
                           imageVector = Icons.Default.Check,
                           contentDescription = "Selected",
-                          tint = MaterialTheme.colorScheme.primary,
-                          modifier = Modifier.size(18.dp)
+                          tint = AmoledTextPrimary,
+                          modifier = Modifier.size(16.dp)
                         )
                       }
                     }
@@ -1134,12 +1339,12 @@ fun SettingsProviderDialog(
               label = { Text("Active Model Identifier") },
               placeholder = { Text(NvidiaNimConfig.DEFAULT_MODEL) },
               trailingIcon = {
-                LittleCopyButton(textToCopy = nvidiaModelInput, buttonSize = 28.dp, iconSize = 14.dp)
+                LittleCopyButton(textToCopy = nvidiaModelInput, buttonSize = 28.dp, iconSize = 13.dp)
               },
               modifier = Modifier.fillMaxWidth(),
               singleLine = true,
-              textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-              shape = RoundedCornerShape(10.dp)
+              textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily),
+              shape = RoundedCornerShape(8.dp)
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -1155,23 +1360,24 @@ fun SettingsProviderDialog(
               visualTransformation = if (isApiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
               trailingIcon = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                  LittleCopyButton(textToCopy = nvidiaKeyInput, buttonSize = 28.dp, iconSize = 14.dp)
+                  LittleCopyButton(textToCopy = nvidiaKeyInput, buttonSize = 28.dp, iconSize = 13.dp)
                   IconButton(onClick = { isApiKeyVisible = !isApiKeyVisible }) {
                     Icon(
                       imageVector = if (isApiKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                       contentDescription = if (isApiKeyVisible) "Hide key" else "Show key",
-                      modifier = Modifier.size(18.dp)
+                      tint = AmoledIconGrey,
+                      modifier = Modifier.size(16.dp)
                     )
                   }
                 }
               },
               textStyle = MaterialTheme.typography.bodySmall,
-              shape = RoundedCornerShape(10.dp)
+              shape = RoundedCornerShape(8.dp)
             )
             Text(
-              text = "Configurable via .env / BuildConfig.NVIDIA_API_KEY",
+              text = "Preconfigured via BuildConfig.NVIDIA_API_KEY",
               style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.outline,
+              color = AmoledTextMuted,
               modifier = Modifier.padding(top = 2.dp, start = 4.dp)
             )
 
@@ -1184,18 +1390,18 @@ fun SettingsProviderDialog(
               placeholder = { Text(NvidiaNimConfig.DEFAULT_BASE_URL) },
               trailingIcon = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                  LittleCopyButton(textToCopy = nvidiaBaseUrlInput, buttonSize = 28.dp, iconSize = 14.dp)
+                  LittleCopyButton(textToCopy = nvidiaBaseUrlInput, buttonSize = 28.dp, iconSize = 13.dp)
                   if (nvidiaBaseUrlInput != NvidiaNimConfig.DEFAULT_BASE_URL) {
                     IconButton(onClick = { nvidiaBaseUrlInput = NvidiaNimConfig.DEFAULT_BASE_URL }) {
-                      Icon(Icons.Default.Refresh, contentDescription = "Reset URL", modifier = Modifier.size(16.dp))
+                      Icon(Icons.Default.Refresh, contentDescription = "Reset URL", tint = AmoledIconGrey, modifier = Modifier.size(15.dp))
                     }
                   }
                 }
               },
               modifier = Modifier.fillMaxWidth(),
               singleLine = true,
-              textStyle = MaterialTheme.typography.bodySmall,
-              shape = RoundedCornerShape(10.dp)
+              textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily),
+              shape = RoundedCornerShape(8.dp)
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -1208,7 +1414,7 @@ fun SettingsProviderDialog(
                 modifier = Modifier.weight(1f),
                 singleLine = true,
                 textStyle = MaterialTheme.typography.bodySmall,
-                shape = RoundedCornerShape(10.dp)
+                shape = RoundedCornerShape(8.dp)
               )
               OutlinedTextField(
                 value = nvidiaMaxTokensInput,
@@ -1217,7 +1423,7 @@ fun SettingsProviderDialog(
                 modifier = Modifier.weight(1f),
                 singleLine = true,
                 textStyle = MaterialTheme.typography.bodySmall,
-                shape = RoundedCornerShape(10.dp)
+                shape = RoundedCornerShape(8.dp)
               )
             }
           }
@@ -1228,10 +1434,10 @@ fun SettingsProviderDialog(
         // Option 2: Sandbox Engine
         Surface(
           shape = RoundedCornerShape(10.dp),
-          color = if (selectedType == ProviderType.SANDBOX_ENGINE) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surface,
+          color = if (selectedType == ProviderType.SANDBOX_ENGINE) Color(0xFF181818) else Color(0xFF0F0F0F),
           border = androidx.compose.foundation.BorderStroke(
             1.dp,
-            if (selectedType == ProviderType.SANDBOX_ENGINE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+            if (selectedType == ProviderType.SANDBOX_ENGINE) AmoledActionPrimary else AmoledBorderSubtle
           ),
           modifier = Modifier
             .fillMaxWidth()
@@ -1243,11 +1449,15 @@ fun SettingsProviderDialog(
           ) {
             RadioButton(
               selected = selectedType == ProviderType.SANDBOX_ENGINE,
-              onClick = { selectedType = ProviderType.SANDBOX_ENGINE }
+              onClick = { selectedType = ProviderType.SANDBOX_ENGINE },
+              colors = RadioButtonDefaults.colors(
+                selectedColor = AmoledActionPrimary,
+                unselectedColor = AmoledIconGrey
+              )
             )
             Column(modifier = Modifier.padding(start = 6.dp)) {
-              Text("Autonomous Sandbox Engine", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-              Text("Offline deterministic engine with full tool dispatch", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              Text("Autonomous Sandbox Engine", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = AmoledTextPrimary)
+              Text("Offline deterministic engine with full tool dispatch", style = MaterialTheme.typography.labelSmall, color = AmoledTextMuted)
             }
           }
         }
@@ -1257,10 +1467,10 @@ fun SettingsProviderDialog(
         // Option 3: Gemini Live API
         Surface(
           shape = RoundedCornerShape(10.dp),
-          color = if (selectedType == ProviderType.GEMINI_LIVE_API) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surface,
+          color = if (selectedType == ProviderType.GEMINI_LIVE_API) Color(0xFF181818) else Color(0xFF0F0F0F),
           border = androidx.compose.foundation.BorderStroke(
             1.dp,
-            if (selectedType == ProviderType.GEMINI_LIVE_API) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+            if (selectedType == ProviderType.GEMINI_LIVE_API) AmoledActionPrimary else AmoledBorderSubtle
           ),
           modifier = Modifier
             .fillMaxWidth()
@@ -1272,11 +1482,15 @@ fun SettingsProviderDialog(
           ) {
             RadioButton(
               selected = selectedType == ProviderType.GEMINI_LIVE_API,
-              onClick = { selectedType = ProviderType.GEMINI_LIVE_API }
+              onClick = { selectedType = ProviderType.GEMINI_LIVE_API },
+              colors = RadioButtonDefaults.colors(
+                selectedColor = AmoledActionPrimary,
+                unselectedColor = AmoledIconGrey
+              )
             )
             Column(modifier = Modifier.padding(start = 6.dp)) {
-              Text("Google Gemini Live API", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-              Text("gemini-2.5-flash with function calling", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              Text("Google Gemini Live API", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = AmoledTextPrimary)
+              Text("gemini-2.5-flash with function calling", style = MaterialTheme.typography.labelSmall, color = AmoledTextMuted)
             }
           }
         }
@@ -1292,7 +1506,7 @@ fun SettingsProviderDialog(
               singleLine = true,
               visualTransformation = PasswordVisualTransformation(),
               textStyle = MaterialTheme.typography.bodySmall,
-              shape = RoundedCornerShape(10.dp)
+              shape = RoundedCornerShape(8.dp)
             )
           }
         }
@@ -1315,9 +1529,14 @@ fun SettingsProviderDialog(
           }
           onResetConnectionStatus()
           onDismiss()
-        }
+        },
+        shape = RoundedCornerShape(8.dp),
+        colors = ButtonDefaults.buttonColors(
+          containerColor = AmoledActionPrimary,
+          contentColor = AmoledActionPrimaryOn
+        )
       ) {
-        Text("Apply Changes")
+        Text("Apply Changes", style = MaterialTheme.typography.labelMedium)
       }
     },
     dismissButton = {
@@ -1327,7 +1546,7 @@ fun SettingsProviderDialog(
           onDismiss()
         }
       ) {
-        Text("Cancel")
+        Text("Cancel", color = AmoledIconGrey)
       }
     }
   )

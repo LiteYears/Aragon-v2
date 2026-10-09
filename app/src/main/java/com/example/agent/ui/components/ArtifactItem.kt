@@ -21,9 +21,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -34,14 +37,29 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.agent.core.Artifact
+import com.example.agent.core.ArtifactDownloader
+import com.example.ui.theme.AmoledActionPrimary
+import com.example.ui.theme.AmoledActionPrimaryOn
+import com.example.ui.theme.AmoledBorder
+import com.example.ui.theme.AmoledBorderSubtle
+import com.example.ui.theme.AmoledIconGrey
+import com.example.ui.theme.AmoledIconGreyLight
+import com.example.ui.theme.AmoledSurface
+import com.example.ui.theme.AmoledSurfaceElevated
+import com.example.ui.theme.AmoledSurfaceVariant
+import com.example.ui.theme.AmoledTextMuted
+import com.example.ui.theme.AmoledTextPrimary
+import com.example.ui.theme.AmoledTextSecondary
+import com.example.ui.theme.JetBrainsMonoFontFamily
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -52,6 +70,7 @@ fun ArtifactItem(
   onOpenPreview: (Artifact) -> Unit,
   modifier: Modifier = Modifier
 ) {
+  val context = LocalContext.current
   val icon = getArtifactIcon(artifact.name)
   val formattedSize = formatFileSize(artifact.size)
   val dateFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
@@ -60,30 +79,32 @@ fun ArtifactItem(
   Surface(
     modifier = modifier
       .fillMaxWidth()
-      .padding(horizontal = 16.dp, vertical = 5.dp)
-      .clip(RoundedCornerShape(10.dp))
-      .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+      .padding(horizontal = 14.dp, vertical = 4.dp)
+      .clip(RoundedCornerShape(12.dp))
+      .border(1.dp, AmoledBorderSubtle, RoundedCornerShape(12.dp))
       .clickable { onOpenPreview(artifact) }
       .testTag("artifact_card_${artifact.name}"),
-    color = MaterialTheme.colorScheme.surface
+    color = AmoledSurfaceElevated
   ) {
     Row(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(14.dp),
+        .padding(12.dp),
       verticalAlignment = Alignment.CenterVertically
     ) {
+      // Modern Flutter squircle badge with subtle grey icon
       Surface(
         shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        modifier = Modifier.size(42.dp)
+        color = Color(0xFF161616),
+        border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
+        modifier = Modifier.size(38.dp)
       ) {
         Box(contentAlignment = Alignment.Center) {
           Icon(
             imageVector = icon,
             contentDescription = artifact.type,
-            tint = MaterialTheme.colorScheme.onSecondaryContainer,
-            modifier = Modifier.size(24.dp)
+            tint = AmoledIconGreyLight,
+            modifier = Modifier.size(20.dp)
           )
         }
       }
@@ -94,56 +115,75 @@ fun ArtifactItem(
         Text(
           text = artifact.name,
           style = MaterialTheme.typography.titleSmall,
-          fontWeight = FontWeight.SemiBold,
-          color = MaterialTheme.colorScheme.onSurface
+          fontWeight = FontWeight.Medium,
+          color = AmoledTextPrimary
         )
         Spacer(modifier = Modifier.height(2.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
           Text(
-            text = artifact.type,
+            text = artifact.type.uppercase(),
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.primary
+            fontFamily = JetBrainsMonoFontFamily,
+            fontSize = 9.sp,
+            color = AmoledIconGreyLight
           )
-          Text(
-            text = "•",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.outline
-          )
+          Text(text = "•", style = MaterialTheme.typography.labelSmall, color = AmoledTextMuted)
           Text(
             text = formattedSize,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            fontFamily = JetBrainsMonoFontFamily,
+            fontSize = 9.sp,
+            color = AmoledTextSecondary
           )
-          Text(
-            text = "•",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.outline
-          )
+          Text(text = "•", style = MaterialTheme.typography.labelSmall, color = AmoledTextMuted)
           Text(
             text = timeStr,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.outline
+            fontFamily = JetBrainsMonoFontFamily,
+            fontSize = 9.sp,
+            color = AmoledTextMuted
           )
         }
       }
 
+      // Action buttons: Download & Inspect
       Row(verticalAlignment = Alignment.CenterVertically) {
-        LittleCopyButton(
-          textToCopy = artifact.path,
-          label = "Path",
-          buttonSize = 28.dp,
-          iconSize = 14.dp,
-          testTag = "copy_path_${artifact.name}"
-        )
+        // Direct download button
+        IconButton(
+          onClick = { ArtifactDownloader.downloadArtifact(context, artifact) },
+          modifier = Modifier
+            .size(32.dp)
+            .testTag("download_artifact_btn_${artifact.name}")
+        ) {
+          Icon(
+            imageVector = Icons.Default.FileDownload,
+            contentDescription = "Download artifact",
+            tint = AmoledIconGrey,
+            modifier = Modifier.size(18.dp)
+          )
+        }
 
         Spacer(modifier = Modifier.width(4.dp))
 
+        // Inspect button (Flutter-style flat pill)
         OutlinedButton(
           onClick = { onOpenPreview(artifact) },
-          shape = RoundedCornerShape(6.dp),
+          shape = RoundedCornerShape(8.dp),
+          colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = AmoledTextPrimary
+          ),
+          border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
+          contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
           modifier = Modifier.testTag("inspect_artifact_btn_${artifact.name}")
         ) {
-          Text("Inspect", style = MaterialTheme.typography.labelMedium)
+          Text(
+            "View",
+            style = MaterialTheme.typography.labelMedium,
+            fontSize = 11.sp
+          )
         }
       }
     }
@@ -156,14 +196,15 @@ fun ArtifactPreviewDialog(
   content: String?,
   onDismiss: () -> Unit
 ) {
+  val context = LocalContext.current
   val vScroll = rememberScrollState()
   val hScroll = rememberScrollState()
 
   Dialog(onDismissRequest = onDismiss) {
     Surface(
-      shape = RoundedCornerShape(12.dp),
-      color = MaterialTheme.colorScheme.surface,
-      tonalElevation = 6.dp,
+      shape = RoundedCornerShape(16.dp),
+      color = AmoledSurface,
+      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
       modifier = Modifier
         .fillMaxWidth()
         .fillMaxHeight(0.85f)
@@ -184,41 +225,37 @@ fun ArtifactPreviewDialog(
             Text(
               text = artifact.name,
               style = MaterialTheme.typography.titleMedium,
-              fontWeight = FontWeight.Bold
+              fontWeight = FontWeight.SemiBold,
+              color = AmoledTextPrimary
             )
             Text(
-              text = "${artifact.path}  •  ${formatFileSize(artifact.size)}",
+              text = "${artifact.path} • ${formatFileSize(artifact.size)}",
               style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant
+              fontFamily = JetBrainsMonoFontFamily,
+              color = AmoledTextMuted,
+              fontSize = 10.sp
             )
           }
 
-          Row(verticalAlignment = Alignment.CenterVertically) {
-            if (!content.isNullOrBlank()) {
-              LittleCopyButton(
-                textToCopy = content,
-                label = "Copy Content",
-                testTag = "copy_preview_content"
-              )
-              Spacer(modifier = Modifier.width(4.dp))
-            }
-
-            IconButton(onClick = onDismiss) {
-              Icon(Icons.Default.Close, contentDescription = "Close")
-            }
+          IconButton(onClick = onDismiss) {
+            Icon(
+              Icons.Default.Close,
+              contentDescription = "Close",
+              tint = AmoledIconGrey
+            )
           }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Content box
+        // Content box with AMOLED terminal styling
         Surface(
           modifier = Modifier
             .weight(1f)
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
-          color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+            .clip(RoundedCornerShape(10.dp))
+            .border(1.dp, AmoledBorder, RoundedCornerShape(10.dp)),
+          color = Color(0xFF070707)
         ) {
           Box(
             modifier = Modifier
@@ -229,35 +266,82 @@ fun ArtifactPreviewDialog(
             Text(
               text = content ?: "Loading artifact content...",
               style = MaterialTheme.typography.bodySmall.copy(
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
+                fontFamily = JetBrainsMonoFontFamily,
+                fontSize = 11.sp,
                 lineHeight = 16.sp
-              )
+              ),
+              color = AmoledIconGreyLight
             )
           }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
 
+        // Bottom action row: Download, Share, Copy, and Done
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically
         ) {
-          if (!content.isNullOrBlank()) {
-            LittleCopyButton(
-              textToCopy = content,
-              label = "Copy Entire File",
-              buttonSize = 32.dp,
-              iconSize = 16.dp,
-              testTag = "copy_entire_file_bottom"
-            )
-          } else {
-            Spacer(modifier = Modifier.width(1.dp))
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            // Direct download button in preview
+            Button(
+              onClick = { ArtifactDownloader.downloadArtifact(context, artifact) },
+              shape = RoundedCornerShape(8.dp),
+              colors = ButtonDefaults.buttonColors(
+                containerColor = AmoledSurfaceElevated,
+                contentColor = AmoledTextPrimary
+              ),
+              border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
+              contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+              modifier = Modifier.testTag("download_in_dialog_btn")
+            ) {
+              Icon(
+                imageVector = Icons.Default.FileDownload,
+                contentDescription = null,
+                tint = AmoledIconGreyLight,
+                modifier = Modifier.size(16.dp)
+              )
+              Spacer(modifier = Modifier.width(4.dp))
+              Text("Save File", style = MaterialTheme.typography.labelSmall)
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Share action
+            IconButton(
+              onClick = { ArtifactDownloader.shareArtifact(context, artifact) },
+              modifier = Modifier.size(34.dp)
+            ) {
+              Icon(
+                imageVector = Icons.Default.Share,
+                contentDescription = "Share",
+                tint = AmoledIconGrey,
+                modifier = Modifier.size(17.dp)
+              )
+            }
+
+            if (!content.isNullOrBlank()) {
+              Spacer(modifier = Modifier.width(4.dp))
+              LittleCopyButton(
+                textToCopy = content,
+                label = "Copy",
+                buttonSize = 34.dp,
+                iconSize = 15.dp,
+                testTag = "copy_preview_content"
+              )
+            }
           }
 
-          Button(onClick = onDismiss) {
-            Text("Done")
+          Button(
+            onClick = onDismiss,
+            shape = RoundedCornerShape(8.dp),
+            colors = ButtonDefaults.buttonColors(
+              containerColor = AmoledActionPrimary,
+              contentColor = AmoledActionPrimaryOn
+            )
+          ) {
+            Text("Done", style = MaterialTheme.typography.labelMedium)
           }
         }
       }
