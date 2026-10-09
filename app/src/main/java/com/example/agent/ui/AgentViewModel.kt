@@ -8,7 +8,8 @@ import com.example.agent.core.AgentState
 import com.example.agent.core.Artifact
 import com.example.agent.core.AutonomousSandboxProvider
 import com.example.agent.core.GeminiLLMProvider
-import com.example.agent.core.LLMProvider
+import com.example.agent.core.NvidiaNimConfig
+import com.example.agent.core.NvidiaNimProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +20,7 @@ import java.io.File
 
 enum class ProviderType {
   SANDBOX_ENGINE,
+  NVIDIA_NIM,
   GEMINI_LIVE_API
 }
 
@@ -38,13 +40,26 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
   private val workspaceDir = File(application.filesDir, "agent_workspace")
   private val sandboxProvider = AutonomousSandboxProvider()
-  private val geminiProvider = GeminiLLMProvider(
-    apiKey = getInitialApiKey()
+  private val nvidiaProvider = NvidiaNimProvider(
+    initialConfig = NvidiaNimConfig(
+      apiKey = getInitialNvidiaApiKey(),
+      model = NvidiaNimConfig.DEFAULT_MODEL,
+      baseUrl = NvidiaNimConfig.DEFAULT_BASE_URL
+    )
   )
+  private val geminiProvider = GeminiLLMProvider(
+    apiKey = getInitialGeminiApiKey()
+  )
+
+  private val initialProviderType = if (getInitialNvidiaApiKey().isNotBlank()) {
+    ProviderType.NVIDIA_NIM
+  } else {
+    ProviderType.SANDBOX_ENGINE
+  }
 
   private val engine = AgentEngine(
     workspaceDir = workspaceDir,
-    initialProvider = sandboxProvider
+    initialProvider = if (initialProviderType == ProviderType.NVIDIA_NIM) nvidiaProvider else sandboxProvider
   )
 
   val state: StateFlow<AgentState> = engine.state.stateIn(
@@ -56,10 +71,25 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
   private val _activeTab = MutableStateFlow(UiTab.EXECUTION_FEED)
   val activeTab: StateFlow<UiTab> = _activeTab.asStateFlow()
 
-  private val _providerType = MutableStateFlow(ProviderType.SANDBOX_ENGINE)
+  private val _providerType = MutableStateFlow(initialProviderType)
   val providerType: StateFlow<ProviderType> = _providerType.asStateFlow()
 
-  private val _geminiApiKey = MutableStateFlow(getInitialApiKey())
+  private val _nvidiaApiKey = MutableStateFlow(getInitialNvidiaApiKey())
+  val nvidiaApiKey: StateFlow<String> = _nvidiaApiKey.asStateFlow()
+
+  private val _nvidiaModel = MutableStateFlow(NvidiaNimConfig.DEFAULT_MODEL)
+  val nvidiaModel: StateFlow<String> = _nvidiaModel.asStateFlow()
+
+  private val _nvidiaBaseUrl = MutableStateFlow(NvidiaNimConfig.DEFAULT_BASE_URL)
+  val nvidiaBaseUrl: StateFlow<String> = _nvidiaBaseUrl.asStateFlow()
+
+  private val _nvidiaTemperature = MutableStateFlow(0.2)
+  val nvidiaTemperature: StateFlow<Double> = _nvidiaTemperature.asStateFlow()
+
+  private val _nvidiaMaxTokens = MutableStateFlow(4096)
+  val nvidiaMaxTokens: StateFlow<Int> = _nvidiaMaxTokens.asStateFlow()
+
+  private val _geminiApiKey = MutableStateFlow(getInitialGeminiApiKey())
   val geminiApiKey: StateFlow<String> = _geminiApiKey.asStateFlow()
 
   private val _selectedArtifactForPreview = MutableStateFlow<Artifact?>(null)
@@ -68,7 +98,17 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
   private val _previewContent = MutableStateFlow<String?>(null)
   val previewContent: StateFlow<String?> = _previewContent.asStateFlow()
 
-  private fun getInitialApiKey(): String {
+  private fun getInitialNvidiaApiKey(): String {
+    return try {
+      val field = com.example.BuildConfig::class.java.getField("NVIDIA_API_KEY")
+      val rawKey = field.get(null) as? String ?: ""
+      if (rawKey == "MY_NVIDIA_API_KEY") "" else rawKey.trim()
+    } catch (_: Exception) {
+      ""
+    }
+  }
+
+  private fun getInitialGeminiApiKey(): String {
     return try {
       val field = com.example.BuildConfig::class.java.getField("GEMINI_API_KEY")
       val rawKey = field.get(null) as? String ?: ""
@@ -107,11 +147,49 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
   fun setProviderType(type: ProviderType) {
     _providerType.value = type
-    if (type == ProviderType.SANDBOX_ENGINE) {
-      engine.setProvider(sandboxProvider)
-    } else {
-      geminiProvider.setApiKey(_geminiApiKey.value)
-      engine.setProvider(geminiProvider)
+    when (type) {
+      ProviderType.SANDBOX_ENGINE -> {
+        engine.setProvider(sandboxProvider)
+      }
+      ProviderType.NVIDIA_NIM -> {
+        applyNvidiaConfig()
+        engine.setProvider(nvidiaProvider)
+      }
+      ProviderType.GEMINI_LIVE_API -> {
+        geminiProvider.setApiKey(_geminiApiKey.value)
+        engine.setProvider(geminiProvider)
+      }
+    }
+  }
+
+  fun updateNvidiaConfig(
+    apiKey: String? = null,
+    model: String? = null,
+    baseUrl: String? = null,
+    temperature: Double? = null,
+    maxTokens: Int? = null
+  ) {
+    apiKey?.let { _nvidiaApiKey.value = it.trim() }
+    model?.let { _nvidiaModel.value = it.trim() }
+    baseUrl?.let { _nvidiaBaseUrl.value = it.trim() }
+    temperature?.let { _nvidiaTemperature.value = it }
+    maxTokens?.let { _nvidiaMaxTokens.value = it }
+
+    applyNvidiaConfig()
+    if (_providerType.value == ProviderType.NVIDIA_NIM) {
+      engine.setProvider(nvidiaProvider)
+    }
+  }
+
+  private fun applyNvidiaConfig() {
+    nvidiaProvider.setApiKey(_nvidiaApiKey.value)
+    nvidiaProvider.setModel(_nvidiaModel.value)
+    nvidiaProvider.setBaseUrl(_nvidiaBaseUrl.value)
+    nvidiaProvider.updateConfig {
+      it.copy(
+        temperature = _nvidiaTemperature.value,
+        maxTokens = _nvidiaMaxTokens.value
+      )
     }
   }
 

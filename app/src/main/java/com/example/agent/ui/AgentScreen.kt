@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -38,7 +39,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -56,7 +56,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -64,6 +63,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.agent.core.AgentStatus
+import com.example.agent.core.NvidiaNimConfig
+import com.example.agent.core.NvidiaNimModels
 import com.example.agent.ui.components.ArtifactItem
 import com.example.agent.ui.components.ArtifactPreviewDialog
 import com.example.agent.ui.components.ExecutionFeedItem
@@ -77,6 +78,11 @@ fun AgentScreen(
   val state by viewModel.state.collectAsState()
   val activeTab by viewModel.activeTab.collectAsState()
   val providerType by viewModel.providerType.collectAsState()
+  val nvidiaApiKey by viewModel.nvidiaApiKey.collectAsState()
+  val nvidiaModel by viewModel.nvidiaModel.collectAsState()
+  val nvidiaBaseUrl by viewModel.nvidiaBaseUrl.collectAsState()
+  val nvidiaTemperature by viewModel.nvidiaTemperature.collectAsState()
+  val nvidiaMaxTokens by viewModel.nvidiaMaxTokens.collectAsState()
   val geminiApiKey by viewModel.geminiApiKey.collectAsState()
   val selectedArtifact by viewModel.selectedArtifactForPreview.collectAsState()
   val previewContent by viewModel.previewContent.collectAsState()
@@ -100,6 +106,7 @@ fun AgentScreen(
         status = state.status,
         currentAction = state.currentAction,
         providerType = providerType,
+        nvidiaModel = nvidiaModel,
         canCancel = state.canCancel,
         onStop = { viewModel.stopExecution() },
         onOpenSettings = { showSettingsDialog = true },
@@ -319,9 +326,23 @@ fun AgentScreen(
   if (showSettingsDialog) {
     SettingsProviderDialog(
       currentProvider = providerType,
+      initialNvidiaApiKey = nvidiaApiKey,
+      initialNvidiaModel = nvidiaModel,
+      initialNvidiaBaseUrl = nvidiaBaseUrl,
+      initialNvidiaTemperature = nvidiaTemperature,
+      initialNvidiaMaxTokens = nvidiaMaxTokens,
       geminiKey = geminiApiKey,
       onProviderChange = { viewModel.setProviderType(it) },
-      onKeyChange = { viewModel.updateGeminiApiKey(it) },
+      onSaveNvidiaConfig = { key, model, baseUrl, temp, maxTokens ->
+        viewModel.updateNvidiaConfig(
+          apiKey = key,
+          model = model,
+          baseUrl = baseUrl,
+          temperature = temp,
+          maxTokens = maxTokens
+        )
+      },
+      onSaveGeminiKey = { viewModel.updateGeminiApiKey(it) },
       onDismiss = { showSettingsDialog = false }
     )
   }
@@ -332,6 +353,7 @@ fun AgentTopHeader(
   status: AgentStatus,
   currentAction: String?,
   providerType: ProviderType,
+  nvidiaModel: String,
   canCancel: Boolean,
   onStop: () -> Unit,
   onOpenSettings: () -> Unit,
@@ -377,8 +399,13 @@ fun AgentTopHeader(
               style = MaterialTheme.typography.titleMedium,
               fontWeight = FontWeight.Bold
             )
+            val providerSubtitle = when (providerType) {
+              ProviderType.NVIDIA_NIM -> "NVIDIA NIM ($nvidiaModel)"
+              ProviderType.SANDBOX_ENGINE -> "Autonomous Sandbox Engine"
+              ProviderType.GEMINI_LIVE_API -> "Google Gemini Live API"
+            }
             Text(
-              text = if (providerType == ProviderType.SANDBOX_ENGINE) "Autonomous Sandbox Engine" else "Gemini Live API",
+              text = providerSubtitle,
               style = MaterialTheme.typography.labelSmall,
               color = MaterialTheme.colorScheme.primary
             )
@@ -386,7 +413,6 @@ fun AgentTopHeader(
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
-          // Status pill
           StatusPill(status = status)
 
           Spacer(modifier = Modifier.width(4.dp))
@@ -407,7 +433,6 @@ fun AgentTopHeader(
         }
       }
 
-      // Live "WHAT IS THE AGENT DOING RIGHT NOW?" ticker
       if (!currentAction.isNullOrBlank()) {
         Spacer(modifier = Modifier.height(8.dp))
         Surface(
@@ -534,13 +559,24 @@ fun EmptyExecutionState(onQuickRun: () -> Unit) {
 @Composable
 fun SettingsProviderDialog(
   currentProvider: ProviderType,
+  initialNvidiaApiKey: String,
+  initialNvidiaModel: String,
+  initialNvidiaBaseUrl: String,
+  initialNvidiaTemperature: Double,
+  initialNvidiaMaxTokens: Int,
   geminiKey: String,
   onProviderChange: (ProviderType) -> Unit,
-  onKeyChange: (String) -> Unit,
+  onSaveNvidiaConfig: (key: String, model: String, baseUrl: String, temp: Double, maxTokens: Int) -> Unit,
+  onSaveGeminiKey: (String) -> Unit,
   onDismiss: () -> Unit
 ) {
-  var keyInput by remember { mutableStateOf(geminiKey) }
   var selectedType by remember { mutableStateOf(currentProvider) }
+  var nvidiaKeyInput by remember { mutableStateOf(initialNvidiaApiKey) }
+  var nvidiaModelInput by remember { mutableStateOf(initialNvidiaModel) }
+  var nvidiaBaseUrlInput by remember { mutableStateOf(initialNvidiaBaseUrl) }
+  var nvidiaTempInput by remember { mutableStateOf(initialNvidiaTemperature.toString()) }
+  var nvidiaMaxTokensInput by remember { mutableStateOf(initialNvidiaMaxTokens.toString()) }
+  var geminiKeyInput by remember { mutableStateOf(geminiKey) }
 
   AlertDialog(
     onDismissRequest = onDismiss,
@@ -548,11 +584,123 @@ fun SettingsProviderDialog(
       Text("Agent Engine & Provider Settings", style = MaterialTheme.typography.titleMedium)
     },
     text = {
-      Column(modifier = Modifier.fillMaxWidth()) {
+      val scrollState = rememberScrollState()
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .verticalScroll(scrollState)
+      ) {
         Text("Select Execution Mode:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Option 1: Sandbox Engine
+        // Option 1: NVIDIA NIM
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          RadioButton(
+            selected = selectedType == ProviderType.NVIDIA_NIM,
+            onClick = { selectedType = ProviderType.NVIDIA_NIM }
+          )
+          Column(modifier = Modifier.padding(start = 4.dp)) {
+            Text("NVIDIA NIM (Hosted)", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            Text("OpenAI-compatible native tool calling API", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+          }
+        }
+
+        AnimatedVisibility(visible = selectedType == ProviderType.NVIDIA_NIM) {
+          Column(modifier = Modifier.padding(start = 12.dp, top = 8.dp, end = 4.dp)) {
+            // Model Selection Presets
+            Text("Model:", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+            val modelChipsScrollState = rememberScrollState()
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(modelChipsScrollState)
+                .padding(vertical = 4.dp),
+              horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+              NvidiaNimModels.PRESETS.forEach { presetModel ->
+                FilterChip(
+                  selected = nvidiaModelInput == presetModel,
+                  onClick = { nvidiaModelInput = presetModel },
+                  label = {
+                    Text(
+                      text = presetModel.substringAfterLast('/'),
+                      style = MaterialTheme.typography.labelSmall
+                    )
+                  },
+                  shape = RoundedCornerShape(6.dp)
+                )
+              }
+            }
+
+            OutlinedTextField(
+              value = nvidiaModelInput,
+              onValueChange = { nvidiaModelInput = it },
+              label = { Text("Model ID") },
+              placeholder = { Text(NvidiaNimConfig.DEFAULT_MODEL) },
+              modifier = Modifier.fillMaxWidth(),
+              singleLine = true,
+              textStyle = MaterialTheme.typography.bodySmall
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            OutlinedTextField(
+              value = nvidiaKeyInput,
+              onValueChange = { nvidiaKeyInput = it },
+              label = { Text("NVIDIA API Key") },
+              placeholder = { Text("nvapi-...") },
+              modifier = Modifier.fillMaxWidth(),
+              singleLine = true,
+              textStyle = MaterialTheme.typography.bodySmall
+            )
+            Text(
+              text = "Configurable via .env / BuildConfig.NVIDIA_API_KEY",
+              style = MaterialTheme.typography.labelSmall,
+              color = MaterialTheme.colorScheme.outline,
+              modifier = Modifier.padding(top = 2.dp)
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            OutlinedTextField(
+              value = nvidiaBaseUrlInput,
+              onValueChange = { nvidiaBaseUrlInput = it },
+              label = { Text("Base URL") },
+              placeholder = { Text(NvidiaNimConfig.DEFAULT_BASE_URL) },
+              modifier = Modifier.fillMaxWidth(),
+              singleLine = true,
+              textStyle = MaterialTheme.typography.bodySmall
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              OutlinedTextField(
+                value = nvidiaTempInput,
+                onValueChange = { nvidiaTempInput = it },
+                label = { Text("Temperature") },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall
+              )
+              OutlinedTextField(
+                value = nvidiaMaxTokensInput,
+                onValueChange = { nvidiaMaxTokensInput = it },
+                label = { Text("Max Tokens") },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall
+              )
+            }
+          }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Option 2: Sandbox Engine
         Row(
           verticalAlignment = Alignment.CenterVertically,
           modifier = Modifier.fillMaxWidth()
@@ -569,7 +717,7 @@ fun SettingsProviderDialog(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Option 2: Gemini Live API
+        // Option 3: Gemini Live API
         Row(
           verticalAlignment = Alignment.CenterVertically,
           modifier = Modifier.fillMaxWidth()
@@ -585,20 +733,21 @@ fun SettingsProviderDialog(
         }
 
         AnimatedVisibility(visible = selectedType == ProviderType.GEMINI_LIVE_API) {
-          Column(modifier = Modifier.padding(top = 12.dp)) {
+          Column(modifier = Modifier.padding(start = 12.dp, top = 8.dp, end = 4.dp)) {
             OutlinedTextField(
-              value = keyInput,
-              onValueChange = { keyInput = it },
+              value = geminiKeyInput,
+              onValueChange = { geminiKeyInput = it },
               label = { Text("Gemini API Key") },
               placeholder = { Text("AIza...") },
               modifier = Modifier.fillMaxWidth(),
-              singleLine = true
+              singleLine = true,
+              textStyle = MaterialTheme.typography.bodySmall
             )
             Text(
-              text = "Keys can also be configured via .env / BuildConfig.GEMINI_API_KEY",
+              text = "Configurable via .env / BuildConfig.GEMINI_API_KEY",
               style = MaterialTheme.typography.labelSmall,
               color = MaterialTheme.colorScheme.outline,
-              modifier = Modifier.padding(top = 4.dp)
+              modifier = Modifier.padding(top = 2.dp)
             )
           }
         }
@@ -608,7 +757,16 @@ fun SettingsProviderDialog(
       Button(
         onClick = {
           onProviderChange(selectedType)
-          onKeyChange(keyInput)
+          val parsedTemp = nvidiaTempInput.toDoubleOrNull() ?: 0.2
+          val parsedMaxTokens = nvidiaMaxTokensInput.toIntOrNull() ?: 4096
+          onSaveNvidiaConfig(
+            nvidiaKeyInput,
+            nvidiaModelInput.ifBlank { NvidiaNimConfig.DEFAULT_MODEL },
+            nvidiaBaseUrlInput.ifBlank { NvidiaNimConfig.DEFAULT_BASE_URL },
+            parsedTemp,
+            parsedMaxTokens
+          )
+          onSaveGeminiKey(geminiKeyInput)
           onDismiss()
         }
       ) {
