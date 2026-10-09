@@ -7,6 +7,7 @@ import com.example.agent.core.AgentEngine
 import com.example.agent.core.AgentState
 import com.example.agent.core.AgentStatus
 import com.example.agent.core.Artifact
+import com.example.agent.core.ArtifactDownloader
 import com.example.agent.core.AutonomousSandboxProvider
 import com.example.agent.core.GeminiLLMProvider
 import com.example.agent.core.NvidiaNimConfig
@@ -313,8 +314,21 @@ class AgentViewModel(
     _selectedArtifactForPreview.value = artifact
     viewModelScope.launch {
       try {
-        val file = engine.workspace.resolveSafe(artifact.path)
-        if (file.exists() && file.isFile) {
+        var file: File? = null
+        if (artifact.absolutePath.isNotBlank()) {
+          val af = File(artifact.absolutePath)
+          if (af.exists() && af.isFile) file = af
+        }
+        if (file == null || !file.exists()) {
+          try {
+            file = engine.workspace.resolveSafe(artifact.path)
+          } catch (_: Exception) {}
+        }
+        if (file == null || !file.exists()) {
+          file = ArtifactDownloader.resolveArtifactFile(getApplication<Application>(), artifact)
+        }
+
+        if (file != null && file.exists() && file.isFile) {
           _previewContent.value = file.readText()
         } else {
           _previewContent.value = "(File not found or cannot be read)"

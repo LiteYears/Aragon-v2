@@ -40,16 +40,32 @@ class AgentEngine(
   val state: StateFlow<AgentState> = _state.asStateFlow()
 
   init {
-    // Register canonical tools
+    // Register canonical sandbox tools
     registry.register(TerminalTool(workspace), "bash", "sh")
     registry.register(PythonTool(workspace), "python", "py", "python3")
     registry.register(PipTool(workspace), "pip3", "pip_install")
     registry.register(ReadFileTool(workspace), "cat")
     registry.register(WriteFileTool(workspace), "save_file")
-    registry.register(ListFilesTool(workspace), "ls")
+    registry.register(EditFileTool(workspace), "patch_file", "replace_content")
+    registry.register(ListFilesTool(workspace), "ls", "dir")
     registry.register(DeleteFileTool(workspace), "rm")
     registry.register(CreateDirectoryTool(workspace), "mkdir")
+    registry.register(CopyFileTool(workspace), "cp")
+    registry.register(MoveFileTool(workspace), "mv", "rename")
+    registry.register(DownloadFileTool(workspace), "curl_download", "wget")
     registry.register(InspectArtifactTool(workspace), "stat", "verify_artifact")
+    registry.register(FileSearchTool(workspace), "grep", "search_files")
+    registry.register(HttpRequestTool(), "curl", "fetch_api")
+    registry.register(JsonProcessorTool(workspace), "jq", "json_tool")
+    registry.register(CsvProcessorTool(workspace), "csv_tool")
+
+    // Register comprehensive Web Research & Browser Automation tools
+    registry.register(WebSearchTool(), "search", "duckduckgo", "google")
+    registry.register(WebBrowseTool(workspace), "browse", "open_url", "fetch_page")
+    registry.register(BrowserAutomationTool(workspace), "playwright", "headless_browser", "browser")
+    registry.register(WebCrawlerTool(workspace), "crawler", "crawl_site")
+    registry.register(ExtractWebDataTool(), "extract_tables", "web_extract")
+    registry.register(DeepResearchTool(workspace), "research", "auto_research")
 
     // Seed default workspace dataset so sample analysis workflows work out of the box
     try {

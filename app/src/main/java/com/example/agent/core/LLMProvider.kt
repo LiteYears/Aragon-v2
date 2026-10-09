@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit
  * Standard system prompt establishing the agent persona and behavioral boundaries.
  */
 val DEFAULT_AGENT_SYSTEM_PROMPT: String = """
-You are an autonomous tool-using agent kernel.
+You are an autonomous tool-using agent kernel named Aragon.
 Your job is to accomplish the user's objective, not merely describe how to accomplish it.
 When an action requires a tool, use the tool.
 Never claim that an action happened unless the tool result confirms it.
@@ -27,17 +27,38 @@ Do not repeat an action blindly.
 Prefer verification over assumptions.
 Your final response must describe only what was actually accomplished.
 
-SANDBOX ENVIRONMENT INSTRUCTIONS:
-- You are executing inside an isolated workspace.
-- Root access (sudo) and OS-level package managers (apt-get, apt, dpkg, brew, yum) DO NOT EXIST and must never be called.
-- NATIVE PYTHON 3 & PIP ENVIRONMENT:
-  * Full native Python 3.12 and Pip package manager are installed and available!
-  * You CAN run 'python3 script.py', 'python3 -c "<code>"', and 'pip install <package>' via the terminal tool or python3 tool.
-  * Popular libraries including 'python-docx' (for real Word .docx/.doc creation), 'pandas', 'openpyxl', 'requests', 'csv', 'json', and standard library modules are supported.
-  * When asked to transform or generate Word files (.docx, .doc), you can write and run a Python script using python-docx or Word formatting, or write structured HTML/Markdown.
-- When asked to create documents, reports, or files with tables:
-  * You can use Python 3 scripts or 'write_file' to create .docx, .doc, .md, .csv, or .html files.
-  * Inspect generated artifacts with 'inspect_artifact' or 'read_file' to authoritatively verify output on disk.
+SANDBOX ENVIRONMENT & NATIVE TOOLS:
+- You are executing inside an isolated workspace directory with a rich native toolchain.
+- Root access (sudo) and OS-level package managers (apt-get, apt, brew) DO NOT EXIST.
+- NATIVE FILE & DATA TOOLS:
+  * 'write_file': Create or overwrite files with byte-level verification on disk.
+  * 'read_file': Read text content of any workspace file.
+  * 'edit_file': Precision in-place substring patching without whole-file rewrites.
+  * 'copy_file' / 'move_file': Duplicate or rename files and directories safely.
+  * 'download_file': Download remote assets or datasets directly into the workspace via HTTP.
+  * 'file_search': Grep text patterns across files in the workspace with line numbers.
+  * 'inspect_artifact': Authoritative filesystem metadata check (size, lines, preview).
+  * 'json_processor': Validate, format, query dot-paths, count, or list keys in JSON data.
+  * 'csv_processor': Analyze tables, row counts, compute stats, or generate Markdown tables.
+  * 'http_request': Direct HTTP client for REST APIs (GET, POST, PUT, DELETE, PATCH).
+
+NATIVE PYTHON 3 & PIP RUNTIME:
+- Full native Python 3.12 and Pip package manager are available!
+- 'python3' & 'pip' tools support 'python-docx', 'pandas', 'openpyxl', 'requests', 'csv', 'json'.
+- Run Python scripts or inline code to crunch numbers, build charts, or produce authentic Word documents (.docx/.doc).
+
+COMPREHENSIVE AUTONOMOUS WEB RESEARCH SYSTEM:
+You are equipped with a full-capability web research and browser pipeline:
+1. SEARCH: 'web_search' queries the live internet for sources, returning ranked titles, domains, URLs, and snippets.
+2. BROWSE & CLEAN: 'web_browse' fetches pages and converts messy HTML to clean, structured Markdown, extracting discovered hyperlinks.
+3. DYNAMIC BROWSER AUTOMATION: 'browser_tool' (Playwright architecture) handles JavaScript-heavy SPAs, client-side rendered apps, dynamic hydration (Next.js/Nuxt), DOM snapshots, and script evaluation in page context.
+4. MULTI-PAGE CRAWL: 'web_crawl' recursively follows internal links across pages up to depth limits and compiles aggregated research dossiers.
+5. STRUCTURED EXTRACTION: 'extract_web_data' isolates HTML tables (converted to Markdown), metadata/OpenGraph tags, JSON-LD schemas, or article text.
+6. DEEP RESEARCH ENGINE: 'deep_research' conducts end-to-end multi-step investigations, analyzing multiple sources, cross-referencing claims, and generating comprehensive, cited Markdown dossiers in the workspace.
+
+ARCHITECTED RESEARCH WORKFLOW:
+Always follow the reliable agentic research loop:
+Search sources -> Browse candidate pages / Automate JS browser -> Crawl linked pages -> Extract structured data -> Cross-reference & reason -> Generate verified workspace report -> Inspect artifact.
 """.trimIndent()
 
 /**
@@ -537,6 +558,52 @@ class AutonomousSandboxProvider : LLMProvider {
       return@withContext LLMDecision.Complete(
         conclusion = "Successfully analyzed data.csv, generated analyze.py, executed the analysis pipeline, and verified that 'report.md' was created with the calculated financial summary.",
         thought = "All planned actions and artifact verifications have completed successfully."
+      )
+    }
+
+    // Workflow: Autonomous Web Research and Investigation
+    if (intentLower.contains("research") || intentLower.contains("search") || intentLower.contains("crawl") || intentLower.contains("browse") || intentLower.contains("web")) {
+      if (!executedTools.contains("deep_research") && !executedTools.contains("web_search")) {
+        val topic = taskIntent.replace(Regex("(?i)^(please\\s+)?(do\\s+)?(deep\\s+)?(research|search|investigate)\\s+(on\\s+|about\\s+)?"), "").trim()
+        val cleanTopic = if (topic.isBlank()) taskIntent else topic
+
+        return@withContext LLMDecision.ExecuteTool(
+          toolCalls = listOf(
+            ToolCall(
+              callId = UUID.randomUUID().toString(),
+              toolName = "deep_research",
+              arguments = mapOf(
+                "topic" to cleanTopic,
+                "outputFile" to "research_report.md",
+                "maxSources" to 4
+              )
+            )
+          ),
+          thought = "Initiating multi-step autonomous deep research pipeline on '$cleanTopic'. Will search web sources, browse and extract contents, synthesize findings, and author verified report.",
+          plan = "1. Query live web sources\n2. Browse & extract clean Markdown\n3. Cross-reference findings\n4. Generate cited research_report.md\n5. Verify on disk"
+        )
+      }
+
+      if (executedTools.contains("deep_research") && !executedTools.contains("inspect_artifact")) {
+        return@withContext LLMDecision.ExecuteTool(
+          toolCalls = listOf(
+            ToolCall(
+              callId = UUID.randomUUID().toString(),
+              toolName = "inspect_artifact",
+              arguments = mapOf(
+                "path" to "research_report.md",
+                "previewLines" to 25
+              )
+            )
+          ),
+          thought = "Deep research pipeline completed. Now verifying that 'research_report.md' was saved with verified citations and structured findings.",
+          plan = "Verify generated research report on filesystem"
+        )
+      }
+
+      return@withContext LLMDecision.Complete(
+        conclusion = "Completed comprehensive autonomous research on '$taskIntent'. All sources were investigated, synthesized, and verified on disk in 'research_report.md'.",
+        thought = "Empirical web research report verified on disk."
       )
     }
 

@@ -3,17 +3,33 @@ package com.example
 import com.example.agent.core.AgentEngine
 import com.example.agent.core.AgentStatus
 import com.example.agent.core.AutonomousSandboxProvider
+import com.example.agent.core.BrowserAutomationTool
+import com.example.agent.core.CopyFileTool
+import com.example.agent.core.CsvProcessorTool
+import com.example.agent.core.DeepResearchTool
 import com.example.agent.core.DeleteFileTool
+import com.example.agent.core.EditFileTool
+import com.example.agent.core.ExtractWebDataTool
+import com.example.agent.core.FileSearchTool
 import com.example.agent.core.InspectArtifactTool
+import com.example.agent.core.JsonProcessorTool
 import com.example.agent.core.ListFilesTool
+import com.example.agent.core.MoveFileTool
 import com.example.agent.core.ReadFileTool
 import com.example.agent.core.TerminalTool
 import com.example.agent.core.ToolCall
 import com.example.agent.core.ToolExecutor
 import com.example.agent.core.ToolRegistry
 import com.example.agent.core.ToolStatus
+import com.example.agent.core.WebBrowseTool
+import com.example.agent.core.WebCrawlerTool
+import com.example.agent.core.WebSearchTool
 import com.example.agent.core.WorkspaceManager
 import com.example.agent.core.WriteFileTool
+import com.example.agent.core.Artifact
+import com.example.agent.core.ArtifactDownloader
+import androidx.test.core.app.ApplicationProvider
+import android.content.Context
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -25,8 +41,13 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.io.File
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
 class AgentKernelTest {
 
   @get:Rule
@@ -178,4 +199,183 @@ class AgentKernelTest {
     assertTrue(obs.rawOutput.contains("STDERR: empty (0 bytes)"))
     assertTrue(obs.rawOutput.contains("STATUS: SUCCEEDED"))
   }
+
+  @Test
+  fun testPrecisionEditAndFileSearchTools() = runBlocking {
+    val writeTool = WriteFileTool(workspace)
+    writeTool.execute("c1", mapOf("path" to "code.py", "content" to "def hello():\n    return 'old_value'\n"))
+
+    // Precision edit
+    val editTool = EditFileTool(workspace)
+    val editResult = editTool.execute("c2", mapOf(
+      "path" to "code.py",
+      "targetContent" to "old_value",
+      "replacementContent" to "new_value"
+    ))
+    assertEquals(ToolStatus.SUCCEEDED, editResult.status)
+
+    val readTool = ReadFileTool(workspace)
+    val readResult = readTool.execute("c3", mapOf("path" to "code.py"))
+    assertTrue(readResult.output!!.contains("new_value"))
+    assertFalse(readResult.output!!.contains("old_value"))
+
+    // File search / grep
+    val searchTool = FileSearchTool(workspace)
+    val searchResult = searchTool.execute("c4", mapOf("query" to "new_value"))
+    assertEquals(ToolStatus.SUCCEEDED, searchResult.status)
+    assertTrue(searchResult.output!!.contains("code.py:2"))
+  }
+
+  @Test
+  fun testCopyMoveAndCsvProcessorTools() = runBlocking {
+    // Write sample CSV
+    val writeTool = WriteFileTool(workspace)
+    writeTool.execute("c1", mapOf(
+      "path" to "products.csv",
+      "content" to "id,name,price\n1,Server,500\n2,Database,300\n3,Router,150\n"
+    ))
+
+    // Copy file
+    val copyTool = CopyFileTool(workspace)
+    val copyResult = copyTool.execute("c2", mapOf("source" to "products.csv", "destination" to "backup/products.csv"))
+    assertEquals(ToolStatus.SUCCEEDED, copyResult.status)
+    assertTrue(workspace.resolveSafe("backup/products.csv").exists())
+
+    // Move file
+    val moveTool = MoveFileTool(workspace)
+    val moveResult = moveTool.execute("c3", mapOf("source" to "backup/products.csv", "destination" to "backup/products_renamed.csv"))
+    assertEquals(ToolStatus.SUCCEEDED, moveResult.status)
+    assertFalse(workspace.resolveSafe("backup/products.csv").exists())
+    assertTrue(workspace.resolveSafe("backup/products_renamed.csv").exists())
+
+    // CSV Processor
+    val csvTool = CsvProcessorTool(workspace)
+    val summaryResult = csvTool.execute("c4", mapOf("path" to "products.csv", "action" to "summary"))
+    assertEquals(ToolStatus.SUCCEEDED, summaryResult.status)
+    assertTrue(summaryResult.output!!.contains("Total Rows: 3"))
+    assertTrue(summaryResult.output!!.contains("Columns: id, name, price"))
+
+    val mdResult = csvTool.execute("c5", mapOf("path" to "products.csv", "action" to "markdown"))
+    assertTrue(mdResult.output!!.contains("| id | name | price |"))
+  }
+
+  @Test
+  fun testJsonProcessorTool() = runBlocking {
+    val jsonTool = JsonProcessorTool(workspace)
+    val sampleJson = """{"user": {"name": "Alice", "role": "admin"}, "tags": ["agent", "sandbox"]}"""
+
+    // Query dot-path
+    val queryRes = jsonTool.execute("c1", mapOf("input" to sampleJson, "action" to "query", "query" to "user.name"))
+    assertEquals(ToolStatus.SUCCEEDED, queryRes.status)
+    assertEquals("Alice", queryRes.output)
+
+    // Format JSON
+    val formatRes = jsonTool.execute("c2", mapOf("input" to sampleJson, "action" to "format"))
+    assertEquals(ToolStatus.SUCCEEDED, formatRes.status)
+    assertTrue(formatRes.output!!.contains("\"name\": \"Alice\""))
+
+    // Validate
+    val valRes = jsonTool.execute("c3", mapOf("input" to sampleJson, "action" to "validate"))
+    assertEquals(ToolStatus.SUCCEEDED, valRes.status)
+    assertTrue(valRes.output!!.contains("Valid JSON syntax"))
+  }
+
+  @Test
+  fun testWebResearchHtmlConverterAndBrowserTool() = runBlocking {
+    // Test HTML to Markdown & link discovery
+    val rawHtml = """
+      <html>
+        <head><title>Aragon Research Hub</title></head>
+        <body>
+          <header><p>Banner</p></header>
+          <h1>Autonomous Systems</h1>
+          <p>Autonomous AI agents use <strong>deterministic tools</strong> to accomplish real goals.</p>
+          <table>
+            <tr><th>Metric</th><th>Score</th></tr>
+            <tr><td>Accuracy</td><td>99.4%</td></tr>
+          </table>
+          <a href="/docs/tools">Tool Documentation</a>
+          <a href="https://external.org/benchmarks">Benchmarks</a>
+        </body>
+      </html>
+    """.trimIndent()
+
+    val (markdown, links) = com.example.agent.core.WebContentConverter.cleanHtmlToMarkdown(rawHtml, "https://example.com/hub")
+    assertTrue(markdown.contains("# Autonomous Systems"))
+    assertTrue(markdown.contains("**deterministic tools**"))
+    assertEquals(2, links.size)
+    assertEquals("https://example.com/docs/tools", links[0].url)
+    assertTrue(links[0].isInternal)
+
+    val tables = com.example.agent.core.WebContentConverter.extractTables(rawHtml)
+    assertEquals(1, tables.size)
+    assertTrue(tables[0].contains("| Metric | Score |"))
+    assertTrue(tables[0].contains("| Accuracy | 99.4% |"))
+
+    // Test Playwright Browser Automation tool
+    val browserTool = BrowserAutomationTool(workspace)
+    assertNotNull(browserTool.schema)
+    assertEquals("browser_tool", browserTool.name)
+  }
+
+  @Test
+  fun testDeepResearchSynthesisReport() = runBlocking {
+    val deepResearch = DeepResearchTool(workspace)
+    assertNotNull(deepResearch.schema)
+    assertEquals("deep_research", deepResearch.name)
+
+    // Verify workspace report writing & verification
+    val reportFile = workspace.writeWorkspaceFile(
+      "test_report.md",
+      "# Research Dossier: Artificial General Intelligence\n\n- Source: https://example.com\n- Synthesis complete."
+    )
+    assertTrue(reportFile.exists())
+    assertTrue(reportFile.length() > 0)
+    val artifact = workspace.createArtifactFromFile(reportFile)
+    assertEquals("test_report.md", artifact.path)
+    assertTrue(artifact.size > 0)
+  }
+
+  @Test
+  fun testArtifactCreationAndAbsolutePath() {
+    val reportFile = workspace.writeWorkspaceFile(
+      "exports/summary.md",
+      "# Executive Summary\nAnalysis generated successfully."
+    )
+    val artifact = workspace.createArtifactFromFile(reportFile)
+    assertEquals("exports/summary.md", artifact.path)
+    assertEquals("summary.md", artifact.name)
+    assertEquals(reportFile.canonicalPath, artifact.absolutePath)
+    assertTrue(artifact.exists)
+    assertTrue(artifact.size > 0)
+  }
+
+  @Test
+  fun testArtifactDownloaderFileResolutionAndDownload() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+
+    // Create a file in workspace
+    val artifactFile = workspace.writeWorkspaceFile(
+      "reports/financial_report.csv",
+      "quarter,revenue,net_profit\nQ1,1200000,340000\nQ2,1450000,410000"
+    )
+    val artifact = workspace.createArtifactFromFile(artifactFile)
+
+    // Test resolving the artifact file
+    val resolvedFile = ArtifactDownloader.resolveArtifactFile(context, artifact)
+    assertNotNull(resolvedFile)
+    assertTrue(resolvedFile!!.exists())
+    assertEquals(artifactFile.canonicalPath, resolvedFile.canonicalPath)
+
+    // Also test resolving when absolutePath is empty (simulating legacy/external artifact)
+    val legacyArtifact = artifact.copy(absolutePath = "")
+    val resolvedLegacy = ArtifactDownloader.resolveArtifactFile(context, legacyArtifact, workspace.baseDir)
+    assertNotNull(resolvedLegacy)
+    assertTrue(resolvedLegacy!!.exists())
+
+    // Test downloading the artifact
+    val downloaded = ArtifactDownloader.downloadArtifact(context, artifact, workspace.baseDir)
+    assertTrue(downloaded)
+  }
 }
+

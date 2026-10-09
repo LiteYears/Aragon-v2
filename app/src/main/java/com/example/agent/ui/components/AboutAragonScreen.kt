@@ -221,8 +221,14 @@ fun AboutAragonScreen(
 
         FeatureRow(
           icon = Icons.Default.Terminal,
-          title = "Deterministic Tool Sandbox",
-          description = "Isolated workspace runtime with Python 3.12, CSV data processing, and native Word docx artifact synthesis."
+          title = "Native Sandbox Toolchain",
+          description = "Full workspace runtime with Python 3.12, precision file patching, pattern grep, asset downloading, and JSON/CSV dataset processing."
+        )
+
+        FeatureRow(
+          icon = Icons.Default.Info,
+          title = "Autonomous Web Research System",
+          description = "Multi-step search, Playwright headless browser for dynamic SPAs, recursive link crawling, structured table extraction, and cited dossiers."
         )
 
         FeatureRow(

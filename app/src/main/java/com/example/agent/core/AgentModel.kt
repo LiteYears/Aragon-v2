@@ -65,7 +65,8 @@ data class Artifact(
   val size: Long,
   val createdByCallId: String? = null,
   val exists: Boolean = true,
-  val lastModified: Long = System.currentTimeMillis()
+  val lastModified: Long = System.currentTimeMillis(),
+  val absolutePath: String = ""
 ) {
   // Compatibility alias
   val createdByToolCall: String? get() = createdByCallId

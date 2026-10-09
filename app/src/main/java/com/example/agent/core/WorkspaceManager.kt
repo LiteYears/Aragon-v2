@@ -36,6 +36,52 @@ class WorkspaceManager(val baseDir: File) {
     return file
   }
 
+  /**
+   * Safely writes text content to a relative workspace path, creating directories as needed.
+   */
+  fun writeWorkspaceFile(relativePath: String, content: String): File {
+    val file = resolveSafe(relativePath)
+    file.parentFile?.mkdirs()
+    file.writeText(content, Charsets.UTF_8)
+    return file
+  }
+
+  /**
+   * Safely copies a file or directory within the workspace.
+   */
+  fun copyFile(sourcePath: String, destPath: String): File {
+    val src = resolveSafe(sourcePath)
+    if (!src.exists()) throw IllegalArgumentException("Source '$sourcePath' does not exist.")
+    val dst = resolveSafe(destPath)
+    dst.parentFile?.mkdirs()
+    if (src.isDirectory) {
+      src.copyRecursively(dst, overwrite = true)
+    } else {
+      src.copyTo(dst, overwrite = true)
+    }
+    return dst
+  }
+
+  /**
+   * Safely moves or renames a file or directory within the workspace.
+   */
+  fun moveFile(sourcePath: String, destPath: String): File {
+    val src = resolveSafe(sourcePath)
+    if (!src.exists()) throw IllegalArgumentException("Source '$sourcePath' does not exist.")
+    val dst = resolveSafe(destPath)
+    dst.parentFile?.mkdirs()
+    if (!src.renameTo(dst)) {
+      if (src.isDirectory) {
+        src.copyRecursively(dst, overwrite = true)
+        src.deleteRecursively()
+      } else {
+        src.copyTo(dst, overwrite = true)
+        src.delete()
+      }
+    }
+    return dst
+  }
+
   fun getRelativePath(file: File): String {
     val baseCanonical = baseDir.canonicalFile
     val fileCanonical = file.canonicalFile
@@ -71,7 +117,8 @@ class WorkspaceManager(val baseDir: File) {
       size = size,
       createdByCallId = toolCallId,
       exists = exists,
-      lastModified = if (exists) file.lastModified() else System.currentTimeMillis()
+      lastModified = if (exists) file.lastModified() else System.currentTimeMillis(),
+      absolutePath = file.canonicalPath
     )
   }
 
