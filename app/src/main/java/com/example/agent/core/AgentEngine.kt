@@ -50,8 +50,10 @@ class AgentEngine(
     registry.register(InspectArtifactTool(workspace), "stat", "verify_artifact")
 
     // Seed default workspace dataset so sample analysis workflows work out of the box
-    workspace.seedWorkspaceDefaults()
-    _state.value = _state.value.copy(artifacts = workspace.listAllArtifacts())
+    try {
+      workspace.seedWorkspaceDefaults()
+      _state.value = _state.value.copy(artifacts = workspace.listAllArtifacts())
+    } catch (_: Exception) {}
   }
 
   fun getProvider(): LLMProvider = activeProvider
@@ -119,16 +121,18 @@ class AgentEngine(
     // Loop stagnation detection: track last action hash to catch repeated identical failures
     var lastActionSig: String? = null
     var identicalActionCount = 0
+    var turnCounter = 0
 
     try {
-      while (stepCounter <= maxSteps) {
+      while (turnCounter < maxSteps) {
+        turnCounter++
         currentCoroutineContext().ensureActive()
 
         // 1. THINKING & PLANNING PHASE
         currentState = currentState.copy(
           status = AgentStatus.PLANNING,
-          currentStep = stepCounter,
-          currentAction = "Consulting LLM for next action (Turn $stepCounter/$maxSteps)..."
+          currentStep = turnCounter,
+          currentAction = "Consulting LLM for next action (Turn $turnCounter/$maxSteps)..."
         )
         _state.value = currentState
 

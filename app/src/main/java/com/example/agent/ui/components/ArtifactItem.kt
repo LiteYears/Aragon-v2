@@ -127,12 +127,24 @@ fun ArtifactItem(
         }
       }
 
-      OutlinedButton(
-        onClick = { onOpenPreview(artifact) },
-        shape = RoundedCornerShape(6.dp),
-        modifier = Modifier.testTag("inspect_artifact_btn_${artifact.name}")
-      ) {
-        Text("Inspect", style = MaterialTheme.typography.labelMedium)
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        LittleCopyButton(
+          textToCopy = artifact.path,
+          label = "Path",
+          buttonSize = 28.dp,
+          iconSize = 14.dp,
+          testTag = "copy_path_${artifact.name}"
+        )
+
+        Spacer(modifier = Modifier.width(4.dp))
+
+        OutlinedButton(
+          onClick = { onOpenPreview(artifact) },
+          shape = RoundedCornerShape(6.dp),
+          modifier = Modifier.testTag("inspect_artifact_btn_${artifact.name}")
+        ) {
+          Text("Inspect", style = MaterialTheme.typography.labelMedium)
+        }
       }
     }
   }
@@ -154,7 +166,7 @@ fun ArtifactPreviewDialog(
       tonalElevation = 6.dp,
       modifier = Modifier
         .fillMaxWidth()
-        .fillMaxHeight(0.8f)
+        .fillMaxHeight(0.85f)
         .testTag("artifact_preview_dialog")
     ) {
       Column(
@@ -168,20 +180,32 @@ fun ArtifactPreviewDialog(
           horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically
         ) {
-          Column {
+          Column(modifier = Modifier.weight(1f)) {
             Text(
               text = artifact.name,
               style = MaterialTheme.typography.titleMedium,
               fontWeight = FontWeight.Bold
             )
             Text(
-              text = "Path: ${artifact.path}  (${formatFileSize(artifact.size)})",
+              text = "${artifact.path}  •  ${formatFileSize(artifact.size)}",
               style = MaterialTheme.typography.labelSmall,
               color = MaterialTheme.colorScheme.onSurfaceVariant
             )
           }
-          IconButton(onClick = onDismiss) {
-            Icon(Icons.Default.Close, contentDescription = "Close")
+
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            if (!content.isNullOrBlank()) {
+              LittleCopyButton(
+                textToCopy = content,
+                label = "Copy Content",
+                testTag = "copy_preview_content"
+              )
+              Spacer(modifier = Modifier.width(4.dp))
+            }
+
+            IconButton(onClick = onDismiss) {
+              Icon(Icons.Default.Close, contentDescription = "Close")
+            }
           }
         }
 
@@ -217,8 +241,21 @@ fun ArtifactPreviewDialog(
 
         Row(
           modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.End
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
         ) {
+          if (!content.isNullOrBlank()) {
+            LittleCopyButton(
+              textToCopy = content,
+              label = "Copy Entire File",
+              buttonSize = 32.dp,
+              iconSize = 16.dp,
+              testTag = "copy_entire_file_bottom"
+            )
+          } else {
+            Spacer(modifier = Modifier.width(1.dp))
+          }
+
           Button(onClick = onDismiss) {
             Text("Done")
           }

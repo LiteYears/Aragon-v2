@@ -61,7 +61,23 @@ fun ExecutionFeedItem(
   isLast: Boolean,
   modifier: Modifier = Modifier
 ) {
-  var isExpanded by remember { mutableStateOf(step.type == StepType.TOOL_EXECUTION || step.type == StepType.ERROR) }
+  var isExpanded by remember {
+    mutableStateOf(step.type == StepType.TOOL_EXECUTION || step.type == StepType.ERROR || step.type == StepType.CONCLUSION)
+  }
+
+  // Aggregate step text for easy copying
+  val stepFullText = buildString {
+    append(step.title)
+    if (step.content.isNotBlank()) {
+      append("\n\n").append(step.content)
+    }
+    if (!step.stdout.isNullOrBlank()) {
+      append("\n\n[STDOUT]\n").append(step.stdout)
+    }
+    if (!step.stderr.isNullOrBlank()) {
+      append("\n\n[STDERR]\n").append(step.stderr)
+    }
+  }
 
   Row(
     modifier = modifier
@@ -97,6 +113,7 @@ fun ExecutionFeedItem(
           color = when (step.type) {
             StepType.TOOL_EXECUTION -> if (step.toolStatus == ToolStatus.FAILED.name) MaterialTheme.colorScheme.error.copy(alpha = 0.4f) else MaterialTheme.colorScheme.outlineVariant
             StepType.VERIFICATION -> MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+            StepType.CONCLUSION -> MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
             StepType.ERROR -> MaterialTheme.colorScheme.error.copy(alpha = 0.6f)
             else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
           },
@@ -106,6 +123,7 @@ fun ExecutionFeedItem(
         StepType.TOOL_EXECUTION -> MaterialTheme.colorScheme.surface
         StepType.OBSERVATION -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
         StepType.VERIFICATION -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
+        StepType.CONCLUSION -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
         StepType.ERROR -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
         else -> MaterialTheme.colorScheme.surface
       }
@@ -117,15 +135,15 @@ fun ExecutionFeedItem(
       ) {
         // Header row
         Row(
-          modifier = Modifier
-            .fillMaxWidth()
-            .clickable { isExpanded = !isExpanded },
+          modifier = Modifier.fillMaxWidth(),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.SpaceBetween
         ) {
           Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier
+              .weight(1f)
+              .clickable { isExpanded = !isExpanded }
           ) {
             Text(
               text = step.title,
@@ -133,7 +151,7 @@ fun ExecutionFeedItem(
               fontWeight = FontWeight.SemiBold,
               color = when (step.type) {
                 StepType.ERROR -> MaterialTheme.colorScheme.error
-                StepType.VERIFICATION -> MaterialTheme.colorScheme.primary
+                StepType.VERIFICATION, StepType.CONCLUSION -> MaterialTheme.colorScheme.primary
                 else -> MaterialTheme.colorScheme.onSurface
               }
             )
@@ -168,33 +186,83 @@ fun ExecutionFeedItem(
             }
           }
 
-          Icon(
-            imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-            contentDescription = if (isExpanded) "Collapse" else "Expand",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(20.dp)
-          )
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            // Little Copy Button for this step
+            LittleCopyButton(
+              textToCopy = stepFullText,
+              testTag = "copy_step_${step.stepNumber}",
+              buttonSize = 26.dp,
+              iconSize = 14.dp
+            )
+
+            Spacer(modifier = Modifier.width(2.dp))
+
+            Surface(
+              modifier = Modifier.clickable { isExpanded = !isExpanded },
+              color = Color.Transparent
+            ) {
+              Icon(
+                imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                contentDescription = if (isExpanded) "Collapse" else "Expand",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+              )
+            }
+          }
         }
 
         // Summary content
         if (step.content.isNotBlank()) {
-          Spacer(modifier = Modifier.height(4.dp))
-          Text(
-            text = step.content,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-          )
+          Spacer(modifier = Modifier.height(6.dp))
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
+          ) {
+            Text(
+              text = step.content,
+              style = MaterialTheme.typography.bodySmall,
+              color = when (step.type) {
+                StepType.ERROR -> MaterialTheme.colorScheme.error
+                StepType.CONCLUSION -> MaterialTheme.colorScheme.onSurface
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+              },
+              modifier = Modifier.weight(1f)
+            )
+
+            if (step.type == StepType.CONCLUSION || step.type == StepType.ERROR) {
+              Spacer(modifier = Modifier.width(4.dp))
+              LittleCopyButton(
+                textToCopy = step.content,
+                label = if (step.type == StepType.CONCLUSION) "Copy Response" else "Copy Error",
+                testTag = "copy_content_${step.stepNumber}"
+              )
+            }
+          }
         }
 
         // Expanded metadata (Tool name and Call ID)
         AnimatedVisibility(visible = isExpanded && step.toolCallId != null) {
-          Column(modifier = Modifier.padding(top = 4.dp)) {
-            Text(
-              text = "Call ID: ${step.toolCallId}",
-              style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-              color = MaterialTheme.colorScheme.outline,
-              fontSize = 10.sp
-            )
+          Column(modifier = Modifier.padding(top = 6.dp)) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Text(
+                text = "Call ID: ${step.toolCallId}",
+                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.outline,
+                fontSize = 10.sp
+              )
+              LittleCopyButton(
+                textToCopy = step.toolCallId ?: "",
+                label = "Copy ID",
+                buttonSize = 22.dp,
+                iconSize = 12.dp,
+                testTag = "copy_call_id_${step.stepNumber}"
+              )
+            }
           }
         }
 
@@ -334,13 +402,29 @@ fun TerminalOutputBox(
       .border(1.dp, if (isError) Color(0xFF7F1D1D) else Color(0xFF334155), RoundedCornerShape(8.dp))
       .padding(10.dp)
   ) {
-    Text(
-      text = label,
-      style = MaterialTheme.typography.labelSmall,
-      color = if (isError) Color(0xFFF87171) else Color(0xFF94A3B8),
-      fontWeight = FontWeight.Bold,
-      fontSize = 10.sp
-    )
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Text(
+        text = label,
+        style = MaterialTheme.typography.labelSmall,
+        color = if (isError) Color(0xFFF87171) else Color(0xFF94A3B8),
+        fontWeight = FontWeight.Bold,
+        fontSize = 10.sp
+      )
+
+      LittleCopyButton(
+        textToCopy = text,
+        label = "Copy",
+        tint = if (isError) Color(0xFFFCA5A5) else Color(0xFF94A3B8),
+        buttonSize = 22.dp,
+        iconSize = 12.dp,
+        testTag = "copy_${label.lowercase().replace('/', '_').replace(' ', '_')}"
+      )
+    }
+
     Spacer(modifier = Modifier.height(4.dp))
     Box(
       modifier = Modifier

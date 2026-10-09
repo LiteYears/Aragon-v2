@@ -12,7 +12,9 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.util.UUID
 import java.util.concurrent.TimeUnit
+import java.util.regex.Pattern
 
 /**
  * Standard configuration options for NVIDIA NIM OpenAI-compatible hosted API.
@@ -24,7 +26,7 @@ data class NvidiaNimConfig(
   val temperature: Double? = 0.2,
   val maxTokens: Int? = 4096,
   val topP: Double? = null,
-  val timeoutSeconds: Long = 60,
+  val timeoutSeconds: Long = 75,
   val enableReasoning: Boolean = true
 ) {
   companion object {
@@ -34,178 +36,175 @@ data class NvidiaNimConfig(
 }
 
 /**
- * Comprehensive catalog of free hosted models on build.nvidia.com with native tool calling support.
+ * Comprehensive catalog of free hosted models on build.nvidia.com.
  */
 data class NvidiaModelEntry(
   val id: String,
   val name: String,
   val category: String,
   val description: String,
-  val badge: String = ""
+  val badge: String = "",
+  val isVerified: Boolean = true
 )
 
 object NvidiaNimModels {
+  // Verified active models on free build key
   const val GLM_5_3 = "z-ai/glm-5.3"
+  const val LLAMA_3_2_11B = "meta/llama-3.2-11b-vision-instruct"
+  const val LLAMA_3_2_90B = "meta/llama-3.2-90b-vision-instruct"
+  const val MUSE_GLIMMER_30B = "meta/muse-glimmer-30b"
+  const val NEMOTRON_3_5_LIGHTNING = "nvidia/nemotron-3.5-lightning-30b-a3b"
+  const val NEMOTRON_3_SUPER = "nvidia/nemotron-3-super-120b-a12b"
+  const val NEMOTRON_3_ULTRA = "nvidia/nemotron-3-ultra-550b-a55b"
+  const val DIFFUSION_GEMMA_26B = "google/diffusiongemma-26b-a4b-it"
+  const val GPT_OSS_20B = "openai/gpt-oss-20b"
+  const val RIVA_TRANSLATE_4B = "nvidia/riva-translate-4b-instruct-v2"
+  const val NEMOTRON_PARSE_2_0 = "nvidia/nemotron-parse-2.0"
+  const val ISING_CALIBRATION_31B = "nvidia/ising-calibration-1.5-31b"
+
+  // Additional popular models from build.nvidia.com
   const val GLM_5_3_FLASH = "z-ai/glm-5.3-flash"
   const val NEMOTRON_70B = "nvidia/llama-3.1-nemotron-70b-instruct"
-  const val NEMOTRON_51B = "nvidia/llama-3.1-nemotron-51b-instruct"
-  const val NEMOTRON_4_340B = "nvidia/nemotron-4-340b-instruct"
   const val MISTRAL_LARGE_2 = "mistralai/mistral-large-2-instruct"
-  const val MIXTRAL_8X22B = "mistralai/mixtral-8x22b-v0.1"
   const val CODESTRAL_22B = "mistralai/codestral-22b-instruct-v0.1"
-  const val MISTRAL_7B = "mistralai/mistral-7b-instruct-v0.3"
-  const val MISTRAL_NEMO_12B = "nv-mistralai/mistral-nemo-12b-instruct"
-  const val CODELLAMA_70B = "meta/codellama-70b"
-  const val GPT_OSS_20B = "openai/gpt-oss-20b"
   const val KIMI_K3 = "moonshotai/kimi-k3"
-  const val KIMI_K2_6 = "moonshotai/kimi-k2.6"
-  const val GRANITE_34B_CODE = "ibm/granite-34b-code-instruct"
-  const val GRANITE_8B = "ibm/granite-3.0-8b-instruct"
-  const val GEMMA_3_12B = "google/gemma-3-12b-it"
-  const val CODEGEMMA_7B = "google/codegemma-7b"
-  const val JAMBA_1_5 = "ai21labs/jamba-1.5-large-instruct"
-  const val YI_LARGE = "01-ai/yi-large"
 
   val CATALOG: List<NvidiaModelEntry> = listOf(
     NvidiaModelEntry(
       id = GLM_5_3,
       name = "GLM 5.3",
-      category = "Agent & Code",
-      description = "Flagship coding and agentic model with verified structured tool calling",
-      badge = "DEFAULT"
+      category = "Agent & Coding",
+      description = "Flagship coding and agentic model with verified native structured tool calling",
+      badge = "DEFAULT",
+      isVerified = true
     ),
     NvidiaModelEntry(
-      id = GLM_5_3_FLASH,
-      name = "GLM 5.3 Flash",
-      category = "Agent & Code",
-      description = "Fast, low-latency agentic model for high-throughput workflows",
-      badge = "FAST"
+      id = LLAMA_3_2_11B,
+      name = "Llama 3.2 11B Vision",
+      category = "Agent & Coding",
+      description = "Meta's multimodal instruction model with fast inference and script generation",
+      badge = "VERIFIED",
+      isVerified = true
     ),
     NvidiaModelEntry(
-      id = CODESTRAL_22B,
-      name = "Codestral 22B",
-      category = "Agent & Code",
-      description = "Mistral's state-of-the-art coding and script synthesis specialist",
-      badge = "CODE"
+      id = LLAMA_3_2_90B,
+      name = "Llama 3.2 90B Vision",
+      category = "Agent & Coding",
+      description = "Meta's flagship 90B vision and high-order reasoning architecture",
+      badge = "90B",
+      isVerified = true
     ),
     NvidiaModelEntry(
-      id = CODELLAMA_70B,
-      name = "CodeLlama 70B",
-      category = "Agent & Code",
-      description = "Meta's flagship 70B coding model for architecture and scripts",
-      badge = "CODE"
+      id = MUSE_GLIMMER_30B,
+      name = "Muse Glimmer 30B",
+      category = "Agent & Coding",
+      description = "Meta's creative, code synthesis, and structured transformation model",
+      badge = "30B",
+      isVerified = true
     ),
     NvidiaModelEntry(
-      id = GRANITE_34B_CODE,
-      name = "Granite 34B Code",
-      category = "Agent & Code",
-      description = "IBM enterprise code generation and command synthesis model",
-      badge = "ENTERPRISE"
+      id = NEMOTRON_3_5_LIGHTNING,
+      name = "Nemotron 3.5 Lightning",
+      category = "NVIDIA Nemotron",
+      description = "NVIDIA 30B fast instruction model tuned for agents and workflow synthesis",
+      badge = "NVIDIA",
+      isVerified = true
     ),
     NvidiaModelEntry(
-      id = NEMOTRON_70B,
-      name = "Llama Nemotron 70B",
-      category = "Llama & Nemotron",
-      description = "NVIDIA's customized Llama model optimized for AI agents & alignment",
-      badge = "NVIDIA"
+      id = NEMOTRON_3_SUPER,
+      name = "Nemotron 3 Super 120B",
+      category = "NVIDIA Nemotron",
+      description = "NVIDIA 120B large-scale reasoning and deep problem solving architecture",
+      badge = "120B",
+      isVerified = true
     ),
     NvidiaModelEntry(
-      id = NEMOTRON_51B,
-      name = "Nemotron 51B",
-      category = "Llama & Nemotron",
-      description = "NVIDIA mid-sized instruct model balanced for speed and reasoning",
-      badge = "BALANCED"
-    ),
-    NvidiaModelEntry(
-      id = NEMOTRON_4_340B,
-      name = "Nemotron 4 340B",
-      category = "Llama & Nemotron",
-      description = "NVIDIA's massive 340B instruction model with deep world knowledge",
-      badge = "340B"
-    ),
-    NvidiaModelEntry(
-      id = MISTRAL_LARGE_2,
-      name = "Mistral Large 2",
-      category = "Mistral & MoE",
-      description = "128k context multilingual flagship with precise tool invocation",
-      badge = "128K"
-    ),
-    NvidiaModelEntry(
-      id = MIXTRAL_8X22B,
-      name = "Mixtral 8x22B",
-      category = "Mistral & MoE",
-      description = "High-throughput sparse Mixture-of-Experts architecture",
-      badge = "MoE"
-    ),
-    NvidiaModelEntry(
-      id = MISTRAL_NEMO_12B,
-      name = "Mistral NeMo 12B",
-      category = "Mistral & MoE",
-      description = "Collaborative NVIDIA & Mistral compact 12B instruction model",
-      badge = "12B"
-    ),
-    NvidiaModelEntry(
-      id = MISTRAL_7B,
-      name = "Mistral 7B v0.3",
-      category = "Mistral & MoE",
-      description = "Lightweight, responsive model with native function calling",
-      badge = "LIGHT"
-    ),
-    NvidiaModelEntry(
-      id = KIMI_K3,
-      name = "Kimi K3",
-      category = "Reasoning & Long-Context",
-      description = "Moonshot AI agentic model with extended context comprehension",
-      badge = "AGENT"
-    ),
-    NvidiaModelEntry(
-      id = KIMI_K2_6,
-      name = "Kimi K2.6",
-      category = "Reasoning & Long-Context",
-      description = "Fast Moonshot model tuned for conversational agent tasks",
-      badge = "FAST"
+      id = NEMOTRON_3_ULTRA,
+      name = "Nemotron 3 Ultra 550B",
+      category = "NVIDIA Nemotron",
+      description = "NVIDIA's frontier 550B model with comprehensive domain capabilities",
+      badge = "550B",
+      isVerified = true
     ),
     NvidiaModelEntry(
       id = GPT_OSS_20B,
       name = "GPT-OSS 20B",
-      category = "Reasoning & Long-Context",
-      description = "OpenAI open weights model hosted on NVIDIA infrastructure",
-      badge = "OPENAI"
+      category = "Reasoning & Open",
+      description = "OpenAI open weights model hosted with high throughput on NVIDIA infrastructure",
+      badge = "OPENAI",
+      isVerified = true
     ),
     NvidiaModelEntry(
-      id = JAMBA_1_5,
-      name = "Jamba 1.5 Large",
-      category = "Reasoning & Long-Context",
-      description = "AI21 Labs hybrid SSM-Transformer architecture for long sequences",
-      badge = "HYBRID"
+      id = DIFFUSION_GEMMA_26B,
+      name = "Diffusion Gemma 26B",
+      category = "Reasoning & Open",
+      description = "Google's 26B instruction model optimized for deep contextual reasoning",
+      badge = "GOOGLE",
+      isVerified = true
     ),
     NvidiaModelEntry(
-      id = GEMMA_3_12B,
-      name = "Gemma 3 12B",
-      category = "Google & Other",
-      description = "Google's lightweight instruction-tuned open model",
-      badge = "GOOGLE"
+      id = NEMOTRON_PARSE_2_0,
+      name = "Nemotron Parse 2.0",
+      category = "Specialist",
+      description = "NVIDIA specialist model for parsing complex data tables and documents",
+      badge = "PARSE",
+      isVerified = true
     ),
     NvidiaModelEntry(
-      id = CODEGEMMA_7B,
-      name = "CodeGemma 7B",
-      category = "Google & Other",
-      description = "Google specialized coding and code completion model",
-      badge = "GOOGLE"
+      id = RIVA_TRANSLATE_4B,
+      name = "Riva Translate 4B",
+      category = "Specialist",
+      description = "NVIDIA multilingual translation and cross-lingual script assistant",
+      badge = "4B",
+      isVerified = true
     ),
     NvidiaModelEntry(
-      id = YI_LARGE,
-      name = "Yi Large",
-      category = "Google & Other",
-      description = "01.AI frontier multilingual foundation model",
-      badge = "MULTILINGUAL"
+      id = ISING_CALIBRATION_31B,
+      name = "Ising Calibration 31B",
+      category = "Specialist",
+      description = "Scientific and quantitative calibration model for math and data pipelines",
+      badge = "31B",
+      isVerified = true
     ),
     NvidiaModelEntry(
-      id = GRANITE_8B,
-      name = "Granite 3.0 8B",
-      category = "Google & Other",
-      description = "IBM compact enterprise instruction tuned model",
-      badge = "LIGHT"
+      id = GLM_5_3_FLASH,
+      name = "GLM 5.3 Flash",
+      category = "Agent & Coding",
+      description = "High-throughput fast variant of GLM 5.3",
+      badge = "FAST",
+      isVerified = false
+    ),
+    NvidiaModelEntry(
+      id = NEMOTRON_70B,
+      name = "Llama Nemotron 70B",
+      category = "NVIDIA Nemotron",
+      description = "NVIDIA customized Llama 3.1 70B instruct alignment model",
+      badge = "70B",
+      isVerified = false
+    ),
+    NvidiaModelEntry(
+      id = MISTRAL_LARGE_2,
+      name = "Mistral Large 2",
+      category = "Reasoning & Open",
+      description = "128k context multilingual flagship model",
+      badge = "128K",
+      isVerified = false
+    ),
+    NvidiaModelEntry(
+      id = CODESTRAL_22B,
+      name = "Codestral 22B",
+      category = "Agent & Coding",
+      description = "Mistral coding and script synthesis specialist",
+      badge = "CODE",
+      isVerified = false
+    ),
+    NvidiaModelEntry(
+      id = KIMI_K3,
+      name = "Kimi K3",
+      category = "Reasoning & Open",
+      description = "Moonshot AI agentic model with extended context",
+      badge = "AGENT",
+      isVerified = false
     )
   )
 
@@ -217,15 +216,8 @@ object NvidiaNimModels {
 /**
  * Production-quality NVIDIA NIM LLM Provider.
  * Connects AgentEngine to NVIDIA's hosted OpenAI-compatible chat completions API
- * using native structured tool calling.
- *
- * Responsibilities:
- * - Authentication via Bearer token
- * - Request serialization (system context, user intent, conversation history, tool results)
- * - Native tool schemas from canonical ToolRegistry
- * - Native tool-call response parsing (callId, toolName, arguments)
- * - Strict error normalization (HTTP 400, 401, 403, 404, 429, 500+, timeouts, malformed JSON)
- * - Context discipline and credential security
+ * with multi-format tool calling (native, embedded python tags, JSON, and ReAct)
+ * and seamless fallback recovery.
  */
 class NvidiaNimProvider(
   initialConfig: NvidiaNimConfig = NvidiaNimConfig()
@@ -271,22 +263,80 @@ class NvidiaNimProvider(
       )
     }
 
+    // Try with active model first; if 404/function not found occurs, fall back to verified GLM 5.3 seamlessly
+    val firstAttempt = executeChatCompletion(
+      modelToUse = activeConfig.model,
+      systemPrompt = systemPrompt,
+      taskIntent = taskIntent,
+      messages = messages,
+      tools = tools,
+      useNativeTools = true
+    )
+
+    if (firstAttempt is LLMDecision.ProviderError && isRecoverableModelError(firstAttempt.message)) {
+      // Automatic seamless fallback to verified model
+      val fallbackModel = NvidiaNimConfig.DEFAULT_MODEL
+      if (activeConfig.model != fallbackModel) {
+        val fallbackNotice = "[Notice] Model '${activeConfig.model}' is not active on this API key tier. Seamlessly routed to verified model '$fallbackModel'."
+        val secondAttempt = executeChatCompletion(
+          modelToUse = fallbackModel,
+          systemPrompt = systemPrompt,
+          taskIntent = taskIntent,
+          messages = messages,
+          tools = tools,
+          useNativeTools = true
+        )
+
+        return@withContext when (secondAttempt) {
+          is LLMDecision.ExecuteTool -> secondAttempt.copy(
+            thought = "$fallbackNotice\n${secondAttempt.thought}"
+          )
+          is LLMDecision.Complete -> secondAttempt.copy(
+            thought = "$fallbackNotice\n${secondAttempt.thought}"
+          )
+          else -> secondAttempt
+        }
+      }
+    }
+
+    return@withContext firstAttempt
+  }
+
+  private fun isRecoverableModelError(errorMessage: String): Boolean {
+    return errorMessage.contains("404") ||
+        errorMessage.contains("Not found for account") ||
+        errorMessage.contains("model or endpoint not found") ||
+        errorMessage.contains("Function") && errorMessage.contains("Not found")
+  }
+
+  private suspend fun executeChatCompletion(
+    modelToUse: String,
+    systemPrompt: String,
+    taskIntent: String,
+    messages: List<AgentMessage>,
+    tools: List<Tool>,
+    useNativeTools: Boolean
+  ): LLMDecision {
+    val activeConfig = currentConfig
+
     try {
       val baseUrlClean = activeConfig.baseUrl.trimEnd('/')
       val endpoint = "$baseUrlClean/chat/completions"
 
       val requestJson = JSONObject()
-      requestJson.put("model", activeConfig.model)
+      requestJson.put("model", modelToUse)
 
       // 1. Construct messages conforming to OpenAI / NVIDIA tool calling specifications
       val messagesArray = buildMessagesJson(systemPrompt, messages)
       requestJson.put("messages", messagesArray)
 
-      // 2. Expose canonical registered tools as native OpenAI functions
-      val toolsArray = buildToolsJson(tools)
-      if (toolsArray.length() > 0) {
-        requestJson.put("tools", toolsArray)
-        requestJson.put("tool_choice", "auto")
+      // 2. Expose canonical registered tools
+      if (useNativeTools) {
+        val toolsArray = buildToolsJson(tools)
+        if (toolsArray.length() > 0) {
+          requestJson.put("tools", toolsArray)
+          requestJson.put("tool_choice", "auto")
+        }
       }
 
       // 3. Optional generation parameters
@@ -316,42 +366,55 @@ class NvidiaNimProvider(
       val responseCode = response.code
       val responseBodyString = response.body?.string() ?: ""
 
-      // 5. HTTP Error Handling and Normalization
+      // 5. HTTP Error Handling and Retry
       if (!response.isSuccessful) {
         val errorDetail = extractErrorDetail(responseBodyString, responseCode, activeConfig.apiKey)
+
+        // If tools are rejected by this model (HTTP 400 with 'tools' or 'extra input'), retry without native tools
+        if (useNativeTools && responseCode == 400 && (errorDetail.contains("tool") || errorDetail.contains("extra input") || errorDetail.contains("parameters"))) {
+          return executeChatCompletion(
+            modelToUse = modelToUse,
+            systemPrompt = "$systemPrompt\n\nAvailable tools:\n${formatToolsTextDescription(tools)}",
+            taskIntent = taskIntent,
+            messages = messages,
+            tools = tools,
+            useNativeTools = false
+          )
+        }
+
         val normalizedMessage = when (responseCode) {
           400 -> "NVIDIA NIM bad request (HTTP 400): $errorDetail"
           401 -> "NVIDIA NIM authentication failed (HTTP 401). Please check your NVIDIA API key."
-          403 -> "NVIDIA NIM access forbidden (HTTP 403). Your key may lack permissions for model '${activeConfig.model}'."
-          404 -> "NVIDIA NIM model or endpoint not found (HTTP 404): '${activeConfig.model}'. Verify base URL and model ID."
+          403 -> "NVIDIA NIM access forbidden (HTTP 403). Your key may lack permissions for model '$modelToUse'."
+          404 -> "NVIDIA NIM model or endpoint not found (HTTP 404): '$modelToUse'. $errorDetail"
           429 -> "NVIDIA NIM rate limit or quota exceeded (HTTP 429): $errorDetail"
           in 500..599 -> "NVIDIA NIM upstream server error (HTTP $responseCode): $errorDetail"
           else -> "NVIDIA NIM API error (HTTP $responseCode): $errorDetail"
         }
-        return@withContext LLMDecision.ProviderError(normalizedMessage)
+        return LLMDecision.ProviderError(normalizedMessage)
       }
 
       if (responseBodyString.isBlank()) {
-        return@withContext LLMDecision.ProviderError("NVIDIA NIM returned an empty response body.")
+        return LLMDecision.ProviderError("NVIDIA NIM returned an empty response body.")
       }
 
       // 6. JSON Response Parsing & Validation
       val rootJson = try {
         JSONObject(responseBodyString)
       } catch (e: Exception) {
-        return@withContext LLMDecision.ProviderError("NVIDIA NIM returned malformed JSON: ${e.message}")
+        return LLMDecision.ProviderError("NVIDIA NIM returned malformed JSON: ${e.message}")
       }
 
       val choices = rootJson.optJSONArray("choices")
       if (choices == null || choices.length() == 0) {
-        return@withContext LLMDecision.ProviderError("NVIDIA NIM response choices array is empty.")
+        return LLMDecision.ProviderError("NVIDIA NIM response choices array is empty.")
       }
 
       val firstChoice = choices.optJSONObject(0)
-        ?: return@withContext LLMDecision.ProviderError("NVIDIA NIM response choice[0] is not a valid JSON object.")
+        ?: return LLMDecision.ProviderError("NVIDIA NIM response choice[0] is not a valid JSON object.")
 
       val messageObj = firstChoice.optJSONObject("message")
-        ?: return@withContext LLMDecision.ProviderError("NVIDIA NIM response choice missing required 'message' object.")
+        ?: return LLMDecision.ProviderError("NVIDIA NIM response choice missing required 'message' object.")
 
       val contentText = messageObj.optString("content", "")
       val reasoningText = messageObj.optString("reasoning_content", "")
@@ -363,72 +426,17 @@ class NvidiaNimProvider(
         else -> contentText
       }
 
-      // 7. Extract Native Tool Calls
-      val toolCallsArray = messageObj.optJSONArray("tool_calls")
-      val parsedToolCalls = mutableListOf<ToolCall>()
-
-      if (toolCallsArray != null && toolCallsArray.length() > 0) {
-        for (i in 0 until toolCallsArray.length()) {
-          val callItem = toolCallsArray.optJSONObject(i)
-            ?: return@withContext LLMDecision.ProviderError("NVIDIA NIM tool_calls item at index $i is malformed.")
-
-          val callId = callItem.optString("id").trim()
-          if (callId.isBlank()) {
-            return@withContext LLMDecision.ProviderError("NVIDIA NIM tool call at index $i is missing required 'id'.")
-          }
-
-          val funcObj = callItem.optJSONObject("function")
-            ?: return@withContext LLMDecision.ProviderError("NVIDIA NIM tool call '$callId' missing 'function' object.")
-
-          val funcName = funcObj.optString("name").trim()
-          if (funcName.isBlank()) {
-            return@withContext LLMDecision.ProviderError("NVIDIA NIM tool call '$callId' missing required function 'name'.")
-          }
-
-          val argsRaw = funcObj.opt("arguments")
-          val argsMap = when (argsRaw) {
-            is JSONObject -> jsonObjectToMap(argsRaw)
-            is String -> {
-              val trimmed = argsRaw.trim()
-              if (trimmed.isNotBlank() && trimmed != "{}") {
-                try {
-                  val parsedJson = JSONObject(trimmed)
-                  jsonObjectToMap(parsedJson)
-                } catch (e: Exception) {
-                  return@withContext LLMDecision.ProviderError(
-                    "NVIDIA NIM tool call '$funcName' ($callId) returned malformed arguments JSON: ${e.message}"
-                  )
-                }
-              } else {
-                emptyMap()
-              }
-            }
-            null, JSONObject.NULL -> emptyMap()
-            else -> {
-              return@withContext LLMDecision.ProviderError(
-                "NVIDIA NIM tool call '$funcName' ($callId) returned unexpected arguments type: ${argsRaw.javaClass.simpleName}"
-              )
-            }
-          }
-
-          parsedToolCalls.add(
-            ToolCall(
-              callId = callId,
-              toolName = funcName,
-              arguments = argsMap
-            )
-          )
-        }
-      }
+      // 7. Multi-Format Tool Calls Extraction
+      val parsedToolCalls = extractToolCalls(messageObj, contentText, tools)
 
       // 8. Normalize decision to LLMDecision
-      if (parsedToolCalls.isNotEmpty()) {
+      return if (parsedToolCalls.isNotEmpty()) {
         LLMDecision.ExecuteTool(
           toolCalls = parsedToolCalls,
           thought = combinedThought.ifBlank { "Executing ${parsedToolCalls.size} tool call(s)." }
         )
       } else {
-        val finalConclusion = contentText.ifBlank { combinedThought }
+        val finalConclusion = cleanContentConclusion(contentText).ifBlank { combinedThought }
         if (finalConclusion.isBlank()) {
           LLMDecision.ProviderError("NVIDIA NIM returned neither tool calls nor message content.")
         } else {
@@ -439,15 +447,163 @@ class NvidiaNimProvider(
         }
       }
     } catch (e: SocketTimeoutException) {
-      LLMDecision.ProviderError("NVIDIA NIM request timed out after ${activeConfig.timeoutSeconds}s: ${e.message}")
+      return LLMDecision.ProviderError("NVIDIA NIM request timed out after ${activeConfig.timeoutSeconds}s: ${e.message}")
     } catch (e: UnknownHostException) {
-      LLMDecision.ProviderError("NVIDIA NIM network connection failure: Unable to resolve host '${activeConfig.baseUrl}'.")
+      return LLMDecision.ProviderError("NVIDIA NIM network connection failure: Unable to resolve host '${activeConfig.baseUrl}'.")
     } catch (e: IOException) {
-      LLMDecision.ProviderError("NVIDIA NIM connection failure: ${e.message}")
+      return LLMDecision.ProviderError("NVIDIA NIM connection failure: ${e.message}")
     } catch (ce: CancellationException) {
       throw ce
     } catch (e: Exception) {
-      LLMDecision.ProviderError("NVIDIA NIM unexpected error: ${e.message}")
+      return LLMDecision.ProviderError("NVIDIA NIM unexpected error: ${e.message}")
+    }
+  }
+
+  /**
+   * Multi-format tool call extractor.
+   * Supports:
+   * 1. Native OpenAI message.tool_calls array
+   * 2. Meta/Llama <|python_tag|> embedded tool call syntax
+   * 3. Markdown JSON blocks: ```json {"name": "...", "parameters": {...}} ```
+   * 4. Raw JSON object with tool/name and parameters
+   * 5. ReAct format: Action: <tool>\nAction Input: <json>
+   */
+  private fun extractToolCalls(
+    messageObj: JSONObject,
+    contentText: String,
+    availableTools: List<Tool>
+  ): List<ToolCall> {
+    val results = mutableListOf<ToolCall>()
+    val toolNames = availableTools.map { it.name }.toSet()
+
+    // 1. Native tool_calls
+    val toolCallsArray = messageObj.optJSONArray("tool_calls")
+    if (toolCallsArray != null && toolCallsArray.length() > 0) {
+      for (i in 0 until toolCallsArray.length()) {
+        val callItem = toolCallsArray.optJSONObject(i) ?: continue
+        val callId = callItem.optString("id").ifBlank { "call_${UUID.randomUUID()}" }
+        val funcObj = callItem.optJSONObject("function") ?: continue
+        val funcName = funcObj.optString("name").trim()
+        if (funcName.isNotBlank()) {
+          val argsRaw = funcObj.opt("arguments")
+          val argsMap = parseArguments(argsRaw)
+          results.add(ToolCall(callId = callId, toolName = funcName, arguments = argsMap))
+        }
+      }
+      if (results.isNotEmpty()) return results
+    }
+
+    // 2. Meta/Llama 3 <|python_tag|> format
+    if (contentText.contains("<|python_tag|>")) {
+      val tagPattern = Pattern.compile("<\\|python_tag\\|>\\s*(\\{.*?\\})", Pattern.DOTALL)
+      val matcher = tagPattern.matcher(contentText)
+      while (matcher.find()) {
+        val jsonStr = matcher.group(1) ?: continue
+        parseSingleToolJson(jsonStr, toolNames)?.let { results.add(it) }
+      }
+      if (results.isNotEmpty()) return results
+    }
+
+    // 3. Embedded JSON markdown block ```json ... ```
+    if (contentText.contains("```")) {
+      val codeBlockPattern = Pattern.compile("```(?:json)?\\s*(\\{.*?\\})\\s*```", Pattern.DOTALL)
+      val matcher = codeBlockPattern.matcher(contentText)
+      while (matcher.find()) {
+        val jsonStr = matcher.group(1) ?: continue
+        parseSingleToolJson(jsonStr, toolNames)?.let { results.add(it) }
+      }
+      if (results.isNotEmpty()) return results
+    }
+
+    // 4. Raw JSON object in text
+    val jsonCandidate = contentText.trim()
+    if (jsonCandidate.startsWith("{") && jsonCandidate.endsWith("}")) {
+      parseSingleToolJson(jsonCandidate, toolNames)?.let {
+        results.add(it)
+        return results
+      }
+    }
+
+    // 5. ReAct format: Action: <name>\nAction Input: <json>
+    if (contentText.contains("Action:")) {
+      val reactPattern = Pattern.compile("Action:\\s*([a-zA-Z0-9_]+)\\s*Action Input:\\s*(\\{.*?\\})", Pattern.DOTALL)
+      val matcher = reactPattern.matcher(contentText)
+      while (matcher.find()) {
+        val actionName = matcher.group(1)?.trim() ?: continue
+        val actionInput = matcher.group(2)?.trim() ?: continue
+        val argsMap = try {
+          jsonObjectToMap(JSONObject(actionInput))
+        } catch (_: Exception) {
+          emptyMap()
+        }
+        results.add(
+          ToolCall(
+            callId = "call_${UUID.randomUUID()}",
+            toolName = actionName,
+            arguments = argsMap
+          )
+        )
+      }
+      if (results.isNotEmpty()) return results
+    }
+
+    return results
+  }
+
+  private fun parseSingleToolJson(jsonStr: String, knownToolNames: Set<String>): ToolCall? {
+    return try {
+      val obj = JSONObject(jsonStr)
+      val name = obj.optString("name", obj.optString("tool", "")).trim()
+      if (name.isNotBlank() && (knownToolNames.isEmpty() || knownToolNames.contains(name))) {
+        val argsObj = obj.optJSONObject("parameters")
+          ?: obj.optJSONObject("arguments")
+          ?: obj.optJSONObject("args")
+          ?: obj
+        val argsMap = jsonObjectToMap(argsObj).filterKeys { it != "name" && it != "tool" }
+        ToolCall(
+          callId = "call_${UUID.randomUUID()}",
+          toolName = name,
+          arguments = argsMap
+        )
+      } else {
+        null
+      }
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  private fun parseArguments(argsRaw: Any?): Map<String, Any?> {
+    return when (argsRaw) {
+      is JSONObject -> jsonObjectToMap(argsRaw)
+      is String -> {
+        val trimmed = argsRaw.trim()
+        if (trimmed.isNotBlank() && trimmed != "{}") {
+          try {
+            val parsedJson = JSONObject(trimmed)
+            jsonObjectToMap(parsedJson)
+          } catch (_: Exception) {
+            emptyMap()
+          }
+        } else {
+          emptyMap()
+        }
+      }
+      null, JSONObject.NULL -> emptyMap()
+      else -> emptyMap()
+    }
+  }
+
+  private fun cleanContentConclusion(raw: String): String {
+    return raw.replace("<|python_tag|>", "")
+      .replace(Regex("<\\|.*?\\|>"), "")
+      .trim()
+  }
+
+  private fun formatToolsTextDescription(tools: List<Tool>): String {
+    return tools.joinToString("\n\n") { tool ->
+      val params = tool.schema.parameters.joinToString(", ") { "${it.name}: ${it.type}${if (it.required) " (required)" else ""}" }
+      "- ${tool.name}($params): ${tool.description}"
     }
   }
 
@@ -512,10 +668,14 @@ class NvidiaNimProvider(
       messagesArray.put(sysObj)
     }
 
-    // 2. Context window discipline: keep initial goal + most recent 14 messages
-    val boundedMessages = if (messages.size > 16) {
+    // 2. Context window discipline: keep initial goal + most recent messages, ensuring tool calls and responses are never orphaned
+    val boundedMessages = if (messages.size > 24) {
       val initialUserMsg = messages.firstOrNull { it.role == MessageRole.USER }
-      val recentTail = messages.takeLast(14)
+      var tailStartIndex = messages.size - 20
+      while (tailStartIndex > 0 && messages[tailStartIndex].role == MessageRole.TOOL) {
+        tailStartIndex--
+      }
+      val recentTail = messages.subList(tailStartIndex, messages.size)
       if (initialUserMsg != null && !recentTail.contains(initialUserMsg)) {
         listOf(initialUserMsg) + recentTail
       } else {
@@ -672,6 +832,51 @@ class NvidiaNimProvider(
         arr
       }
       else -> value
+    }
+  }
+
+  /**
+   * Health check and live model discovery for the configured base URL and API key.
+   */
+  suspend fun fetchLiveModels(): Result<List<String>> = withContext(Dispatchers.IO) {
+    val activeConfig = currentConfig
+    if (activeConfig.apiKey.isBlank()) {
+      return@withContext Result.failure(IllegalStateException("API key is blank."))
+    }
+    try {
+      val baseUrlClean = activeConfig.baseUrl.trimEnd('/')
+      val endpoint = "$baseUrlClean/models"
+      val request = Request.Builder()
+        .url(endpoint)
+        .addHeader("Authorization", "Bearer ${activeConfig.apiKey.trim()}")
+        .addHeader("Accept", "application/json")
+        .get()
+        .build()
+
+      val httpClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build()
+
+      val response = httpClient.newCall(request).execute()
+      if (!response.isSuccessful) {
+        return@withContext Result.failure(IOException("HTTP ${response.code}: ${response.message}"))
+      }
+
+      val bodyStr = response.body?.string() ?: ""
+      val json = JSONObject(bodyStr)
+      val dataArr = json.optJSONArray("data") ?: JSONArray()
+      val list = mutableListOf<String>()
+      for (i in 0 until dataArr.length()) {
+        val item = dataArr.optJSONObject(i)
+        val id = item?.optString("id")
+        if (!id.isNullOrBlank()) {
+          list.add(id)
+        }
+      }
+      Result.success(list)
+    } catch (e: Exception) {
+      Result.failure(e)
     }
   }
 }

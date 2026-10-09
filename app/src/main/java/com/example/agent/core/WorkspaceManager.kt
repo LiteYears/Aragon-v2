@@ -10,9 +10,11 @@ import java.util.UUID
 class WorkspaceManager(val baseDir: File) {
 
   init {
-    if (!baseDir.exists()) {
-      baseDir.mkdirs()
-    }
+    try {
+      if (!baseDir.exists()) {
+        baseDir.mkdirs()
+      }
+    } catch (_: Exception) {}
   }
 
   /**
@@ -78,11 +80,15 @@ class WorkspaceManager(val baseDir: File) {
    */
   fun listAllArtifacts(): List<Artifact> {
     val list = mutableListOf<Artifact>()
-    baseDir.walkTopDown().forEach { file ->
-      if (file != baseDir && file.isFile) {
-        list.add(createArtifactFromFile(file))
+    try {
+      if (baseDir.exists() && baseDir.isDirectory) {
+        baseDir.walkTopDown().forEach { file ->
+          if (file != baseDir && file.isFile) {
+            list.add(createArtifactFromFile(file))
+          }
+        }
       }
-    }
+    } catch (_: Exception) {}
     return list.sortedByDescending { it.lastModified }
   }
 
@@ -90,29 +96,36 @@ class WorkspaceManager(val baseDir: File) {
    * Cleans and initializes the workspace with useful initial context or reset.
    */
   fun resetWorkspace() {
-    baseDir.deleteRecursively()
-    baseDir.mkdirs()
+    try {
+      baseDir.deleteRecursively()
+      baseDir.mkdirs()
+    } catch (_: Exception) {}
   }
 
   /**
    * Initializes workspace with sample project files if empty (e.g. data.csv).
    */
   fun seedWorkspaceDefaults() {
-    val dataCsv = File(baseDir, "data.csv")
-    if (!dataCsv.exists()) {
-      dataCsv.writeText(
-        """
-        id,product,category,revenue,units_sold,quarter
-        1,Cloud Server Pro,Infrastructure,125000,450,Q1
-        2,AI Inference Engine,Software,340000,1200,Q1
-        3,Database Cluster,Infrastructure,89000,210,Q1
-        4,Edge Gateway,Hardware,45000,300,Q1
-        5,Cloud Server Pro,Infrastructure,142000,510,Q2
-        6,AI Inference Engine,Software,420000,1500,Q2
-        7,Database Cluster,Infrastructure,95000,225,Q2
-        8,Edge Gateway,Hardware,51000,340,Q2
-        """.trimIndent()
-      )
-    }
+    try {
+      if (!baseDir.exists()) {
+        baseDir.mkdirs()
+      }
+      val dataCsv = File(baseDir, "data.csv")
+      if (!dataCsv.exists()) {
+        dataCsv.writeText(
+          """
+          id,product,category,revenue,units_sold,quarter
+          1,Cloud Server Pro,Infrastructure,125000,450,Q1
+          2,AI Inference Engine,Software,340000,1200,Q1
+          3,Database Cluster,Infrastructure,89000,210,Q1
+          4,Edge Gateway,Hardware,45000,300,Q1
+          5,Cloud Server Pro,Infrastructure,142000,510,Q2
+          6,AI Inference Engine,Software,420000,1500,Q2
+          7,Database Cluster,Infrastructure,95000,225,Q2
+          8,Edge Gateway,Hardware,51000,340,Q2
+          """.trimIndent()
+        )
+      }
+    } catch (_: Exception) {}
   }
 }

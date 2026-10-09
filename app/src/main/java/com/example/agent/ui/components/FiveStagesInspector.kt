@@ -53,17 +53,41 @@ fun FiveStagesInspector(
       .testTag("five_stages_inspector"),
     verticalArrangement = Arrangement.spacedBy(16.dp)
   ) {
-    Text(
-      text = "Authoritative 5-Stage Agentic Architecture",
-      style = MaterialTheme.typography.titleMedium,
-      fontWeight = FontWeight.Bold,
-      color = MaterialTheme.colorScheme.onSurface
-    )
-    Text(
-      text = "Strict computational separation between model-proposed reasoning (Intent, Plan, Conclusion) and environment-executed truth (Action, Observation).",
-      style = MaterialTheme.typography.bodySmall,
-      color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Column(modifier = Modifier.weight(1f)) {
+        Text(
+          text = "Authoritative 5-Stage Agentic Architecture",
+          style = MaterialTheme.typography.titleMedium,
+          fontWeight = FontWeight.Bold,
+          color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+          text = "Strict computational separation between model-proposed reasoning (Intent, Plan, Conclusion) and environment-executed truth (Action, Observation).",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+      }
+
+      val fullReport = buildString {
+        appendLine("=== 5-STAGE AGENTIC EXECUTION RECORD ===")
+        appendLine("1. INTENT: ${record.intent}")
+        appendLine("2. PLAN:\n${record.currentPlan.joinToString("\n") { "  - $it" }}")
+        appendLine("3. ACTION:\n${record.actions.joinToString("\n") { "  - $it" }}")
+        appendLine("4. OBSERVATION:\n${record.observations.joinToString("\n") { "  - $it" }}")
+        appendLine("5. CONCLUSION:\n${record.conclusion}")
+      }
+      LittleCopyButton(
+        textToCopy = fullReport,
+        label = "Full Report",
+        buttonSize = 34.dp,
+        iconSize = 16.dp,
+        testTag = "copy_full_5stages_report"
+      )
+    }
 
     // 1. INTENT
     StageCard(
@@ -137,46 +161,60 @@ private fun StageCard(
   ) {
     Column(modifier = Modifier.padding(14.dp)) {
       Row(
+        modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.SpaceBetween
       ) {
-        Box(
-          modifier = Modifier
-            .size(28.dp)
-            .clip(CircleShape)
-            .background(badgeColor),
-          contentAlignment = Alignment.Center
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+          modifier = Modifier.weight(1f)
         ) {
-          Icon(
-            imageVector = icon,
-            contentDescription = stageName,
-            tint = Color.White,
-            modifier = Modifier.size(16.dp)
-          )
-        }
-
-        Column {
-          Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-              text = "$stageNumber. $stageName",
-              style = MaterialTheme.typography.titleSmall,
-              fontWeight = FontWeight.Bold,
-              color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-              text = if (stageNumber in listOf(3, 4)) "AUTHORITATIVE TRUTH" else "AGENT SYNTHESIS",
-              style = MaterialTheme.typography.labelSmall,
-              color = if (stageNumber in listOf(3, 4)) Color(0xFF059669) else Color(0xFF6366F1),
-              fontWeight = FontWeight.SemiBold
+          Box(
+            modifier = Modifier
+              .size(28.dp)
+              .clip(CircleShape)
+              .background(badgeColor),
+            contentAlignment = Alignment.Center
+          ) {
+            Icon(
+              imageVector = icon,
+              contentDescription = stageName,
+              tint = Color.White,
+              modifier = Modifier.size(16.dp)
             )
           }
-          Text(
-            text = subtitle,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-          )
+
+          Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              Text(
+                text = "$stageNumber. $stageName",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+              )
+              Spacer(modifier = Modifier.width(8.dp))
+              Text(
+                text = if (stageNumber in listOf(3, 4)) "AUTHORITATIVE TRUTH" else "AGENT SYNTHESIS",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (stageNumber in listOf(3, 4)) Color(0xFF059669) else Color(0xFF6366F1),
+                fontWeight = FontWeight.SemiBold
+              )
+            }
+            Text(
+              text = subtitle,
+              style = MaterialTheme.typography.labelSmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+          }
         }
+
+        LittleCopyButton(
+          textToCopy = content.joinToString("\n"),
+          testTag = "copy_stage_${stageNumber}",
+          buttonSize = 28.dp,
+          iconSize = 14.dp
+        )
       }
 
       Spacer(modifier = Modifier.height(10.dp))

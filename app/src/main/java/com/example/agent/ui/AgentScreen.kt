@@ -11,9 +11,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
@@ -36,8 +36,11 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
@@ -46,11 +49,13 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -85,6 +90,7 @@ import com.example.agent.ui.components.ArtifactItem
 import com.example.agent.ui.components.ArtifactPreviewDialog
 import com.example.agent.ui.components.ExecutionFeedItem
 import com.example.agent.ui.components.FiveStagesInspector
+import com.example.agent.ui.components.LittleCopyButton
 
 @Composable
 fun AgentScreen(
@@ -102,6 +108,7 @@ fun AgentScreen(
   val geminiApiKey by viewModel.geminiApiKey.collectAsState()
   val selectedArtifact by viewModel.selectedArtifactForPreview.collectAsState()
   val previewContent by viewModel.previewContent.collectAsState()
+  val connectionStatus by viewModel.connectionStatus.collectAsState()
 
   var inputText by remember { mutableStateOf("") }
   var showSettingsDialog by remember { mutableStateOf(false) }
@@ -116,7 +123,9 @@ fun AgentScreen(
   }
 
   Scaffold(
-    modifier = modifier.fillMaxSize().imePadding(),
+    modifier = modifier
+      .fillMaxSize()
+      .imePadding(),
     contentWindowInsets = WindowInsets(0, 0, 0, 0),
     topBar = {
       AgentTopHeader(
@@ -127,14 +136,13 @@ fun AgentScreen(
         canCancel = state.canCancel,
         onStop = { viewModel.stopExecution() },
         onOpenSettings = { showSettingsDialog = true },
-        onResetWorkspace = { viewModel.resetWorkspace() }
+        onResetWorkspace = { viewModel.resetWorkspace() },
+        onGetTranscript = { viewModel.getExecutionTranscript() }
       )
     },
     bottomBar = {
       Surface(
-        modifier = Modifier
-          .fillMaxWidth()
-          .navigationBarsPadding(),
+        modifier = Modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 4.dp,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
@@ -142,7 +150,8 @@ fun AgentScreen(
         Column(
           modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 12.dp)
+            .navigationBarsPadding()
+            .padding(bottom = 6.dp)
         ) {
           // Preset prompt suggestion chips with smooth padding
           val chipScrollState = rememberScrollState()
@@ -150,7 +159,7 @@ fun AgentScreen(
             modifier = Modifier
               .fillMaxWidth()
               .horizontalScroll(chipScrollState)
-              .padding(horizontal = 16.dp, vertical = 8.dp),
+              .padding(horizontal = 14.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
           ) {
             viewModel.presets.forEach { preset ->
@@ -180,7 +189,7 @@ fun AgentScreen(
           Row(
             modifier = Modifier
               .fillMaxWidth()
-              .padding(horizontal = 16.dp, vertical = 4.dp),
+              .padding(horizontal = 14.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
           ) {
             OutlinedTextField(
@@ -270,6 +279,71 @@ fun AgentScreen(
         .fillMaxSize()
         .padding(paddingValues)
     ) {
+      // Prominent Error Banner with 1-tap Copy Error Button
+      AnimatedVisibility(visible = state.error != null) {
+        state.error?.let { errText ->
+          Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.95f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 14.dp, vertical = 6.dp)
+              .testTag("error_banner")
+          ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+              ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                  Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Error",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp)
+                  )
+                  Spacer(modifier = Modifier.width(6.dp))
+                  Text(
+                    text = "EXECUTION ISSUE DETECTED",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.error
+                  )
+                }
+
+                LittleCopyButton(
+                  textToCopy = errText,
+                  label = "Copy Error",
+                  tint = MaterialTheme.colorScheme.error,
+                  testTag = "copy_error_banner_btn"
+                )
+              }
+
+              Spacer(modifier = Modifier.height(4.dp))
+              Text(
+                text = errText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer
+              )
+
+              if (providerType == ProviderType.NVIDIA_NIM && nvidiaModel != NvidiaNimConfig.DEFAULT_MODEL) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                  OutlinedButton(
+                    onClick = { viewModel.retryWithDefaultModel() },
+                    shape = RoundedCornerShape(8.dp)
+                  ) {
+                    Text("Retry with Flagship GLM 5.3", style = MaterialTheme.typography.labelSmall)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
       // Tab navigation bar
       TabRow(
         selectedTabIndex = activeTab.ordinal,
@@ -340,7 +414,7 @@ fun AgentScreen(
               modifier = Modifier
                 .fillMaxSize()
                 .testTag("execution_feed_list"),
-              contentPadding = PaddingValues(vertical = 14.dp, horizontal = 4.dp)
+              contentPadding = PaddingValues(vertical = 12.dp, horizontal = 4.dp)
             ) {
               itemsIndexed(state.executionFeed) { index, step ->
                 ExecutionFeedItem(
@@ -434,6 +508,9 @@ fun AgentScreen(
       initialNvidiaTemperature = nvidiaTemperature,
       initialNvidiaMaxTokens = nvidiaMaxTokens,
       geminiKey = geminiApiKey,
+      connectionStatus = connectionStatus,
+      onTestConnection = { viewModel.testNvidiaConnection() },
+      onResetConnectionStatus = { viewModel.resetConnectionStatus() },
       onProviderChange = { viewModel.setProviderType(it) },
       onSaveNvidiaConfig = { key, model, baseUrl, temp, maxTokens ->
         viewModel.updateNvidiaConfig(
@@ -459,12 +536,11 @@ fun AgentTopHeader(
   canCancel: Boolean,
   onStop: () -> Unit,
   onOpenSettings: () -> Unit,
-  onResetWorkspace: () -> Unit
+  onResetWorkspace: () -> Unit,
+  onGetTranscript: () -> String
 ) {
   Surface(
-    modifier = Modifier
-      .fillMaxWidth()
-      .statusBarsPadding(),
+    modifier = Modifier.fillMaxWidth(),
     color = MaterialTheme.colorScheme.surface,
     tonalElevation = 2.dp,
     border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -472,7 +548,8 @@ fun AgentTopHeader(
     Column(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(horizontal = 16.dp, vertical = 12.dp)
+        .statusBarsPadding()
+        .padding(horizontal = 14.dp, vertical = 8.dp)
     ) {
       Row(
         modifier = Modifier.fillMaxWidth(),
@@ -523,10 +600,19 @@ fun AgentTopHeader(
 
           Spacer(modifier = Modifier.width(4.dp))
 
+          // Copy Full Transcript button
+          LittleCopyButton(
+            textToCopy = onGetTranscript(),
+            label = "Log",
+            buttonSize = 34.dp,
+            iconSize = 16.dp,
+            testTag = "copy_transcript_header"
+          )
+
           if (canCancel) {
             IconButton(
               onClick = onStop,
-              modifier = Modifier.size(40.dp)
+              modifier = Modifier.size(36.dp)
             ) {
               Icon(Icons.Default.Stop, contentDescription = "Stop", tint = MaterialTheme.colorScheme.error)
             }
@@ -534,14 +620,14 @@ fun AgentTopHeader(
 
           IconButton(
             onClick = onResetWorkspace,
-            modifier = Modifier.size(40.dp)
+            modifier = Modifier.size(36.dp)
           ) {
             Icon(Icons.Default.Refresh, contentDescription = "Reset Workspace", tint = MaterialTheme.colorScheme.onSurfaceVariant)
           }
 
           IconButton(
             onClick = onOpenSettings,
-            modifier = Modifier.size(40.dp)
+            modifier = Modifier.size(36.dp)
           ) {
             Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onSurfaceVariant)
           }
@@ -549,7 +635,7 @@ fun AgentTopHeader(
       }
 
       if (!currentAction.isNullOrBlank()) {
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Surface(
           modifier = Modifier.fillMaxWidth(),
           shape = RoundedCornerShape(8.dp),
@@ -557,7 +643,7 @@ fun AgentTopHeader(
           border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
         ) {
           Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
           ) {
             Box(
@@ -578,7 +664,8 @@ fun AgentTopHeader(
               text = currentAction,
               style = MaterialTheme.typography.bodySmall,
               color = MaterialTheme.colorScheme.onSurface,
-              maxLines = 1
+              maxLines = 1,
+              modifier = Modifier.weight(1f)
             )
           }
         }
@@ -602,54 +689,61 @@ fun StatusPill(status: AgentStatus) {
   }
 
   Surface(
-    shape = RoundedCornerShape(14.dp),
+    shape = RoundedCornerShape(12.dp),
     color = bgColor,
-    border = androidx.compose.foundation.BorderStroke(1.dp, textColor.copy(alpha = 0.2f)),
-    modifier = Modifier.padding(horizontal = 2.dp)
+    modifier = Modifier.height(26.dp)
   ) {
-    Text(
-      text = label,
-      style = MaterialTheme.typography.labelSmall,
-      color = textColor,
-      fontWeight = FontWeight.Bold,
-      modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
-    )
+    Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier.padding(horizontal = 9.dp)
+    ) {
+      Text(
+        text = label,
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        color = textColor,
+        fontSize = 11.sp
+      )
+    }
   }
 }
 
 @Composable
-fun EmptyExecutionState(onQuickRun: () -> Unit) {
+fun EmptyExecutionState(
+  onQuickRun: () -> Unit
+) {
   Column(
     modifier = Modifier
       .fillMaxSize()
-      .padding(28.dp),
-    verticalArrangement = Arrangement.Center,
-    horizontalAlignment = Alignment.CenterHorizontally
+      .padding(horizontal = 24.dp, vertical = 32.dp),
+    horizontalAlignment = Alignment.CenterHorizontally,
+    verticalArrangement = Arrangement.Center
   ) {
     Surface(
       shape = RoundedCornerShape(20.dp),
-      color = MaterialTheme.colorScheme.primaryContainer,
-      modifier = Modifier.size(72.dp)
+      color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+      modifier = Modifier.size(68.dp)
     ) {
       Box(contentAlignment = Alignment.Center) {
         Icon(
           imageVector = Icons.Default.AutoAwesome,
           contentDescription = null,
-          tint = MaterialTheme.colorScheme.onPrimaryContainer,
-          modifier = Modifier.size(40.dp)
+          tint = MaterialTheme.colorScheme.primary,
+          modifier = Modifier.size(34.dp)
         )
       }
     }
 
-    Spacer(modifier = Modifier.height(20.dp))
+    Spacer(modifier = Modifier.height(16.dp))
 
     Text(
-      text = "Autonomous Agent Kernel",
-      style = MaterialTheme.typography.titleLarge,
-      fontWeight = FontWeight.Bold
+      text = "Autonomous AI Agent Kernel",
+      style = MaterialTheme.typography.titleMedium,
+      fontWeight = FontWeight.Bold,
+      color = MaterialTheme.colorScheme.onSurface
     )
 
-    Spacer(modifier = Modifier.height(10.dp))
+    Spacer(modifier = Modifier.height(6.dp))
 
     Surface(
       shape = RoundedCornerShape(8.dp),
@@ -668,7 +762,7 @@ fun EmptyExecutionState(onQuickRun: () -> Unit) {
     Spacer(modifier = Modifier.height(16.dp))
 
     Text(
-      text = "The agent dispatches real tools inside the sandboxed workspace. Powered by NVIDIA NIM models with native structured tool calling and objective verification.",
+      text = "The agent executes sandboxed tools with verification. Powered by NVIDIA NIM models with native structured tool calling and automatic fallback recovery.",
       style = MaterialTheme.typography.bodyMedium,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       lineHeight = 22.sp
@@ -699,6 +793,9 @@ fun SettingsProviderDialog(
   initialNvidiaTemperature: Double,
   initialNvidiaMaxTokens: Int,
   geminiKey: String,
+  connectionStatus: ConnectionStatus,
+  onTestConnection: () -> Unit,
+  onResetConnectionStatus: () -> Unit,
   onProviderChange: (ProviderType) -> Unit,
   onSaveNvidiaConfig: (key: String, model: String, baseUrl: String, temp: Double, maxTokens: Int) -> Unit,
   onSaveGeminiKey: (String) -> Unit,
@@ -708,6 +805,7 @@ fun SettingsProviderDialog(
   var nvidiaKeyInput by remember { mutableStateOf(initialNvidiaApiKey) }
   var isApiKeyVisible by remember { mutableStateOf(false) }
   var nvidiaModelInput by remember { mutableStateOf(initialNvidiaModel) }
+  var modelSearchQuery by remember { mutableStateOf("") }
   var selectedCategory by remember { mutableStateOf("All") }
   var isCustomModelMode by remember { mutableStateOf(NvidiaNimModels.CATALOG.none { it.id == initialNvidiaModel }) }
   var nvidiaBaseUrlInput by remember { mutableStateOf(initialNvidiaBaseUrl) }
@@ -716,10 +814,13 @@ fun SettingsProviderDialog(
   var geminiKeyInput by remember { mutableStateOf(geminiKey) }
 
   AlertDialog(
-    onDismissRequest = onDismiss,
+    onDismissRequest = {
+      onResetConnectionStatus()
+      onDismiss()
+    },
     title = {
       Text(
-        text = "Provider & Engine Configuration",
+        text = "Provider & Model Configuration",
         style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.Bold
       )
@@ -774,7 +875,7 @@ fun SettingsProviderDialog(
                 }
               }
               Text(
-                "OpenAI-compatible native structured tool calling API",
+                "OpenAI-compatible native structured tool calling API with seamless fallback",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
               )
@@ -785,13 +886,118 @@ fun SettingsProviderDialog(
         // Expanded NVIDIA NIM settings
         AnimatedVisibility(visible = selectedType == ProviderType.NVIDIA_NIM) {
           Column(modifier = Modifier.padding(top = 12.dp)) {
-            Text(
-              text = "NVIDIA NIM Model Catalog:",
-              style = MaterialTheme.typography.labelSmall,
-              fontWeight = FontWeight.Bold,
-              color = MaterialTheme.colorScheme.primary
+            // Live Connection Test Button and Status
+            Surface(
+              shape = RoundedCornerShape(8.dp),
+              color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+              border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+              modifier = Modifier.fillMaxWidth()
+            ) {
+              Column(modifier = Modifier.padding(10.dp)) {
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                  verticalAlignment = Alignment.CenterVertically
+                ) {
+                  Text(
+                    text = "Endpoint Verification",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                  )
+                  Button(
+                    onClick = onTestConnection,
+                    enabled = connectionStatus !is ConnectionStatus.Testing,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                    modifier = Modifier.height(32.dp)
+                  ) {
+                    if (connectionStatus is ConnectionStatus.Testing) {
+                      CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                      )
+                      Spacer(modifier = Modifier.width(6.dp))
+                      Text("Testing...", style = MaterialTheme.typography.labelSmall)
+                    } else {
+                      Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                      Spacer(modifier = Modifier.width(4.dp))
+                      Text("Test Endpoint", style = MaterialTheme.typography.labelSmall)
+                    }
+                  }
+                }
+
+                when (val status = connectionStatus) {
+                  is ConnectionStatus.Success -> {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Surface(
+                      shape = RoundedCornerShape(6.dp),
+                      color = Color(0xFF10B981).copy(alpha = 0.15f),
+                      modifier = Modifier.fillMaxWidth()
+                    ) {
+                      Row(
+                        modifier = Modifier.padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                      ) {
+                        Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                          text = "Live: ${status.modelCount} models verified on build.nvidia.com",
+                          style = MaterialTheme.typography.labelSmall,
+                          color = Color(0xFF047857),
+                          fontWeight = FontWeight.SemiBold
+                        )
+                      }
+                    }
+                  }
+                  is ConnectionStatus.Error -> {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Surface(
+                      shape = RoundedCornerShape(6.dp),
+                      color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                      modifier = Modifier.fillMaxWidth()
+                    ) {
+                      Row(
+                        modifier = Modifier.padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                      ) {
+                        Icon(Icons.Default.Close, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                          text = status.message,
+                          style = MaterialTheme.typography.labelSmall,
+                          color = MaterialTheme.colorScheme.error
+                        )
+                      }
+                    }
+                  }
+                  else -> {}
+                }
+              }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Model Search & Filter
+            OutlinedTextField(
+              value = modelSearchQuery,
+              onValueChange = { modelSearchQuery = it },
+              label = { Text("Search Models") },
+              placeholder = { Text("Filter models (e.g. glm, llama, nemotron)...") },
+              leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+              trailingIcon = {
+                if (modelSearchQuery.isNotBlank()) {
+                  IconButton(onClick = { modelSearchQuery = "" }) {
+                    Icon(Icons.Default.Clear, contentDescription = "Clear", modifier = Modifier.size(16.dp))
+                  }
+                }
+              },
+              modifier = Modifier.fillMaxWidth(),
+              singleLine = true,
+              textStyle = MaterialTheme.typography.bodySmall,
+              shape = RoundedCornerShape(8.dp)
             )
-            Spacer(modifier = Modifier.height(6.dp))
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Category filter chips
             val catScrollState = rememberScrollState()
@@ -818,10 +1024,13 @@ fun SettingsProviderDialog(
             Spacer(modifier = Modifier.height(8.dp))
 
             // Filtered Models List Cards
-            val filteredModels = if (selectedCategory == "All") {
-              NvidiaNimModels.CATALOG
-            } else {
-              NvidiaNimModels.CATALOG.filter { it.category == selectedCategory }
+            val filteredModels = NvidiaNimModels.CATALOG.filter { model ->
+              val matchesCat = selectedCategory == "All" || model.category == selectedCategory
+              val matchesQuery = modelSearchQuery.isBlank() ||
+                  model.id.contains(modelSearchQuery, ignoreCase = true) ||
+                  model.name.contains(modelSearchQuery, ignoreCase = true) ||
+                  model.description.contains(modelSearchQuery, ignoreCase = true)
+              matchesCat && matchesQuery
             }
 
             Column(
@@ -863,13 +1072,13 @@ fun SettingsProviderDialog(
                           Spacer(modifier = Modifier.width(6.dp))
                           Surface(
                             shape = RoundedCornerShape(4.dp),
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                            color = if (modelEntry.isVerified) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.outlineVariant
                           ) {
                             Text(
                               text = modelEntry.badge,
                               style = MaterialTheme.typography.labelSmall,
                               fontSize = 9.sp,
-                              color = MaterialTheme.colorScheme.primary,
+                              color = if (modelEntry.isVerified) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                               fontWeight = FontWeight.Bold,
                               modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                             )
@@ -890,13 +1099,23 @@ fun SettingsProviderDialog(
                       )
                     }
 
-                    if (isSelected) {
-                      Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = "Selected",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                      LittleCopyButton(
+                        textToCopy = modelEntry.id,
+                        buttonSize = 24.dp,
+                        iconSize = 13.dp,
+                        testTag = "copy_model_id_${modelEntry.id.substringAfterLast('/')}"
                       )
+
+                      if (isSelected) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                          imageVector = Icons.Default.Check,
+                          contentDescription = "Selected",
+                          tint = MaterialTheme.colorScheme.primary,
+                          modifier = Modifier.size(18.dp)
+                        )
+                      }
                     }
                   }
                 }
@@ -905,7 +1124,7 @@ fun SettingsProviderDialog(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Custom Model toggle/field
+            // Custom Model toggle/field with copy button
             OutlinedTextField(
               value = nvidiaModelInput,
               onValueChange = {
@@ -914,6 +1133,9 @@ fun SettingsProviderDialog(
               },
               label = { Text("Active Model Identifier") },
               placeholder = { Text(NvidiaNimConfig.DEFAULT_MODEL) },
+              trailingIcon = {
+                LittleCopyButton(textToCopy = nvidiaModelInput, buttonSize = 28.dp, iconSize = 14.dp)
+              },
               modifier = Modifier.fillMaxWidth(),
               singleLine = true,
               textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
@@ -932,12 +1154,15 @@ fun SettingsProviderDialog(
               singleLine = true,
               visualTransformation = if (isApiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
               trailingIcon = {
-                IconButton(onClick = { isApiKeyVisible = !isApiKeyVisible }) {
-                  Icon(
-                    imageVector = if (isApiKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                    contentDescription = if (isApiKeyVisible) "Hide key" else "Show key",
-                    modifier = Modifier.size(18.dp)
-                  )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  LittleCopyButton(textToCopy = nvidiaKeyInput, buttonSize = 28.dp, iconSize = 14.dp)
+                  IconButton(onClick = { isApiKeyVisible = !isApiKeyVisible }) {
+                    Icon(
+                      imageVector = if (isApiKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                      contentDescription = if (isApiKeyVisible) "Hide key" else "Show key",
+                      modifier = Modifier.size(18.dp)
+                    )
+                  }
                 }
               },
               textStyle = MaterialTheme.typography.bodySmall,
@@ -958,9 +1183,12 @@ fun SettingsProviderDialog(
               label = { Text("Base URL") },
               placeholder = { Text(NvidiaNimConfig.DEFAULT_BASE_URL) },
               trailingIcon = {
-                if (nvidiaBaseUrlInput != NvidiaNimConfig.DEFAULT_BASE_URL) {
-                  IconButton(onClick = { nvidiaBaseUrlInput = NvidiaNimConfig.DEFAULT_BASE_URL }) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Reset URL", modifier = Modifier.size(16.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  LittleCopyButton(textToCopy = nvidiaBaseUrlInput, buttonSize = 28.dp, iconSize = 14.dp)
+                  if (nvidiaBaseUrlInput != NvidiaNimConfig.DEFAULT_BASE_URL) {
+                    IconButton(onClick = { nvidiaBaseUrlInput = NvidiaNimConfig.DEFAULT_BASE_URL }) {
+                      Icon(Icons.Default.Refresh, contentDescription = "Reset URL", modifier = Modifier.size(16.dp))
+                    }
                   }
                 }
               },
@@ -1054,22 +1282,17 @@ fun SettingsProviderDialog(
         }
 
         AnimatedVisibility(visible = selectedType == ProviderType.GEMINI_LIVE_API) {
-          Column(modifier = Modifier.padding(start = 8.dp, top = 8.dp, end = 4.dp)) {
+          Column(modifier = Modifier.padding(top = 10.dp)) {
             OutlinedTextField(
               value = geminiKeyInput,
               onValueChange = { geminiKeyInput = it },
               label = { Text("Gemini API Key") },
-              placeholder = { Text("AIza...") },
+              placeholder = { Text("AIzaSy...") },
               modifier = Modifier.fillMaxWidth(),
               singleLine = true,
+              visualTransformation = PasswordVisualTransformation(),
               textStyle = MaterialTheme.typography.bodySmall,
               shape = RoundedCornerShape(10.dp)
-            )
-            Text(
-              text = "Configurable via .env / BuildConfig.GEMINI_API_KEY",
-              style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.outline,
-              modifier = Modifier.padding(top = 2.dp, start = 4.dp)
             )
           }
         }
@@ -1079,27 +1302,30 @@ fun SettingsProviderDialog(
       Button(
         onClick = {
           onProviderChange(selectedType)
-          val parsedTemp = nvidiaTempInput.toDoubleOrNull() ?: 0.2
-          val parsedMaxTokens = nvidiaMaxTokensInput.toIntOrNull() ?: 4096
-          onSaveNvidiaConfig(
-            nvidiaKeyInput,
-            nvidiaModelInput.ifBlank { NvidiaNimConfig.DEFAULT_MODEL },
-            nvidiaBaseUrlInput.ifBlank { NvidiaNimConfig.DEFAULT_BASE_URL },
-            parsedTemp,
-            parsedMaxTokens
-          )
-          onSaveGeminiKey(geminiKeyInput)
+          if (selectedType == ProviderType.NVIDIA_NIM) {
+            onSaveNvidiaConfig(
+              nvidiaKeyInput,
+              nvidiaModelInput,
+              nvidiaBaseUrlInput,
+              nvidiaTempInput.toDoubleOrNull() ?: 0.2,
+              nvidiaMaxTokensInput.toIntOrNull() ?: 4096
+            )
+          } else if (selectedType == ProviderType.GEMINI_LIVE_API) {
+            onSaveGeminiKey(geminiKeyInput)
+          }
+          onResetConnectionStatus()
           onDismiss()
-        },
-        shape = RoundedCornerShape(10.dp)
+        }
       ) {
-        Text("Apply Changes", fontWeight = FontWeight.Bold)
+        Text("Apply Changes")
       }
     },
     dismissButton = {
       TextButton(
-        onClick = onDismiss,
-        shape = RoundedCornerShape(10.dp)
+        onClick = {
+          onResetConnectionStatus()
+          onDismiss()
+        }
       ) {
         Text("Cancel")
       }

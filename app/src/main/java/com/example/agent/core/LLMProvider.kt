@@ -26,6 +26,15 @@ If it is not satisfied, continue.
 Do not repeat an action blindly.
 Prefer verification over assumptions.
 Your final response must describe only what was actually accomplished.
+
+SANDBOX ENVIRONMENT INSTRUCTIONS:
+- You are executing inside an isolated mobile Android app sandbox workspace.
+- Root access (sudo) and package managers (apt-get, apt, dpkg, brew, yum) DO NOT EXIST and must never be called.
+- When asked to create documents, reports, or files with tables (e.g. Word, Excel, Markdown, reports):
+  * Use 'write_file' to directly author clean, structured HTML (.html or .doc) with inline CSS styling and <table> elements (Microsoft Word and all modern office tools open HTML tables natively as Word documents).
+  * Or use 'write_file' to generate structured Markdown (.md) with Markdown tables.
+  * Or use 'write_file' to generate structured CSV (.csv) for tabular data.
+  * Do NOT attempt to install pandoc or external command-line converters.
 """.trimIndent()
 
 /**
