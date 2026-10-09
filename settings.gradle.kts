@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Agent Kernel"
+rootProject.name = "Aragon"
 
 include(":app")

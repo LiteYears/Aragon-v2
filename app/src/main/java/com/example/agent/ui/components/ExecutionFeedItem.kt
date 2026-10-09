@@ -90,6 +90,19 @@ fun ExecutionFeedItem(
     )
   }
 
+  // Active step breathing pulse for tool running or in-progress reasoning
+  val isActive = !step.isCompleted || step.toolStatus == ToolStatus.RUNNING.name
+  val infiniteTransition = rememberInfiniteTransition(label = "step_active_pulse")
+  val pulseAlpha by infiniteTransition.animateFloat(
+    initialValue = 0.25f,
+    targetValue = 0.85f,
+    animationSpec = infiniteRepeatable(
+      animation = tween(800, easing = FastOutSlowInEasing),
+      repeatMode = RepeatMode.Reverse
+    ),
+    label = "pulse_alpha"
+  )
+
   // Aggregate step text for easy copying
   val stepFullText = buildString {
     append(step.title)
@@ -108,9 +121,9 @@ fun ExecutionFeedItem(
     modifier = modifier
       .fillMaxWidth()
       .testTag("step_item_${step.stepNumber}")
-      .padding(horizontal = 14.dp, vertical = 4.dp)
+      .padding(horizontal = 16.dp, vertical = 5.dp)
   ) {
-    // Left timeline column with reshaped Flutter squircle badge and connecting line
+    // Left timeline column with squircle badge and connecting line
     Column(
       horizontalAlignment = Alignment.CenterHorizontally,
       modifier = Modifier.width(30.dp)
@@ -120,29 +133,32 @@ fun ExecutionFeedItem(
         Box(
           modifier = Modifier
             .width(1.dp)
-            .height(36.dp)
-            .background(AmoledBorderSubtle)
+            .height(38.dp)
+            .background(if (isActive) Color.White.copy(alpha = pulseAlpha * 0.5f) else AmoledBorderSubtle)
         )
       }
     }
 
     Spacer(modifier = Modifier.width(10.dp))
 
-    // Right card content: Flat modern Flutter style AMOLED card
+    // Right card content: Flat modern luxury AMOLED card with active breathing border
+    val cardBorderColor = when {
+      isActive -> Color.White.copy(alpha = pulseAlpha)
+      step.type == StepType.ERROR || step.toolStatus == ToolStatus.FAILED.name -> AmoledStatusError.copy(alpha = 0.6f)
+      step.type == StepType.CONCLUSION -> AmoledBorder
+      else -> AmoledBorderSubtle
+    }
+
     Surface(
       modifier = Modifier
         .weight(1f)
         .clip(RoundedCornerShape(12.dp))
         .border(
           width = 1.dp,
-          color = when (step.type) {
-            StepType.ERROR -> AmoledStatusError.copy(alpha = 0.5f)
-            StepType.CONCLUSION -> AmoledBorder
-            else -> AmoledBorderSubtle
-          },
+          color = cardBorderColor,
           shape = RoundedCornerShape(12.dp)
         )
-        .animateContentSize(animationSpec = tween(240, easing = FastOutSlowInEasing)),
+        .animateContentSize(animationSpec = tween(220, easing = FastOutSlowInEasing)),
       color = when (step.type) {
         StepType.TOOL_EXECUTION -> AmoledSurfaceElevated
         StepType.CONCLUSION -> AmoledSurfaceVariant
@@ -372,14 +388,16 @@ fun StreamingTextContent(
   isCompleted: Boolean,
   modifier: Modifier = Modifier
 ) {
-  var displayedCharCount by remember(fullText) {
-    mutableIntStateOf(if (fullText.length < 40) fullText.length else (fullText.length / 3).coerceAtLeast(10))
+  var displayedCharCount by remember(fullText, isCompleted) {
+    mutableIntStateOf(if (isCompleted || fullText.length < 30) fullText.length else (fullText.length / 4).coerceAtLeast(8))
   }
 
   // Typewriter progressive reveal
-  LaunchedEffect(fullText) {
-    if (displayedCharCount < fullText.length) {
-      val step = ((fullText.length - displayedCharCount) / 12).coerceAtLeast(3)
+  LaunchedEffect(fullText, isCompleted) {
+    if (isCompleted) {
+      displayedCharCount = fullText.length
+    } else if (displayedCharCount < fullText.length) {
+      val step = ((fullText.length - displayedCharCount) / 8).coerceAtLeast(2)
       while (displayedCharCount < fullText.length) {
         delay(16)
         displayedCharCount = (displayedCharCount + step).coerceAtMost(fullText.length)
@@ -391,27 +409,27 @@ fun StreamingTextContent(
   val infiniteTransition = rememberInfiniteTransition(label = "cursor_pulse")
   val cursorAlpha by infiniteTransition.animateFloat(
     initialValue = 1f,
-    targetValue = 0f,
+    targetValue = 0.15f,
     animationSpec = infiniteRepeatable(
-      animation = tween(450, easing = LinearEasing),
+      animation = tween(400, easing = LinearEasing),
       repeatMode = RepeatMode.Reverse
     ),
     label = "cursor_blink"
   )
 
   val visibleText = fullText.take(displayedCharCount)
-  val isStreaming = displayedCharCount < fullText.length
+  val isStreaming = !isCompleted && displayedCharCount < fullText.length
 
   Text(
     text = buildString {
       append(visibleText)
       if (isStreaming) {
-        append(" ▊")
+        append(" █")
       }
     },
     style = MaterialTheme.typography.bodySmall,
     color = AmoledTextPrimary,
-    lineHeight = 18.sp,
+    lineHeight = 19.sp,
     modifier = modifier
   )
 }

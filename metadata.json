@@ -1,6 +1,6 @@
 {
-  "name": "Agent Kernel",
-  "description": "Autonomous AI agent kernel with deterministic tool execution, live state inspection, and workspace artifact management.",
+  "name": "Aragon",
+  "description": "Autonomous intelligence engine with deterministic tool execution, cognitive state inspection, and workspace artifact synthesis.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

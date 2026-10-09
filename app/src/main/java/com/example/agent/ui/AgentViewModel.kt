@@ -28,9 +28,10 @@ enum class ProviderType {
 }
 
 enum class UiTab(val label: String) {
-  EXECUTION_FEED("Execution Feed"),
-  ARTIFACTS("Workspace Artifacts"),
-  FIVE_STAGES("5 Stages")
+  EXECUTION_FEED("Feed"),
+  ARTIFACTS("Artifacts"),
+  FIVE_STAGES("5 Stages"),
+  ABOUT_ARAGON("About")
 }
 
 data class PromptPreset(
@@ -55,10 +56,13 @@ class AgentViewModel(
 
   val workspaceDir: File = resolveWorkspaceDir(application)
 
+  private val initialNvidiaKey = getInitialNvidiaApiKey()
+  private val hasNvidiaKey = initialNvidiaKey.isNotBlank()
+
   private val sandboxProvider = AutonomousSandboxProvider()
   private val nvidiaProvider = NvidiaNimProvider(
     NvidiaNimConfig(
-      apiKey = getInitialNvidiaApiKey(),
+      apiKey = initialNvidiaKey,
       model = NvidiaNimConfig.DEFAULT_MODEL
     )
   )
@@ -68,7 +72,7 @@ class AgentViewModel(
 
   private val engine = AgentEngine(
     workspaceDir = workspaceDir,
-    initialProvider = nvidiaProvider
+    initialProvider = if (hasNvidiaKey) nvidiaProvider else sandboxProvider
   )
 
   val state: StateFlow<AgentState> = engine.state.stateIn(
@@ -80,10 +84,12 @@ class AgentViewModel(
   private val _activeTab = MutableStateFlow(UiTab.EXECUTION_FEED)
   val activeTab: StateFlow<UiTab> = _activeTab.asStateFlow()
 
-  private val _providerType = MutableStateFlow(ProviderType.NVIDIA_NIM)
+  private val _providerType = MutableStateFlow(
+    if (hasNvidiaKey) ProviderType.NVIDIA_NIM else ProviderType.SANDBOX_ENGINE
+  )
   val providerType: StateFlow<ProviderType> = _providerType.asStateFlow()
 
-  private val _nvidiaApiKey = MutableStateFlow(getInitialNvidiaApiKey())
+  private val _nvidiaApiKey = MutableStateFlow(initialNvidiaKey)
   val nvidiaApiKey: StateFlow<String> = _nvidiaApiKey.asStateFlow()
 
   private val _nvidiaModel = MutableStateFlow(NvidiaNimConfig.DEFAULT_MODEL)
@@ -112,23 +118,25 @@ class AgentViewModel(
 
   private fun getInitialNvidiaApiKey(): String {
     return try {
-      val field = com.example.BuildConfig::class.java.getField("NVIDIA_API_KEY")
-      val rawKey = field.get(null) as? String ?: ""
+      val rawKey = com.example.BuildConfig.NVIDIA_API_KEY
       if (rawKey.isNotBlank() && rawKey != "MY_NVIDIA_API_KEY" && rawKey != "\"MY_NVIDIA_API_KEY\"") {
         rawKey.trim()
       } else {
-        "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"
+        ""
       }
     } catch (_: Exception) {
-      "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"
+      ""
     }
   }
 
   private fun getInitialGeminiApiKey(): String {
     return try {
-      val field = com.example.BuildConfig::class.java.getField("GEMINI_API_KEY")
-      val rawKey = field.get(null) as? String ?: ""
-      if (rawKey == "MY_GEMINI_API_KEY") "" else rawKey.trim()
+      val rawKey = com.example.BuildConfig.GEMINI_API_KEY
+      if (rawKey.isNotBlank() && rawKey != "MY_GEMINI_API_KEY" && rawKey != "\"MY_GEMINI_API_KEY\"") {
+        rawKey.trim()
+      } else {
+        ""
+      }
     } catch (_: Exception) {
       ""
     }

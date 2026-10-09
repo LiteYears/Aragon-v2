@@ -1,24 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Outer autonomous cycle ring -->
-    <path
-        android:fillColor="#00000000"
-        android:strokeColor="#64B5F6"
-        android:strokeWidth="3.5"
-        android:strokeLineCap="round"
-        android:pathData="M34,54 A20,20 0 1,1 74,54 A20,20 0 0,1 42,70" />
-    <!-- Loop arrow head -->
-    <path
-        android:fillColor="#64B5F6"
-        android:pathData="M44,65 L41,74 L50,71 Z" />
-    <!-- Central terminal / agent core glyph -->
+    <!-- Aragon Signature Monogram - Pure White Architectural Emblem -->
+    <!-- Left Stela -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M45,46 L51,52 L45,58 L47.5,60.5 L56,52 L47.5,43.5 Z" />
+        android:pathData="M52,26 L34,76 L42,76 L49.5,55 L52,47 Z" />
+    <!-- Right Stela -->
     <path
-        android:fillColor="#4DD0E1"
-        android:pathData="M57,59 L65,59 L65,62 L57,62 Z" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M56,26 L56,47 L58.5,55 L66,76 L74,76 Z" />
+    <!-- Aragon Central Floating Keystone (Crown / Diamond Crest) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,34 L60.5,47 L54,58 L47.5,47 Z" />
+    <!-- Lower Transverse Horizon Beam -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M46,63 L62,63 L64,68 L44,68 Z" />
+    <!-- Subtle Precision Micro-Accents (Pure White) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M52.5,73 L55.5,73 L55.5,76 L52.5,76 Z" />
 </vector>

@@ -1,10 +1,14 @@
 package com.example.agent.ui
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -44,6 +48,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -86,16 +91,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.agent.core.AgentStatus
 import com.example.agent.core.NvidiaNimConfig
 import com.example.agent.core.NvidiaNimModels
+import com.example.agent.ui.components.AboutAragonScreen
 import com.example.agent.ui.components.ArtifactItem
 import com.example.agent.ui.components.ArtifactPreviewDialog
 import com.example.agent.ui.components.ExecutionFeedItem
@@ -165,7 +174,7 @@ fun AgentScreen(
         nvidiaModel = nvidiaModel,
         canCancel = state.canCancel,
         onStop = { viewModel.stopExecution() },
-        onOpenSettings = { showSettingsDialog = true },
+        onOpenAbout = { viewModel.selectTab(UiTab.ABOUT_ARAGON) },
         onResetWorkspace = { viewModel.resetWorkspace() },
         onGetTranscript = { viewModel.getExecutionTranscript() }
       )
@@ -180,16 +189,16 @@ fun AgentScreen(
           modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-          // Preset prompt chips in modern Flutter flat pill design
+          // Preset prompt chips in modern flat pill design
           val chipScrollState = rememberScrollState()
           Row(
             modifier = Modifier
               .fillMaxWidth()
               .horizontalScroll(chipScrollState)
-              .padding(bottom = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+              .padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
           ) {
             viewModel.presets.forEach { preset ->
               Surface(
@@ -209,7 +218,7 @@ fun AgentScreen(
                   fontFamily = InterFontFamily,
                   color = AmoledIconGreyLight,
                   fontSize = 11.sp,
-                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                 )
               }
             }
@@ -225,7 +234,7 @@ fun AgentScreen(
             Column(
               modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .padding(horizontal = 14.dp, vertical = 8.dp)
             ) {
               // Top meta bar inside prompt field: Active model pill & Clear button
               Row(
@@ -233,16 +242,16 @@ fun AgentScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
               ) {
-                // Interactive model switcher pill
+                // Interactive model switcher pill - navigates to About / Settings
                 Surface(
                   shape = RoundedCornerShape(6.dp),
                   color = Color(0xFF181818),
                   border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
-                  modifier = Modifier.clickable { showSettingsDialog = true }
+                  modifier = Modifier.clickable { viewModel.selectTab(UiTab.ABOUT_ARAGON) }
                 ) {
                   Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                   ) {
                     Box(
                       modifier = Modifier
@@ -501,6 +510,7 @@ fun AgentScreen(
             UiTab.EXECUTION_FEED -> state.executionFeed.size
             UiTab.ARTIFACTS -> state.artifacts.size
             UiTab.FIVE_STAGES -> null
+            UiTab.ABOUT_ARAGON -> null
           }
           Tab(
             selected = activeTab == tab,
@@ -546,93 +556,115 @@ fun AgentScreen(
         }
       }
 
-      // Tab Content Views
-      when (activeTab) {
-        UiTab.EXECUTION_FEED -> {
-          if (state.executionFeed.isEmpty()) {
-            EmptyExecutionState(
-              onQuickRun = {
-                inputText = viewModel.presets[0].prompt
-                viewModel.submitTask(viewModel.presets[0].prompt, viewModel.presets[0].expectedArtifact)
-              }
-            )
-          } else {
-            LazyColumn(
-              state = listState,
-              modifier = Modifier
-                .fillMaxSize()
-                .testTag("execution_feed_list")
-                .animateContentSize(),
-              contentPadding = PaddingValues(vertical = 10.dp, horizontal = 2.dp)
-            ) {
-              itemsIndexed(state.executionFeed) { index, step ->
-                ExecutionFeedItem(
-                  step = step,
-                  isLast = index == state.executionFeed.size - 1
-                )
-              }
-            }
-          }
-        }
-
-        UiTab.ARTIFACTS -> {
-          if (state.artifacts.isEmpty()) {
-            Box(
-              modifier = Modifier
-                .fillMaxSize()
-                .padding(32.dp),
-              contentAlignment = Alignment.Center
-            ) {
-              Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Surface(
-                  shape = RoundedCornerShape(12.dp),
-                  color = Color(0xFF141414),
-                  border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
-                  modifier = Modifier.size(52.dp)
-                ) {
-                  Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                      imageVector = Icons.Default.Terminal,
-                      contentDescription = null,
-                      tint = AmoledIconGrey,
-                      modifier = Modifier.size(26.dp)
-                    )
-                  }
+      // Tab Content Views with smooth, easy-on-the-renderer crossfade transitions
+      AnimatedContent(
+        targetState = activeTab,
+        transitionSpec = {
+          fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing)) togetherWith
+            fadeOut(animationSpec = tween(130, easing = FastOutSlowInEasing))
+        },
+        label = "tab_content_view_transition",
+        modifier = Modifier.fillMaxSize()
+      ) { currentTab ->
+        when (currentTab) {
+          UiTab.EXECUTION_FEED -> {
+            if (state.executionFeed.isEmpty()) {
+              EmptyExecutionState(
+                onQuickRun = {
+                  inputText = viewModel.presets[0].prompt
+                  viewModel.submitTask(viewModel.presets[0].prompt, viewModel.presets[0].expectedArtifact)
                 }
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                  text = "No artifacts generated yet",
-                  style = MaterialTheme.typography.titleSmall,
-                  fontWeight = FontWeight.SemiBold,
-                  color = AmoledTextPrimary
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                  text = "Run a task to produce files in the workspace (e.g. data.csv → report.md).",
-                  style = MaterialTheme.typography.bodySmall,
-                  color = AmoledTextMuted
-                )
-              }
-            }
-          } else {
-            LazyColumn(
-              modifier = Modifier
-                .fillMaxSize()
-                .testTag("artifacts_list"),
-              contentPadding = PaddingValues(vertical = 10.dp)
-            ) {
-              itemsIndexed(state.artifacts) { _, artifact ->
-                ArtifactItem(
-                  artifact = artifact,
-                  onOpenPreview = { viewModel.openArtifactPreview(it) }
-                )
+              )
+            } else {
+              LazyColumn(
+                state = listState,
+                modifier = Modifier
+                  .fillMaxSize()
+                  .testTag("execution_feed_list"),
+                contentPadding = PaddingValues(vertical = 10.dp, horizontal = 0.dp)
+              ) {
+                itemsIndexed(state.executionFeed) { index, step ->
+                  ExecutionFeedItem(
+                    step = step,
+                    isLast = index == state.executionFeed.size - 1
+                  )
+                }
               }
             }
           }
-        }
 
-        UiTab.FIVE_STAGES -> {
-          FiveStagesInspector(record = state.fiveStageRecord)
+          UiTab.ARTIFACTS -> {
+            if (state.artifacts.isEmpty()) {
+              Box(
+                modifier = Modifier
+                  .fillMaxSize()
+                  .padding(32.dp),
+                contentAlignment = Alignment.Center
+              ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                  Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF141414),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+                    modifier = Modifier.size(52.dp)
+                  ) {
+                    Box(contentAlignment = Alignment.Center) {
+                      Icon(
+                        imageVector = Icons.Default.Terminal,
+                        contentDescription = null,
+                        tint = AmoledIconGrey,
+                        modifier = Modifier.size(26.dp)
+                      )
+                    }
+                  }
+                  Spacer(modifier = Modifier.height(12.dp))
+                  Text(
+                    text = "No artifacts generated yet",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AmoledTextPrimary
+                  )
+                  Spacer(modifier = Modifier.height(4.dp))
+                  Text(
+                    text = "Run a task to produce files in the workspace (e.g. data.csv → report.md).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AmoledTextMuted,
+                    textAlign = TextAlign.Center
+                  )
+                }
+              }
+            } else {
+              LazyColumn(
+                modifier = Modifier
+                  .fillMaxSize()
+                  .testTag("artifacts_list"),
+                contentPadding = PaddingValues(vertical = 10.dp)
+              ) {
+                itemsIndexed(state.artifacts) { _, artifact ->
+                  ArtifactItem(
+                    artifact = artifact,
+                    onOpenPreview = { viewModel.openArtifactPreview(it) }
+                  )
+                }
+              }
+            }
+          }
+
+          UiTab.FIVE_STAGES -> {
+            FiveStagesInspector(record = state.fiveStageRecord)
+          }
+
+          UiTab.ABOUT_ARAGON -> {
+            AboutAragonScreen(
+              currentProviderName = when (providerType) {
+                ProviderType.NVIDIA_NIM -> "NVIDIA NIM (${nvidiaModel.substringAfterLast('/')})"
+                ProviderType.SANDBOX_ENGINE -> "Autonomous Sandbox Engine"
+                ProviderType.GEMINI_LIVE_API -> "Google Gemini Live"
+              },
+              workspacePath = viewModel.workspaceDir.absolutePath,
+              onOpenSettings = { showSettingsDialog = true }
+            )
+          }
         }
       }
     }
@@ -684,7 +716,7 @@ fun AgentTopHeader(
   nvidiaModel: String,
   canCancel: Boolean,
   onStop: () -> Unit,
-  onOpenSettings: () -> Unit,
+  onOpenAbout: () -> Unit,
   onResetWorkspace: () -> Unit,
   onGetTranscript: () -> String
 ) {
@@ -697,7 +729,7 @@ fun AgentTopHeader(
       modifier = Modifier
         .fillMaxWidth()
         .statusBarsPadding()
-        .padding(horizontal = 14.dp, vertical = 8.dp)
+        .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
       Row(
         modifier = Modifier.fillMaxWidth(),
@@ -705,19 +737,19 @@ fun AgentTopHeader(
         verticalAlignment = Alignment.CenterVertically
       ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-          // Modern Flutter squircle logo badge in graphite with grey icon
+          // Aragon signature pure white emblem badge
           Surface(
             shape = RoundedCornerShape(10.dp),
-            color = Color(0xFF161616),
-            border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
-            modifier = Modifier.size(34.dp)
+            color = Color(0xFF101010),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2E2E2E)),
+            modifier = Modifier.size(36.dp)
           ) {
             Box(contentAlignment = Alignment.Center) {
               Icon(
-                imageVector = Icons.Default.Terminal,
-                contentDescription = null,
-                tint = AmoledIconGreyLight,
-                modifier = Modifier.size(18.dp)
+                painter = painterResource(id = R.drawable.ic_aragon_logo),
+                contentDescription = "Aragon Emblem",
+                tint = Color.White,
+                modifier = Modifier.size(22.dp)
               )
             }
           }
@@ -726,10 +758,12 @@ fun AgentTopHeader(
 
           Column {
             Text(
-              text = "Agent Kernel",
-              style = MaterialTheme.typography.titleSmall,
-              fontWeight = FontWeight.SemiBold,
-              color = AmoledTextPrimary
+              text = "ARAGON",
+              style = MaterialTheme.typography.titleMedium,
+              fontFamily = InterFontFamily,
+              fontWeight = FontWeight.Bold,
+              letterSpacing = 2.sp,
+              color = Color.White
             )
             val modelNameShort = nvidiaModel.substringAfterLast('/')
             val providerSubtitle = when (providerType) {
@@ -747,7 +781,7 @@ fun AgentTopHeader(
           }
         }
 
-        // Header Actions: Status pill, Log copy, Reset, Settings
+        // Header Actions: Status pill, Log copy, Reset, About info
         Row(verticalAlignment = Alignment.CenterVertically) {
           StatusPill(status = status)
 
@@ -789,12 +823,12 @@ fun AgentTopHeader(
           }
 
           IconButton(
-            onClick = onOpenSettings,
+            onClick = onOpenAbout,
             modifier = Modifier.size(32.dp)
           ) {
             Icon(
-              Icons.Default.Settings,
-              contentDescription = "Settings",
+              Icons.Default.Info,
+              contentDescription = "About Aragon",
               tint = AmoledIconGrey,
               modifier = Modifier.size(18.dp)
             )
@@ -886,17 +920,17 @@ fun EmptyExecutionState(
     verticalArrangement = Arrangement.Center
   ) {
     Surface(
-      shape = RoundedCornerShape(16.dp),
-      color = Color(0xFF141414),
-      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
-      modifier = Modifier.size(60.dp)
+      shape = RoundedCornerShape(18.dp),
+      color = Color(0xFF111111),
+      border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2C2C2C)),
+      modifier = Modifier.size(68.dp)
     ) {
       Box(contentAlignment = Alignment.Center) {
         Icon(
-          imageVector = Icons.Default.Terminal,
-          contentDescription = null,
-          tint = AmoledIconGreyLight,
-          modifier = Modifier.size(28.dp)
+          painter = painterResource(id = R.drawable.ic_aragon_logo),
+          contentDescription = "Aragon Logo",
+          tint = Color.White,
+          modifier = Modifier.size(38.dp)
         )
       }
     }
@@ -904,13 +938,23 @@ fun EmptyExecutionState(
     Spacer(modifier = Modifier.height(16.dp))
 
     Text(
-      text = "Autonomous AI Agent Kernel",
-      style = MaterialTheme.typography.titleMedium,
-      fontWeight = FontWeight.SemiBold,
-      color = AmoledTextPrimary
+      text = "ARAGON",
+      style = MaterialTheme.typography.headlineSmall,
+      fontWeight = FontWeight.Bold,
+      letterSpacing = 2.5.sp,
+      color = Color.White
     )
 
-    Spacer(modifier = Modifier.height(6.dp))
+    Spacer(modifier = Modifier.height(4.dp))
+
+    Text(
+      text = "Autonomous Intelligence Kernel",
+      style = MaterialTheme.typography.bodySmall,
+      color = AmoledIconGreyLight,
+      fontSize = 12.sp
+    )
+
+    Spacer(modifier = Modifier.height(12.dp))
 
     Surface(
       shape = RoundedCornerShape(8.dp),
@@ -919,7 +963,7 @@ fun EmptyExecutionState(
       modifier = Modifier.padding(horizontal = 8.dp)
     ) {
       Text(
-        text = "GOAL → PLAN → TOOL CALL → EXECUTE → VERIFY",
+        text = "OBJECTIVE → PLAN → TOOL DISPATCH → OBSERVE → VERIFY",
         style = MaterialTheme.typography.labelSmall,
         fontFamily = JetBrainsMonoFontFamily,
         color = AmoledIconGrey,
@@ -931,10 +975,11 @@ fun EmptyExecutionState(
     Spacer(modifier = Modifier.height(14.dp))
 
     Text(
-      text = "Execute sandboxed tasks with multi-turn tool calling, verifiable filesystem artifacts, and fallback recovery.",
+      text = "Execute sandboxed tasks with deterministic tool calling, real Python 3 execution, and verifiable filesystem artifacts.",
       style = MaterialTheme.typography.bodySmall,
       color = AmoledTextMuted,
       lineHeight = 18.sp,
+      textAlign = TextAlign.Center,
       modifier = Modifier.padding(horizontal = 16.dp)
     )
 
@@ -953,7 +998,7 @@ fun EmptyExecutionState(
     ) {
       Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
       Spacer(modifier = Modifier.width(6.dp))
-      Text("Sample: data.csv → report.md", style = MaterialTheme.typography.labelMedium)
+      Text("Sample Task: data.csv → report.md", style = MaterialTheme.typography.labelMedium)
     }
   }
 }
