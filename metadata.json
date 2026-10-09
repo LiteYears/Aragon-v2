@@ -1,0 +1,7 @@
+{
+  "name": "Agent Kernel",
+  "description": "Autonomous AI agent kernel with deterministic tool execution, live state inspection, and workspace artifact management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
