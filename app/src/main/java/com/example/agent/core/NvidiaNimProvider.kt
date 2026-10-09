@@ -263,10 +263,11 @@ class NvidiaNimProvider(
       )
     }
 
-    // Candidate models to try in sequence: requested model first, then verified free agentic/coding fallbacks
+    // Candidate models to try in sequence: requested model first, then capability-verified coding & reasoning models only
+    // Exclude multimodal vision-only models (like llama-3.2-11b-vision-instruct) from reasoning fallback
     val candidateModels = buildList {
       add(activeConfig.model)
-      val fallbacks = listOf(
+      val verifiedReasoningFallbacks = listOf(
         NvidiaNimConfig.DEFAULT_MODEL,
         NvidiaNimModels.GLM_5_3_FLASH,
         NvidiaNimModels.NEMOTRON_3_5_LIGHTNING,
@@ -274,8 +275,8 @@ class NvidiaNimProvider(
         NvidiaNimModels.MISTRAL_LARGE_2,
         NvidiaNimModels.KIMI_K3
       )
-      for (f in fallbacks) {
-        if (!contains(f)) add(f)
+      for (f in verifiedReasoningFallbacks) {
+        if (!contains(f) && !f.contains("vision")) add(f)
       }
     }
 
@@ -285,6 +286,17 @@ class NvidiaNimProvider(
       val isFallbackModel = modelIndex > 0
       val retryAttempts = if (isFallbackModel) 1 else 2
 
+      // Context-injection for fallback models so they don't act blind
+      val effectiveSystemPrompt = if (isFallbackModel) {
+        """
+        $systemPrompt
+        
+        [RECOVERY ROUTING CONTEXT]:
+        You are acting as a verified reasoning & tool-dispatching fallback for task: '$taskIntent'.
+        Never output placeholder section headers as content. Read workspace deliverables, notes, or research files before taking action.
+        """.trimIndent()
+      } else systemPrompt
+
       for (attempt in 0..retryAttempts) {
         if (attempt > 0) {
           kotlinx.coroutines.delay(1200L * attempt) // Exponential backoff on dropped connection
@@ -292,7 +304,7 @@ class NvidiaNimProvider(
 
         val result = executeChatCompletion(
           modelToUse = modelCandidate,
-          systemPrompt = systemPrompt,
+          systemPrompt = effectiveSystemPrompt,
           taskIntent = taskIntent,
           messages = messages,
           tools = tools,
@@ -461,6 +473,13 @@ class NvidiaNimProvider(
 
       // 7. Multi-Format Tool Calls Extraction
       val parsedToolCalls = extractToolCalls(messageObj, contentText, tools)
+
+      // Layer 1.2: Circuit-breaker for null/empty reasoning with tools
+      // If a model attempts tool dispatch without any thought/reasoning or context comprehension,
+      // prevent blind tool dispatch unless it is a verified structured tool call.
+      if (parsedToolCalls.isNotEmpty() && combinedThought.isBlank()) {
+        return LLMDecision.ProviderError("Circuit breaker tripped: Model attempted tool dispatch with null reasoning. Reloading context.")
+      }
 
       // 8. Normalize decision to LLMDecision
       return if (parsedToolCalls.isNotEmpty()) {

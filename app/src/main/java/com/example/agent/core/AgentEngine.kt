@@ -19,7 +19,7 @@ import java.util.UUID
  * Runs the central loop:
  * USER GOAL -> STATE -> LLM DECISION -> TOOL CALLS -> EXECUTE -> OBSERVATION -> STATE UPDATE -> VERIFY -> COMPLETE.
  * Unbounded iteration budget (up to 10000 steps), anti-stagnation cycle prevention,
- * and continuous artifact organization and refinement.
+ * scratchpad-as-files memory persistence, capability-aware routing, and continuous artifact organization.
  */
 class AgentEngine(
   val workspaceDir: File,
@@ -28,6 +28,7 @@ class AgentEngine(
 ) {
 
   val workspace = WorkspaceManager(workspaceDir)
+  val scratchpad = ScratchpadMemoryManager(workspace)
   val registry = ToolRegistry()
   val executor = ToolExecutor(registry, workspace)
 
@@ -112,19 +113,28 @@ class AgentEngine(
   private suspend fun run(task: Task) {
     var stepCounter = 1
 
+    // Layer 0.2: Check for existing checkpoint on disk to resume rather than restarting blindly
+    val existingCheckpoint = scratchpad.loadCheckpoint()
+    val isResuming = existingCheckpoint != null &&
+      existingCheckpoint.taskGoal.equals(task.goal.trim(), ignoreCase = true) &&
+      existingCheckpoint.status == "IN_PROGRESS"
+
+    val initialPlan = if (isResuming) existingCheckpoint!!.planItems else scratchpad.loadPlan()
+
     // Initialize clean AgentState
     var currentState = _state.value.copy(
       task = task,
       status = AgentStatus.THINKING,
-      currentAction = "Understanding task objective: '${task.goal}'",
-      currentStep = 0,
-      fiveStageRecord = FiveStageRecord(intent = task.goal),
+      currentAction = if (isResuming) "Resuming from checkpoint turn ${existingCheckpoint?.currentTurn ?: 0}..." else "Understanding task objective: '${task.goal}'",
+      currentStep = if (isResuming) existingCheckpoint?.currentTurn ?: 0 else 0,
+      plan = initialPlan,
+      fiveStageRecord = FiveStageRecord(intent = task.goal, currentPlan = initialPlan),
       executionFeed = listOf(
         ExecutionStep(
           stepNumber = 1,
           type = StepType.TASK_INTENT,
-          title = "Task Received",
-          content = task.goal
+          title = if (isResuming) "Task Resumed from Checkpoint" else "Task Received",
+          content = if (isResuming) "${task.goal} (Resuming from Turn ${existingCheckpoint?.currentTurn ?: 0} with ${scratchpad.loadAllFindings().size} recorded findings)" else task.goal
         )
       ),
       messages = listOf(
@@ -143,7 +153,7 @@ class AgentEngine(
     // Loop stagnation & anti-repetition tracking:
     // Tracks history of tool signatures to ensure identical commands are never executed > 2 times.
     val actionSignatureHistory = mutableListOf<String>()
-    var turnCounter = 0
+    var turnCounter = if (isResuming) existingCheckpoint?.currentTurn ?: 0 else 0
     var providerDropRetries = 0
 
     try {
@@ -159,7 +169,7 @@ class AgentEngine(
         )
         _state.value = currentState
 
-        // Construct prioritized context for LLM with current workspace deliverables
+        // Layer 0.3: Context budget accounting — inject pinned user goal, scratchpad findings, and plan
         val systemPrompt = buildSystemContext(task, currentState)
 
         val decision = activeProvider.decideNextAction(
@@ -175,9 +185,21 @@ class AgentEngine(
           is LLMDecision.ExecuteTool -> {
             val toolCalls = decision.toolCalls
 
+            // Layer 1.2: Null reasoning circuit breaker
+            if (decision.thought.isNullOrBlank() && toolCalls.isNotEmpty()) {
+              // Circuit breaker: do not execute blind tool calls without thought
+              currentState = currentState.copy(
+                currentAction = "Circuit breaker: Re-reading plan and scratchpad context..."
+              )
+              _state.value = currentState
+              continue
+            }
+
             // Record Plan & Thought
             val updatedPlan = if (decision.plan != null) {
-              decision.plan.lines().filter { it.isNotBlank() }
+              val parsedLines = decision.plan.lines().filter { it.isNotBlank() }
+              scratchpad.savePlan(parsedLines)
+              parsedLines
             } else currentState.plan
 
             val feed = currentState.executionFeed.toMutableList()
@@ -237,7 +259,7 @@ class AgentEngine(
 
               val (toolResult, observation) = if (recentIdenticalCount >= 2) {
                 // Anti-stagnation safeguard: Do not execute identical tool call more than twice!
-                val skipMsg = "Intervention: '${toolCall.toolName}' with identical arguments was already executed $recentIdenticalCount times. Duplicate execution skipped to prevent redundant looping. Synthesize existing results, refine the deliverable, or conclude objective."
+                val skipMsg = "Intervention: '${toolCall.toolName}' with identical arguments was already executed $recentIdenticalCount times. Duplicate execution skipped to prevent redundant looping. Synthesize existing results from notes/research.jsonl, write the verified deliverable, or conclude objective."
                 val fakeResult = ToolResult(
                   callId = toolCall.callId,
                   toolName = toolCall.toolName,
@@ -260,6 +282,12 @@ class AgentEngine(
                 actionSignatureHistory.add(actionSig)
                 val res = executor.execute(toolCall)
                 val obs = executor.createObservation(res)
+
+                // Layer 0.1: Externalized working memory — auto-ingest tool research data to research.jsonl
+                if (res.status == ToolStatus.SUCCEEDED && res.output != null) {
+                  scratchpad.autoIngestFromToolOutput(toolCall.toolName, toolCall.arguments, res.output)
+                }
+
                 Pair(res, obs)
               }
 
@@ -300,6 +328,18 @@ class AgentEngine(
               // Continuously scan and organize artifacts on filesystem
               val updatedArtifacts = workspace.listAllArtifacts()
 
+              // Layer 0.2: Auto-save checkpoint at step boundary
+              scratchpad.saveCheckpoint(
+                AgentCheckpoint(
+                  taskGoal = task.goal,
+                  currentTurn = turnCounter,
+                  planItems = currentState.plan,
+                  artifactPaths = updatedArtifacts.map { it.path },
+                  totalFindingsCount = scratchpad.loadAllFindings().size,
+                  status = "IN_PROGRESS"
+                )
+              )
+
               // Append to conversation history for the next turn
               val updatedMessages = currentState.messages + listOf(
                 AgentMessage(
@@ -335,7 +375,7 @@ class AgentEngine(
           }
 
           is LLMDecision.Complete -> {
-            // 4. OBJECTIVE VERIFICATION PHASE
+            // 4. OBJECTIVE VERIFICATION & SELF-AUDIT PHASE
             currentState = currentState.copy(
               status = AgentStatus.VERIFYING,
               currentAction = "Authoritatively verifying objective satisfaction against filesystem..."
@@ -368,6 +408,18 @@ class AgentEngine(
 
               // Update deliverables state
               val finalArtifacts = workspace.listAllArtifacts()
+
+              // Final checkpoint update
+              scratchpad.saveCheckpoint(
+                AgentCheckpoint(
+                  taskGoal = task.goal,
+                  currentTurn = turnCounter,
+                  planItems = currentState.plan,
+                  artifactPaths = finalArtifacts.map { it.path },
+                  totalFindingsCount = scratchpad.loadAllFindings().size,
+                  status = "COMPLETED"
+                )
+              )
 
               currentState = currentState.copy(
                 status = AgentStatus.COMPLETED,
@@ -478,11 +530,23 @@ class AgentEngine(
       _state.value = currentState
 
     } catch (ce: CancellationException) {
+      // Layer 0.2: Graceful cancellation snapshot
+      scratchpad.saveCheckpoint(
+        AgentCheckpoint(
+          taskGoal = task.goal,
+          currentTurn = turnCounter,
+          planItems = currentState.plan,
+          artifactPaths = workspace.listAllArtifacts().map { it.path },
+          totalFindingsCount = scratchpad.loadAllFindings().size,
+          status = "CANCELLED"
+        )
+      )
+
       val feed = currentState.executionFeed + ExecutionStep(
         stepNumber = ++stepCounter,
         type = StepType.ERROR,
         title = "Execution Cancelled",
-        content = "Agent execution was stopped by user request."
+        content = "Agent execution was stopped by user request. Workspace checkpoint and research notes saved."
       )
       currentState = currentState.copy(
         status = AgentStatus.CANCELLED,
@@ -530,10 +594,11 @@ class AgentEngine(
           details = "Target artifact '${task.expectedArtifact}' does not exist on disk in the workspace."
         )
       }
-      if (file.length() == 0L) {
+      val diskValidation = ArtifactValidatorRegistry.validateExistingFile(file)
+      if (!diskValidation.isValid) {
         return VerificationResult(
           isSatisfied = false,
-          details = "Target artifact '${task.expectedArtifact}' exists but is 0 bytes (empty)."
+          details = "Target artifact '${task.expectedArtifact}' failed disk validation: ${diskValidation.errorMessage}"
         )
       }
     }
@@ -561,10 +626,11 @@ class AgentEngine(
                 details = "Expected deliverable '$cleanWord' does not exist in workspace."
               )
             }
-            if (file.length() == 0L && !goalLower.contains("empty")) {
+            val diskValidation = ArtifactValidatorRegistry.validateExistingFile(file)
+            if (!diskValidation.isValid) {
               return VerificationResult(
                 isSatisfied = false,
-                details = "Expected deliverable '$cleanWord' exists on disk but has 0 bytes."
+                details = "Expected deliverable '$cleanWord' failed validation: ${diskValidation.errorMessage}"
               )
             }
           }
@@ -601,10 +667,17 @@ class AgentEngine(
       sb.appendLine("EXPECTED DELIVERABLE: ${task.expectedArtifact}")
     }
     if (state.plan.isNotEmpty()) {
-      sb.appendLine("CURRENT PLAN:")
+      sb.appendLine("CURRENT PLAN (from plan.md):")
       state.plan.forEach { sb.appendLine("- $it") }
     }
+
+    // Layer 0.1 & 0.3: Inject externalized research memory so model never acts blind
+    val researchSummary = scratchpad.getStructuredResearchSummary(maxFindings = 8)
+    sb.appendLine()
+    sb.appendLine(researchSummary)
+
     val currentArtifacts = workspace.listAllArtifacts()
+    sb.appendLine()
     sb.appendLine("WORKSPACE DELIVERABLES (${currentArtifacts.size} files):")
     if (currentArtifacts.isEmpty()) {
       sb.appendLine("  (Workspace is currently empty)")
@@ -616,7 +689,7 @@ class AgentEngine(
     if (state.observations.isNotEmpty()) {
       sb.appendLine()
       sb.appendLine("LATEST OBSERVATION:")
-      sb.appendLine(state.observations.last().rawOutput)
+      sb.appendLine(state.observations.last().rawOutput.take(1500))
     }
     return sb.toString()
   }
@@ -632,6 +705,17 @@ class AgentEngine(
   fun cancel() {
     val job = activeJob
     if (job != null && job.isActive) {
+      // Snapshot state to checkpoint before cancel
+      scratchpad.saveCheckpoint(
+        AgentCheckpoint(
+          taskGoal = _state.value.task?.goal ?: "Unknown",
+          currentTurn = _state.value.currentStep,
+          planItems = _state.value.plan,
+          artifactPaths = workspace.listAllArtifacts().map { it.path },
+          totalFindingsCount = scratchpad.loadAllFindings().size,
+          status = "CANCELLED"
+        )
+      )
       job.cancel()
       _state.value = _state.value.copy(
         status = AgentStatus.CANCELLED,

@@ -326,73 +326,99 @@ class WriteFileTool(private val workspace: WorkspaceManager) : Tool {
       val path = arguments["path"]?.toString() ?: ""
       val content = arguments["content"]?.toString() ?: ""
 
+      if (path.isBlank()) {
+        return@withContext ToolResult(
+          callId = callId,
+          toolName = name,
+          status = ToolStatus.FAILED,
+          arguments = arguments,
+          output = null,
+          error = "Parameter 'path' cannot be blank.",
+          duration = System.currentTimeMillis() - startTime,
+          stdout = null,
+          stderr = "Path cannot be blank",
+          exitCode = 1
+        )
+      }
+
+      // Layer 2.1: Artifact format validation
+      val validation = ArtifactValidatorRegistry.validateContent(path, content)
+      if (!validation.isValid) {
+        return@withContext ToolResult(
+          callId = callId,
+          toolName = name,
+          status = ToolStatus.FAILED,
+          arguments = arguments,
+          output = null,
+          error = "Deliverable validation failed: ${validation.errorMessage}",
+          duration = System.currentTimeMillis() - startTime,
+          stdout = null,
+          stderr = validation.errorMessage,
+          exitCode = 1
+        )
+      }
+
       try {
         val file = workspace.resolveSafe(path)
         file.parentFile?.mkdirs()
 
-        val isDocx = path.endsWith(".docx", ignoreCase = true) || path.endsWith(".doc", ignoreCase = true)
-        val isJson = path.endsWith(".json", ignoreCase = true)
-
-        if (isDocx) {
-          if (content.trim().length < 50) {
+        // Layer 2.2: Idempotency guard for deliverables
+        if (file.exists() && file.isFile) {
+          val isDocx = path.endsWith(".docx", ignoreCase = true) || path.endsWith(".doc", ignoreCase = true)
+          if (!isDocx && file.readText() == content) {
+            val note = "Idempotency notice: File '$path' already exists with identical content. Skipping redundant write."
             return@withContext ToolResult(
               callId = callId,
               toolName = name,
-              status = ToolStatus.FAILED,
+              status = ToolStatus.SUCCEEDED,
               arguments = arguments,
-              output = null,
-              error = "Deliverable validation failed: Content is too thin (${content.trim().length} chars) to be a valid Word briefing. Do not write placeholder section headers; write the full synthesized findings.",
+              output = note,
+              error = null,
+              artifacts = listOf(workspace.createArtifactFromFile(file, callId)),
               duration = System.currentTimeMillis() - startTime,
-              stdout = null,
-              stderr = "Content too thin for .docx deliverable",
-              exitCode = 1
+              stdout = note,
+              stderr = null,
+              exitCode = 0
             )
           }
-
-          // Build authentic OpenXML ZIP archive with RTL Arabic support
-          DocxBuilder.fromMarkdownOrText(content).save(file)
-
-          if (!file.exists() || !DocxBuilder.isZipFile(file)) {
-            return@withContext ToolResult(
-              callId = callId,
-              toolName = name,
-              status = ToolStatus.FAILED,
-              arguments = arguments,
-              output = null,
-              error = "Deliverable validation failed: Generated file '$path' is not a valid OpenXML Word document (missing PK zip structure).",
-              duration = System.currentTimeMillis() - startTime,
-              stdout = null,
-              stderr = "Invalid DOCX zip archive",
-              exitCode = 1
-            )
-          }
-        } else if (isJson) {
-          try {
-            if (content.trim().startsWith("[")) {
-              org.json.JSONArray(content)
-            } else {
-              org.json.JSONObject(content)
-            }
-          } catch (je: Exception) {
-            return@withContext ToolResult(
-              callId = callId,
-              toolName = name,
-              status = ToolStatus.FAILED,
-              arguments = arguments,
-              output = null,
-              error = "JSON validation error for '$path': ${je.message}. Content must be valid JSON.",
-              duration = System.currentTimeMillis() - startTime,
-              stdout = null,
-              stderr = "Malformed JSON syntax: ${je.message}",
-              exitCode = 1
-            )
-          }
-          file.writeText(content)
-        } else {
-          file.writeText(content)
         }
 
-        // Strict authoritative verification that write succeeded on filesystem
+        // Layer 2.3: Atomic write to temporary file before atomic rename/replace
+        val tmpFile = File(file.parentFile, "${file.name}.${System.currentTimeMillis()}.tmp")
+
+        val isDocx = path.endsWith(".docx", ignoreCase = true) || path.endsWith(".doc", ignoreCase = true)
+
+        if (isDocx) {
+          DocxBuilder.fromMarkdownOrText(content).save(tmpFile)
+          val postCheck = ArtifactValidatorRegistry.validateExistingFile(tmpFile)
+          if (!postCheck.isValid) {
+            tmpFile.delete()
+            return@withContext ToolResult(
+              callId = callId,
+              toolName = name,
+              status = ToolStatus.FAILED,
+              arguments = arguments,
+              output = null,
+              error = "Deliverable validation failed on disk: ${postCheck.errorMessage}",
+              duration = System.currentTimeMillis() - startTime,
+              stdout = null,
+              stderr = postCheck.errorMessage,
+              exitCode = 1
+            )
+          }
+        } else {
+          tmpFile.writeText(content, Charsets.UTF_8)
+        }
+
+        // Atomic replace
+        if (file.exists()) file.delete()
+        val renameSuccess = tmpFile.renameTo(file)
+        if (!renameSuccess) {
+          tmpFile.copyTo(file, overwrite = true)
+          tmpFile.delete()
+        }
+
+        // Strict verification on filesystem
         if (!file.exists()) {
           return@withContext ToolResult(
             callId = callId,
@@ -410,7 +436,7 @@ class WriteFileTool(private val workspace: WorkspaceManager) : Tool {
 
         val actualBytes = file.length()
         val artifact = workspace.createArtifactFromFile(file, callId)
-        val successMsg = "Successfully wrote and verified deliverable '$path' ($actualBytes bytes on disk)."
+        val successMsg = "Successfully wrote and validated deliverable '$path' ($actualBytes bytes on disk)."
 
         ToolResult(
           callId = callId,

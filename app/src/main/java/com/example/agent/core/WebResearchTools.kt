@@ -604,14 +604,39 @@ class WebBrowseTool(private val workspace: WorkspaceManager) : Tool {
     }
 
   private fun fetchViaOkHttp(url: String): String {
-    val req = Request.Builder()
-      .url(url)
-      .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-      .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-      .get()
-      .build()
-    val res = httpClient.newCall(req).execute()
-    return res.body?.string() ?: ""
+    try {
+      val req = Request.Builder()
+        .url(url)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .get()
+        .build()
+      val res = httpClient.newCall(req).execute()
+      val body = res.body?.string() ?: ""
+      if (res.isSuccessful && body.isNotBlank()) return body
+    } catch (_: Exception) {}
+
+    // Layer 2.5: Semantic tool retry — fallback to mobile / AMP / Wayback archive
+    val fallbackUrls = listOf(
+      if (url.startsWith("https://")) url.replaceFirst("https://", "https://m.") else url,
+      if (url.startsWith("https://")) url.replaceFirst("https://", "https://amp.") else url,
+      "https://web.archive.org/web/2/$url"
+    )
+
+    for (fallbackUrl in fallbackUrls) {
+      if (fallbackUrl == url) continue
+      try {
+        val req = Request.Builder()
+          .url(fallbackUrl)
+          .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
+          .get()
+          .build()
+        val res = httpClient.newCall(req).execute()
+        val body = res.body?.string() ?: ""
+        if (res.isSuccessful && body.isNotBlank()) return body
+      } catch (_: Exception) {}
+    }
+    return ""
   }
 
   private fun extractTitle(html: String): String {
