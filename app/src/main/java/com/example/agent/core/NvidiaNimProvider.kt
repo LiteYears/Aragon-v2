@@ -474,18 +474,13 @@ class NvidiaNimProvider(
       // 7. Multi-Format Tool Calls Extraction
       val parsedToolCalls = extractToolCalls(messageObj, contentText, tools)
 
-      // Layer 1.2: Circuit-breaker for null/empty reasoning with tools
-      // If a model attempts tool dispatch without any thought/reasoning or context comprehension,
-      // prevent blind tool dispatch unless it is a verified structured tool call.
-      if (parsedToolCalls.isNotEmpty() && combinedThought.isBlank()) {
-        return LLMDecision.ProviderError("Circuit breaker tripped: Model attempted tool dispatch with null reasoning. Reloading context.")
-      }
-
       // 8. Normalize decision to LLMDecision
       return if (parsedToolCalls.isNotEmpty()) {
         LLMDecision.ExecuteTool(
           toolCalls = parsedToolCalls,
-          thought = combinedThought.ifBlank { "Executing ${parsedToolCalls.size} tool call(s)." }
+          // Native structured tool calls are already authoritative; visible reasoning is
+          // optional and many NVIDIA-hosted models legitimately return it as null.
+          thought = combinedThought.ifBlank { "Executing ${parsedToolCalls.size} requested tool call(s)." }
         )
       } else {
         val finalConclusion = cleanContentConclusion(contentText).ifBlank { combinedThought }
@@ -737,8 +732,13 @@ class NvidiaNimProvider(
       messages
     }
 
-    // 3. Serialize messages maintaining exact tool_call_id linkage
-    for (msg in boundedMessages) {
+    // 3. Serialize messages maintaining exact tool_call_id linkage.
+    // Consecutive assistant tool-call records are folded into one assistant message,
+    // because OpenAI-compatible APIs expect the whole requested batch together before
+    // any corresponding role=tool observations.
+    var messageIndex = 0
+    while (messageIndex < boundedMessages.size) {
+      val msg = boundedMessages[messageIndex]
       when (msg.role) {
         MessageRole.USER -> {
           val userObj = JSONObject()
@@ -759,7 +759,7 @@ class NvidiaNimProvider(
           assistantObj.put("role", "assistant")
 
           if (msg.toolCallId != null && msg.toolName != null) {
-            // Assistant requested a native tool call
+            // Assistant requested one or more native tool calls.
             if (msg.content.isNotBlank() && !msg.content.startsWith("Dispatched tool")) {
               assistantObj.put("content", msg.content)
             } else {
@@ -767,18 +767,27 @@ class NvidiaNimProvider(
             }
 
             val toolCallsArr = JSONArray()
-            val callObj = JSONObject()
-            callObj.put("id", msg.toolCallId)
-            callObj.put("type", "function")
+            var batchIndex = messageIndex
+            while (batchIndex < boundedMessages.size) {
+              val batchMessage = boundedMessages[batchIndex]
+              if (batchMessage.role != MessageRole.ASSISTANT ||
+                batchMessage.toolCallId == null || batchMessage.toolName == null
+              ) break
 
-            val funcObj = JSONObject()
-            funcObj.put("name", msg.toolName)
-            val argsJson = mapToJsonObject(msg.toolArgs ?: emptyMap())
-            funcObj.put("arguments", argsJson.toString())
-            callObj.put("function", funcObj)
+              val callObj = JSONObject()
+              callObj.put("id", batchMessage.toolCallId)
+              callObj.put("type", "function")
 
-            toolCallsArr.put(callObj)
+              val funcObj = JSONObject()
+              funcObj.put("name", batchMessage.toolName)
+              val argsJson = mapToJsonObject(batchMessage.toolArgs ?: emptyMap())
+              funcObj.put("arguments", argsJson.toString())
+              callObj.put("function", funcObj)
+              toolCallsArr.put(callObj)
+              batchIndex++
+            }
             assistantObj.put("tool_calls", toolCallsArr)
+            messageIndex = batchIndex - 1
           } else {
             assistantObj.put("content", msg.content)
           }
@@ -804,6 +813,7 @@ class NvidiaNimProvider(
           messagesArray.put(toolObj)
         }
       }
+      messageIndex++
     }
 
     return messagesArray

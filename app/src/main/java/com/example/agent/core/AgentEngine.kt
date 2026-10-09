@@ -250,11 +250,10 @@ class AgentEngine(
           is LLMDecision.ExecuteTool -> {
             val toolCalls = decision.toolCalls
 
-            // Layer 1.2: Null reasoning circuit breaker
-            if (decision.thought.isNullOrBlank() && toolCalls.isNotEmpty()) {
-              // Circuit breaker: do not execute blind tool calls without thought
+            if (toolCalls.isEmpty()) {
               currentState = currentState.copy(
-                currentAction = "Circuit breaker: Re-reading plan and scratchpad context..."
+                status = AgentStatus.PLANNING,
+                currentAction = "The model returned no executable calls; requesting a concrete next step..."
               )
               _state.value = currentState
               continue
@@ -283,6 +282,24 @@ class AgentEngine(
               plan = updatedPlan,
               executionFeed = feed,
               fiveStageRecord = currentState.fiveStageRecord.copy(currentPlan = updatedPlan)
+            )
+
+            // OpenAI-compatible APIs require one assistant message containing the complete
+            // tool-call batch, followed by one tool message per call. Recording each call
+            // as an independent assistant turn breaks multi-tool responses on the next round.
+            val assistantToolMessages = toolCalls.mapIndexed { index, call ->
+              AgentMessage(
+                role = MessageRole.ASSISTANT,
+                content = if (index == 0) {
+                  decision.thought ?: "Executing ${toolCalls.size} requested tool(s)."
+                } else "",
+                toolCallId = call.callId,
+                toolName = call.toolName,
+                toolArgs = call.arguments
+              )
+            }
+            currentState = currentState.copy(
+              messages = currentState.messages + assistantToolMessages
             )
             _state.value = currentState
 
@@ -405,21 +422,13 @@ class AgentEngine(
                 )
               )
 
-              // Append to conversation history for the next turn
-              val updatedMessages = currentState.messages + listOf(
-                AgentMessage(
-                  role = MessageRole.ASSISTANT,
-                  content = decision.thought ?: "Dispatched tool ${toolCall.toolName}",
-                  toolCallId = toolCall.callId,
-                  toolName = toolCall.toolName,
-                  toolArgs = toolCall.arguments
-                ),
-                AgentMessage(
-                  role = MessageRole.TOOL,
-                  content = observation.rawOutput,
-                  toolCallId = toolCall.callId,
-                  toolName = toolCall.toolName
-                )
+              // Append only the result here; the complete assistant tool-call batch was
+              // recorded before execution, preserving the required API message order.
+              val updatedMessages = currentState.messages + AgentMessage(
+                role = MessageRole.TOOL,
+                content = observation.rawOutput,
+                toolCallId = toolCall.callId,
+                toolName = toolCall.toolName
               )
 
               currentState = currentState.copy(

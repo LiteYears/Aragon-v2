@@ -199,4 +199,54 @@ class NvidiaNimProviderTest {
     assertEquals("write_file", toolMsg.getString("name"))
     assertTrue(toolMsg.getString("content").contains("STATUS: SUCCEEDED"))
   }
+
+  @Test
+  fun testConsecutiveAssistantToolCallsAreSerializedAsOneBatch() {
+    val provider = NvidiaNimProvider()
+    val messages = listOf(
+      AgentMessage(role = MessageRole.USER, content = "Inspect and summarize the workspace."),
+      AgentMessage(
+        role = MessageRole.ASSISTANT,
+        content = "Inspecting the workspace.",
+        toolCallId = "call_one",
+        toolName = "list_files",
+        toolArgs = mapOf("path" to ".")
+      ),
+      AgentMessage(
+        role = MessageRole.ASSISTANT,
+        content = "",
+        toolCallId = "call_two",
+        toolName = "read_file",
+        toolArgs = mapOf("path" to "README.md")
+      ),
+      AgentMessage(
+        role = MessageRole.TOOL,
+        content = "first result",
+        toolCallId = "call_one",
+        toolName = "list_files"
+      ),
+      AgentMessage(
+        role = MessageRole.TOOL,
+        content = "second result",
+        toolCallId = "call_two",
+        toolName = "read_file"
+      )
+    )
+
+    val method = NvidiaNimProvider::class.java.getDeclaredMethod(
+      "buildMessagesJson",
+      String::class.java,
+      List::class.java
+    )
+    method.isAccessible = true
+    val serialized = method.invoke(provider, "System", messages) as JSONArray
+
+    val assistant = serialized.getJSONObject(2)
+    assertEquals("assistant", assistant.getString("role"))
+    assertEquals(2, assistant.getJSONArray("tool_calls").length())
+    assertEquals("call_one", assistant.getJSONArray("tool_calls").getJSONObject(0).getString("id"))
+    assertEquals("call_two", assistant.getJSONArray("tool_calls").getJSONObject(1).getString("id"))
+    assertEquals("tool", serialized.getJSONObject(3).getString("role"))
+    assertEquals("tool", serialized.getJSONObject(4).getString("role"))
+  }
 }
