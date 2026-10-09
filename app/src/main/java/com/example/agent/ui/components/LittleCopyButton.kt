@@ -1,21 +1,12 @@
 package com.example.agent.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -36,21 +27,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.AmoledBorderSubtle
 import com.example.ui.theme.AmoledIconGrey
+import com.example.ui.theme.AmoledIconGreyLight
 import com.example.ui.theme.AmoledStatusSuccess
+import com.example.ui.theme.JetBrainsMonoFontFamily
 import kotlinx.coroutines.delay
 
 /**
- * Modern tactile Flutter-style flat copy button with sleek grey icons and instantaneous feedback.
+ * Minimalist typography-only copy action button.
+ * Eliminates icons and relies strictly on crisp, tactile text states.
  */
 @Composable
 fun LittleCopyButton(
   textToCopy: String,
   modifier: Modifier = Modifier,
   label: String? = null,
-  tint: Color = AmoledIconGrey,
-  iconSize: Dp = 14.dp,
-  buttonSize: Dp = 28.dp,
+  tint: Color = AmoledIconGreyLight,
+  iconSize: Dp = 12.dp,
+  buttonSize: Dp = 26.dp,
   testTag: String = "copy_button"
 ) {
   val clipboardManager = LocalClipboardManager.current
@@ -58,59 +53,43 @@ fun LittleCopyButton(
 
   LaunchedEffect(hasCopied) {
     if (hasCopied) {
-      delay(1600)
+      delay(1500)
       hasCopied = false
     }
   }
 
+  val displayLabel = if (hasCopied) "COPIED" else (label ?: "COPY")
+  val badgeBg = if (hasCopied) AmoledStatusSuccess.copy(alpha = 0.16f) else Color(0xFF141414)
+  val badgeBorder = if (hasCopied) AmoledStatusSuccess.copy(alpha = 0.5f) else AmoledBorderSubtle
+  val textColor = if (hasCopied) AmoledStatusSuccess else tint
+
   Surface(
-    shape = RoundedCornerShape(8.dp),
-    color = if (hasCopied) AmoledStatusSuccess.copy(alpha = 0.12f) else Color.Transparent,
+    shape = RoundedCornerShape(5.dp),
+    color = badgeBg,
+    border = androidx.compose.foundation.BorderStroke(1.dp, badgeBorder),
     modifier = modifier
-  ) {
-    Row(
-      verticalAlignment = Alignment.CenterVertically,
-      modifier = Modifier.padding(horizontal = 2.dp)
-    ) {
-      IconButton(
-        onClick = {
-          if (textToCopy.isNotBlank()) {
-            clipboardManager.setText(AnnotatedString(textToCopy))
-            hasCopied = true
-          }
-        },
-        modifier = Modifier
-          .size(buttonSize)
-          .testTag(testTag)
-      ) {
-        if (hasCopied) {
-          Icon(
-            imageVector = Icons.Default.Check,
-            contentDescription = "Copied",
-            tint = AmoledStatusSuccess,
-            modifier = Modifier.size(iconSize)
-          )
-        } else {
-          Icon(
-            imageVector = Icons.Default.ContentCopy,
-            contentDescription = "Copy",
-            tint = tint,
-            modifier = Modifier.size(iconSize)
-          )
+      .clip(RoundedCornerShape(5.dp))
+      .clickable {
+        if (textToCopy.isNotBlank()) {
+          clipboardManager.setText(AnnotatedString(textToCopy))
+          hasCopied = true
         }
       }
-
-      if (label != null) {
-        Spacer(modifier = Modifier.width(2.dp))
-        Text(
-          text = if (hasCopied) "Copied" else label,
-          style = MaterialTheme.typography.labelSmall,
-          fontWeight = FontWeight.Medium,
-          fontSize = 10.sp,
-          color = if (hasCopied) AmoledStatusSuccess else tint,
-          modifier = Modifier.padding(end = 6.dp)
-        )
-      }
+      .testTag(testTag)
+  ) {
+    Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+    ) {
+      Text(
+        text = displayLabel,
+        style = MaterialTheme.typography.labelSmall,
+        fontFamily = JetBrainsMonoFontFamily,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 9.sp,
+        letterSpacing = 0.5.sp,
+        color = textColor
+      )
     }
   }
 }

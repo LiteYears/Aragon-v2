@@ -16,13 +16,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Assignment
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.FormatListNumbered
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -31,23 +24,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.agent.core.FiveStageRecord
+import com.example.ui.theme.AmoledActionPrimary
 import com.example.ui.theme.AmoledBorder
 import com.example.ui.theme.AmoledBorderSubtle
-import com.example.ui.theme.AmoledIconGrey
 import com.example.ui.theme.AmoledIconGreyLight
 import com.example.ui.theme.AmoledSurfaceElevated
-import com.example.ui.theme.AmoledSurfaceVariant
 import com.example.ui.theme.AmoledTextMuted
 import com.example.ui.theme.AmoledTextPrimary
 import com.example.ui.theme.AmoledTextSecondary
 import com.example.ui.theme.JetBrainsMonoFontFamily
 
+/**
+ * 5-Stages Cognition Inspector.
+ * Uses pure typography badges without vector icons.
+ */
 @Composable
 fun FiveStagesInspector(
   record: FiveStageRecord,
@@ -76,7 +71,7 @@ fun FiveStagesInspector(
           color = AmoledTextPrimary
         )
         Text(
-          text = "Live breakdown of model cognition, tool actions, and verified deliverables",
+          text = "Cognitive state breakdown across 5 execution disciplines",
           style = MaterialTheme.typography.bodySmall,
           color = AmoledTextMuted
         )
@@ -92,9 +87,7 @@ fun FiveStagesInspector(
       }
       LittleCopyButton(
         textToCopy = fullReport,
-        label = "Export",
-        buttonSize = 32.dp,
-        iconSize = 14.dp,
+        label = "EXPORT",
         testTag = "copy_full_5stages_report"
       )
     }
@@ -102,45 +95,45 @@ fun FiveStagesInspector(
     // 1. GOAL
     StageCard(
       stageNumber = 1,
+      stageTag = "INTENT",
       stageName = "GOAL",
       subtitle = "What you asked Aragon to accomplish",
-      icon = Icons.AutoMirrored.Filled.Assignment,
       content = listOf(record.intent.ifBlank { "Ready for your instructions." })
     )
 
     // 2. STRATEGY
     StageCard(
       stageNumber = 2,
+      stageTag = "PLAN",
       stageName = "STRATEGY",
       subtitle = "Decomposed execution plan",
-      icon = Icons.Default.FormatListNumbered,
       content = if (record.currentPlan.isNotEmpty()) record.currentPlan else listOf("Strategy generates as soon as a task begins...")
     )
 
     // 3. ACTION
     StageCard(
       stageNumber = 3,
+      stageTag = "EXEC",
       stageName = "ACTIONS",
       subtitle = "Dispatched tools and terminal commands",
-      icon = Icons.Default.PlayArrow,
       content = if (record.actions.isNotEmpty()) record.actions else listOf("No actions dispatched yet.")
     )
 
     // 4. OBSERVATION
     StageCard(
       stageNumber = 4,
+      stageTag = "OBSV",
       stageName = "OBSERVATIONS",
       subtitle = "Live environment feedback and outputs",
-      icon = Icons.Default.Visibility,
       content = if (record.observations.isNotEmpty()) record.observations else listOf("Outputs will appear during execution.")
     )
 
     // 5. CONCLUSION
     StageCard(
       stageNumber = 5,
+      stageTag = "END",
       stageName = "DELIVERABLE",
       subtitle = "Final synthesized outcome and created files",
-      icon = Icons.Default.Check,
       content = listOf(record.conclusion ?: "Awaiting verified task completion...")
     )
 
@@ -151,16 +144,16 @@ fun FiveStagesInspector(
 @Composable
 private fun StageCard(
   stageNumber: Int,
+  stageTag: String,
   stageName: String,
   subtitle: String,
-  icon: ImageVector,
   content: List<String>
 ) {
   Surface(
     modifier = Modifier
       .fillMaxWidth()
-      .clip(RoundedCornerShape(12.dp))
-      .border(1.dp, AmoledBorderSubtle, RoundedCornerShape(12.dp)),
+      .clip(RoundedCornerShape(10.dp))
+      .border(1.dp, AmoledBorderSubtle, RoundedCornerShape(10.dp)),
     color = AmoledSurfaceElevated
   ) {
     Column(modifier = Modifier.padding(14.dp)) {
@@ -174,20 +167,22 @@ private fun StageCard(
           horizontalArrangement = Arrangement.spacedBy(10.dp),
           modifier = Modifier.weight(1f)
         ) {
-          // Flutter squircle badge in monochrome/grey
+          // Pure text squircle badge
           Box(
             modifier = Modifier
               .size(28.dp)
-              .clip(RoundedCornerShape(8.dp))
-              .background(Color(0xFF1C1C1C))
-              .border(1.dp, AmoledBorder, RoundedCornerShape(8.dp)),
+              .clip(RoundedCornerShape(6.dp))
+              .background(Color(0xFF181818))
+              .border(1.dp, AmoledBorder, RoundedCornerShape(6.dp)),
             contentAlignment = Alignment.Center
           ) {
-            Icon(
-              imageVector = icon,
-              contentDescription = stageName,
-              tint = AmoledIconGreyLight,
-              modifier = Modifier.size(15.dp)
+            Text(
+              text = stageTag,
+              style = MaterialTheme.typography.labelSmall,
+              fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = FontWeight.Bold,
+              fontSize = 8.sp,
+              color = AmoledActionPrimary
             )
           }
 
@@ -218,9 +213,8 @@ private fun StageCard(
 
         LittleCopyButton(
           textToCopy = content.joinToString("\n"),
-          testTag = "copy_stage_${stageNumber}",
-          buttonSize = 28.dp,
-          iconSize = 13.dp
+          label = "COPY",
+          testTag = "copy_stage_${stageNumber}"
         )
       }
 

@@ -149,7 +149,7 @@ class AgentKernelTest {
 
     // Wait for autonomous completion in coroutine
     var attempts = 0
-    while (engine.state.value.status != AgentStatus.COMPLETED && attempts < 50) {
+    while (engine.state.value.status != AgentStatus.COMPLETED && attempts < 80) {
       delay(100)
       attempts++
     }

@@ -17,18 +17,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.FileDownload
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.TableChart
-import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -38,7 +28,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -51,9 +40,8 @@ import com.example.ui.theme.AmoledActionPrimary
 import com.example.ui.theme.AmoledActionPrimaryOn
 import com.example.ui.theme.AmoledBorder
 import com.example.ui.theme.AmoledBorderSubtle
-import com.example.ui.theme.AmoledIconGrey
 import com.example.ui.theme.AmoledIconGreyLight
-import com.example.ui.theme.AmoledSurface
+import com.example.ui.theme.AmoledStatusSuccess
 import com.example.ui.theme.AmoledSurfaceElevated
 import com.example.ui.theme.AmoledSurfaceVariant
 import com.example.ui.theme.AmoledTextMuted
@@ -64,6 +52,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * Deliverables / Artifact list item.
+ * Pure typography-driven design without vector icons.
+ */
 @Composable
 fun ArtifactItem(
   artifact: Artifact,
@@ -71,7 +63,7 @@ fun ArtifactItem(
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
-  val icon = getArtifactIcon(artifact.name)
+  val extBadge = getArtifactExtensionBadge(artifact.name)
   val formattedSize = formatFileSize(artifact.size)
   val dateFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
   val timeStr = dateFormat.format(Date(artifact.lastModified))
@@ -80,8 +72,8 @@ fun ArtifactItem(
     modifier = modifier
       .fillMaxWidth()
       .padding(horizontal = 14.dp, vertical = 4.dp)
-      .clip(RoundedCornerShape(12.dp))
-      .border(1.dp, AmoledBorderSubtle, RoundedCornerShape(12.dp))
+      .clip(RoundedCornerShape(10.dp))
+      .border(1.dp, AmoledBorderSubtle, RoundedCornerShape(10.dp))
       .clickable { onOpenPreview(artifact) }
       .testTag("artifact_card_${artifact.name}"),
     color = AmoledSurfaceElevated
@@ -92,19 +84,21 @@ fun ArtifactItem(
         .padding(12.dp),
       verticalAlignment = Alignment.CenterVertically
     ) {
-      // Modern Flutter squircle badge with subtle grey icon
+      // Pure text extension badge (Replaces file icons)
       Surface(
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(6.dp),
         color = Color(0xFF161616),
         border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
         modifier = Modifier.size(38.dp)
       ) {
         Box(contentAlignment = Alignment.Center) {
-          Icon(
-            imageVector = icon,
-            contentDescription = artifact.type,
-            tint = AmoledIconGreyLight,
-            modifier = Modifier.size(20.dp)
+          Text(
+            text = extBadge,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = JetBrainsMonoFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 10.sp,
+            color = AmoledActionPrimary
           )
         }
       }
@@ -115,9 +109,12 @@ fun ArtifactItem(
         Text(
           text = artifact.name,
           style = MaterialTheme.typography.titleSmall,
+          fontFamily = JetBrainsMonoFontFamily,
           fontWeight = FontWeight.Medium,
+          fontSize = 13.sp,
           color = AmoledTextPrimary
         )
+
         Spacer(modifier = Modifier.height(2.dp))
         Row(
           horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -149,41 +146,34 @@ fun ArtifactItem(
         }
       }
 
-      // Action buttons: Download & Inspect
+      // Pure text action buttons: SAVE & VIEW
       Row(verticalAlignment = Alignment.CenterVertically) {
-        // Direct download button
-        IconButton(
+        OutlinedButton(
           onClick = { ArtifactDownloader.downloadArtifact(context, artifact) },
+          shape = RoundedCornerShape(6.dp),
+          colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledTextSecondary),
+          border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+          contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp),
           modifier = Modifier
-            .size(32.dp)
+            .height(28.dp)
             .testTag("download_artifact_btn_${artifact.name}")
         ) {
-          Icon(
-            imageVector = Icons.Default.FileDownload,
-            contentDescription = "Download artifact",
-            tint = AmoledIconGrey,
-            modifier = Modifier.size(18.dp)
-          )
+          Text("SAVE", style = MaterialTheme.typography.labelSmall, fontFamily = JetBrainsMonoFontFamily, fontSize = 9.sp)
         }
 
-        Spacer(modifier = Modifier.width(4.dp))
+        Spacer(modifier = Modifier.width(6.dp))
 
-        // Inspect button (Flutter-style flat pill)
         OutlinedButton(
           onClick = { onOpenPreview(artifact) },
-          shape = RoundedCornerShape(8.dp),
-          colors = ButtonDefaults.outlinedButtonColors(
-            contentColor = AmoledTextPrimary
-          ),
+          shape = RoundedCornerShape(6.dp),
+          colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledTextPrimary),
           border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
-          contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-          modifier = Modifier.testTag("inspect_artifact_btn_${artifact.name}")
+          contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+          modifier = Modifier
+            .height(28.dp)
+            .testTag("inspect_artifact_btn_${artifact.name}")
         ) {
-          Text(
-            "View",
-            style = MaterialTheme.typography.labelMedium,
-            fontSize = 11.sp
-          )
+          Text("VIEW", style = MaterialTheme.typography.labelSmall, fontFamily = JetBrainsMonoFontFamily, fontSize = 9.sp)
         }
       }
     }
@@ -202,20 +192,16 @@ fun ArtifactPreviewDialog(
 
   Dialog(onDismissRequest = onDismiss) {
     Surface(
-      shape = RoundedCornerShape(16.dp),
-      color = AmoledSurface,
+      shape = RoundedCornerShape(12.dp),
+      color = Color(0xFF0F0F0F),
       border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
       modifier = Modifier
         .fillMaxWidth()
         .fillMaxHeight(0.85f)
         .testTag("artifact_preview_dialog")
     ) {
-      Column(
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(16.dp)
-      ) {
-        // Dialog header
+      Column(modifier = Modifier.padding(16.dp)) {
+        // Header
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.SpaceBetween,
@@ -225,11 +211,12 @@ fun ArtifactPreviewDialog(
             Text(
               text = artifact.name,
               style = MaterialTheme.typography.titleMedium,
-              fontWeight = FontWeight.SemiBold,
+              fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = FontWeight.Bold,
               color = AmoledTextPrimary
             )
             Text(
-              text = "${artifact.path} • ${formatFileSize(artifact.size)}",
+              text = "${artifact.type} • ${formatFileSize(artifact.size)}",
               style = MaterialTheme.typography.labelSmall,
               fontFamily = JetBrainsMonoFontFamily,
               color = AmoledTextMuted,
@@ -237,111 +224,84 @@ fun ArtifactPreviewDialog(
             )
           }
 
-          IconButton(onClick = onDismiss) {
-            Icon(
-              Icons.Default.Close,
-              contentDescription = "Close",
-              tint = AmoledIconGrey
-            )
+          // Pure text CLOSE button
+          OutlinedButton(
+            onClick = onDismiss,
+            shape = RoundedCornerShape(6.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledTextPrimary),
+            border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+            modifier = Modifier.height(28.dp).testTag("close_preview_btn")
+          ) {
+            Text("CLOSE", style = MaterialTheme.typography.labelSmall, fontFamily = JetBrainsMonoFontFamily, fontSize = 9.sp)
           }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
-        // Content box with AMOLED terminal styling
+        // Actions toolbar: Pure text COPY, SAVE, SHARE
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+          if (!content.isNullOrBlank()) {
+            LittleCopyButton(
+              textToCopy = content,
+              label = "COPY CONTENT",
+              testTag = "copy_preview_content"
+            )
+          }
+
+          OutlinedButton(
+            onClick = { ArtifactDownloader.downloadArtifact(context, artifact) },
+            shape = RoundedCornerShape(6.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledTextPrimary),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+            modifier = Modifier.height(26.dp)
+          ) {
+            Text("SAVE FILE", style = MaterialTheme.typography.labelSmall, fontFamily = JetBrainsMonoFontFamily, fontSize = 9.sp)
+          }
+
+          OutlinedButton(
+            onClick = { ArtifactDownloader.shareArtifact(context, artifact) },
+            shape = RoundedCornerShape(6.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledTextPrimary),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+            modifier = Modifier.height(26.dp)
+          ) {
+            Text("SHARE", style = MaterialTheme.typography.labelSmall, fontFamily = JetBrainsMonoFontFamily, fontSize = 9.sp)
+          }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Content viewer
         Surface(
+          shape = RoundedCornerShape(8.dp),
+          color = Color(0xFF060606),
+          border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
           modifier = Modifier
-            .weight(1f)
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .border(1.dp, AmoledBorder, RoundedCornerShape(10.dp)),
-          color = Color(0xFF070707)
+            .weight(1f)
         ) {
           Box(
             modifier = Modifier
-              .padding(12.dp)
+              .fillMaxWidth()
               .verticalScroll(vScroll)
               .horizontalScroll(hScroll)
+              .padding(12.dp)
           ) {
             Text(
-              text = content ?: "Loading artifact content...",
+              text = content ?: "Loading deliverable content...",
               style = MaterialTheme.typography.bodySmall.copy(
                 fontFamily = JetBrainsMonoFontFamily,
                 fontSize = 11.sp,
                 lineHeight = 16.sp
               ),
-              color = AmoledIconGreyLight
+              color = AmoledTextSecondary
             )
-          }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Bottom action row: Download, Share, Copy, and Done
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-          Row(verticalAlignment = Alignment.CenterVertically) {
-            // Direct download button in preview
-            Button(
-              onClick = { ArtifactDownloader.downloadArtifact(context, artifact) },
-              shape = RoundedCornerShape(8.dp),
-              colors = ButtonDefaults.buttonColors(
-                containerColor = AmoledSurfaceElevated,
-                contentColor = AmoledTextPrimary
-              ),
-              border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
-              contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-              modifier = Modifier.testTag("download_in_dialog_btn")
-            ) {
-              Icon(
-                imageVector = Icons.Default.FileDownload,
-                contentDescription = null,
-                tint = AmoledIconGreyLight,
-                modifier = Modifier.size(16.dp)
-              )
-              Spacer(modifier = Modifier.width(4.dp))
-              Text("Save File", style = MaterialTheme.typography.labelSmall)
-            }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // Share action
-            IconButton(
-              onClick = { ArtifactDownloader.shareArtifact(context, artifact) },
-              modifier = Modifier.size(34.dp)
-            ) {
-              Icon(
-                imageVector = Icons.Default.Share,
-                contentDescription = "Share",
-                tint = AmoledIconGrey,
-                modifier = Modifier.size(17.dp)
-              )
-            }
-
-            if (!content.isNullOrBlank()) {
-              Spacer(modifier = Modifier.width(4.dp))
-              LittleCopyButton(
-                textToCopy = content,
-                label = "Copy",
-                buttonSize = 34.dp,
-                iconSize = 15.dp,
-                testTag = "copy_preview_content"
-              )
-            }
-          }
-
-          Button(
-            onClick = onDismiss,
-            shape = RoundedCornerShape(8.dp),
-            colors = ButtonDefaults.buttonColors(
-              containerColor = AmoledActionPrimary,
-              contentColor = AmoledActionPrimaryOn
-            )
-          ) {
-            Text("Done", style = MaterialTheme.typography.labelMedium)
           }
         }
       }
@@ -349,20 +309,15 @@ fun ArtifactPreviewDialog(
   }
 }
 
-private fun getArtifactIcon(filename: String): ImageVector {
-  val ext = filename.substringAfterLast('.', "").lowercase()
-  return when (ext) {
-    "py", "sh", "js", "ts", "kt" -> Icons.Default.Terminal
-    "csv", "tsv" -> Icons.Default.TableChart
-    "md", "txt", "json", "xml" -> Icons.Default.Description
-    else -> Icons.AutoMirrored.Filled.InsertDriveFile
-  }
+fun getArtifactExtensionBadge(fileName: String): String {
+  val ext = fileName.substringAfterLast('.', "").uppercase()
+  return if (ext.isNotBlank()) ext.take(4) else "FILE"
 }
 
-private fun formatFileSize(bytes: Long): String {
+fun formatFileSize(bytes: Long): String {
   return when {
     bytes < 1024 -> "$bytes B"
-    bytes < 1024 * 1024 -> "${String.format("%.1f", bytes / 1024.0)} KB"
-    else -> "${String.format("%.1f", bytes / (1024.0 * 1024.0))} MB"
+    bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+    else -> "${String.format(Locale.US, "%.1f", bytes / (1024.0 * 1024.0))} MB"
   }
 }

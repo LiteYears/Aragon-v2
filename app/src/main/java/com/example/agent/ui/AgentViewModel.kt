@@ -132,7 +132,8 @@ class AgentViewModel(
 
   private fun getInitialGeminiApiKey(): String {
     return try {
-      val rawKey = com.example.BuildConfig.GEMINI_API_KEY
+      val field = com.example.BuildConfig::class.java.getField("GEMINI_API_KEY")
+      val rawKey = field.get(null) as? String ?: ""
       if (rawKey.isNotBlank() && rawKey != "MY_GEMINI_API_KEY" && rawKey != "\"MY_GEMINI_API_KEY\"") {
         rawKey.trim()
       } else {

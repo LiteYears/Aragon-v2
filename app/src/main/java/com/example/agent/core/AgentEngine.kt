@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,11 +18,13 @@ import java.util.UUID
  * The single, authoritative central orchestrator of the Autonomous Agent.
  * Runs the central loop:
  * USER GOAL -> STATE -> LLM DECISION -> TOOL CALLS -> EXECUTE -> OBSERVATION -> STATE UPDATE -> VERIFY -> COMPLETE.
+ * Unbounded iteration budget (up to 10000 steps), anti-stagnation cycle prevention,
+ * and continuous artifact organization and refinement.
  */
 class AgentEngine(
   val workspaceDir: File,
   initialProvider: LLMProvider = AutonomousSandboxProvider(),
-  private val maxSteps: Int = 15
+  private val maxSteps: Int = 10000
 ) {
 
   val workspace = WorkspaceManager(workspaceDir)
@@ -102,8 +105,9 @@ class AgentEngine(
   }
 
   /**
-   * The Central Bounded Autonomous Agent Loop.
-   * Directly readable from top to bottom.
+   * The Central Autonomous Agent Loop.
+   * Unbounded iterations (up to maxSteps = 10000).
+   * Finishes as soon as verified deliverables exist, whether in 2 turns or 100.
    */
   private suspend fun run(task: Task) {
     var stepCounter = 1
@@ -136,9 +140,9 @@ class AgentEngine(
     )
     _state.value = currentState
 
-    // Loop stagnation detection: track last action hash to catch repeated identical failures
-    var lastActionSig: String? = null
-    var identicalActionCount = 0
+    // Loop stagnation & anti-repetition tracking:
+    // Tracks history of tool signatures to ensure identical commands are never executed > 2 times.
+    val actionSignatureHistory = mutableListOf<String>()
     var turnCounter = 0
     var providerDropRetries = 0
 
@@ -151,11 +155,11 @@ class AgentEngine(
         currentState = currentState.copy(
           status = AgentStatus.PLANNING,
           currentStep = turnCounter,
-          currentAction = "Consulting LLM for next action (Turn $turnCounter/$maxSteps)..."
+          currentAction = "Consulting LLM for next action (Turn $turnCounter)..."
         )
         _state.value = currentState
 
-        // Construct prioritized context for LLM
+        // Construct prioritized context for LLM with current workspace deliverables
         val systemPrompt = buildSystemContext(task, currentState)
 
         val decision = activeProvider.decideNextAction(
@@ -195,10 +199,15 @@ class AgentEngine(
             )
             _state.value = currentState
 
-            // 2. AUTHORITATIVE TOOL EXECUTION PHASE (Support multiple tool calls)
+            // Organic, smooth fluid pacing after model reasoning
+            delay(120)
+
+            // 2. AUTHORITATIVE TOOL EXECUTION PHASE
             for (toolCall in toolCalls) {
               currentCoroutineContext().ensureActive()
-              kotlinx.coroutines.delay(300) // Smooth transition pacing between steps
+
+              val actionSig = "${toolCall.toolName}::${formatArguments(toolCall.arguments)}"
+              val recentIdenticalCount = actionSignatureHistory.takeLast(6).count { it == actionSig }
 
               val runningStepId = UUID.randomUUID().toString()
               val currentFeed = currentState.executionFeed.toMutableList()
@@ -218,26 +227,44 @@ class AgentEngine(
 
               currentState = currentState.copy(
                 status = AgentStatus.EXECUTING_TOOL,
-                currentAction = "Executing '${toolCall.toolName}' [${toolCall.callId.take(6)}]...",
+                currentAction = "Executing '${toolCall.toolName}'...",
                 executionFeed = currentFeed
               )
               _state.value = currentState
 
-              // Execute tool authoritatively via ToolExecutor
-              val toolResult = executor.execute(toolCall)
-              kotlinx.coroutines.delay(250) // Deliberate observation reveal pacing
+              // Pacing between tool display and execution
+              delay(100)
 
-              // 3. CONVERT RESULT TO AUTHORITATIVE OBSERVATION
-              val observation = executor.createObservation(toolResult)
-
-              // Check for accidental loop stagnation
-              val actionSig = "${toolCall.toolName}:${toolCall.arguments}"
-              if (actionSig == lastActionSig && !observation.isSuccess) {
-                identicalActionCount++
+              val (toolResult, observation) = if (recentIdenticalCount >= 2) {
+                // Anti-stagnation safeguard: Do not execute identical tool call more than twice!
+                val skipMsg = "Intervention: '${toolCall.toolName}' with identical arguments was already executed $recentIdenticalCount times. Duplicate execution skipped to prevent redundant looping. Synthesize existing results, refine the deliverable, or conclude objective."
+                val fakeResult = ToolResult(
+                  callId = toolCall.callId,
+                  toolName = toolCall.toolName,
+                  status = ToolStatus.SUCCEEDED,
+                  arguments = toolCall.arguments,
+                  output = skipMsg,
+                  error = null,
+                  duration = 10L,
+                  exitCode = 0
+                )
+                val obs = Observation(
+                  callId = toolCall.callId,
+                  toolName = toolCall.toolName,
+                  isSuccess = true,
+                  summary = skipMsg,
+                  rawOutput = skipMsg
+                )
+                Pair(fakeResult, obs)
               } else {
-                lastActionSig = actionSig
-                identicalActionCount = 0
+                actionSignatureHistory.add(actionSig)
+                val res = executor.execute(toolCall)
+                val obs = executor.createObservation(res)
+                Pair(res, obs)
               }
+
+              // Deliberate observation reveal pacing
+              delay(100)
 
               // Update execution feed with authoritative exit status, duration, stdout/stderr
               val updatedFeed = currentState.executionFeed.map { item ->
@@ -270,17 +297,10 @@ class AgentEngine(
               val updatedObservations = currentState.fiveStageRecord.observations +
                 observation.summary
 
+              // Continuously scan and organize artifacts on filesystem
               val updatedArtifacts = workspace.listAllArtifacts()
 
               // Append to conversation history for the next turn
-              // 1. Assistant tool call message
-              // 2. Explicit Tool observation message
-              val promptObservation = if (identicalActionCount >= 2) {
-                observation.rawOutput + "\n[SYSTEM ADVICE: Repeated identical failure detected. Do not repeat this call; choose an alternative action or diagnose the error.]"
-              } else {
-                observation.rawOutput
-              }
-
               val updatedMessages = currentState.messages + listOf(
                 AgentMessage(
                   role = MessageRole.ASSISTANT,
@@ -291,7 +311,7 @@ class AgentEngine(
                 ),
                 AgentMessage(
                   role = MessageRole.TOOL,
-                  content = promptObservation,
+                  content = observation.rawOutput,
                   toolCallId = toolCall.callId,
                   toolName = toolCall.toolName
                 )
@@ -312,7 +332,6 @@ class AgentEngine(
               )
               _state.value = currentState
             }
-            // Continue while loop to next LLM turn
           }
 
           is LLMDecision.Complete -> {
@@ -323,11 +342,11 @@ class AgentEngine(
             )
             _state.value = currentState
 
+            delay(100)
             val verificationResult = verifyObjective(task, currentState)
 
             if (verificationResult.isSatisfied) {
-              kotlinx.coroutines.delay(250) // Smooth completion transition
-              // Task COMPLETED based on authoritative evidence
+              delay(100)
               val conclusionText = decision.conclusion.ifBlank {
                 "Task completed successfully and verified."
               }
@@ -347,11 +366,15 @@ class AgentEngine(
                 )
               )
 
+              // Update deliverables state
+              val finalArtifacts = workspace.listAllArtifacts()
+
               currentState = currentState.copy(
                 status = AgentStatus.COMPLETED,
                 currentAction = "Task completed and verified.",
                 completionSummary = conclusionText,
                 verification = verificationResult,
+                artifacts = finalArtifacts,
                 executionFeed = completedFeed,
                 fiveStageRecord = currentState.fiveStageRecord.copy(conclusion = conclusionText),
                 canCancel = false
@@ -359,8 +382,8 @@ class AgentEngine(
               _state.value = currentState
               return
             } else {
-              // DO NOT COMPLETE: Verification rejected fake completion
-              val rejectionMsg = "Objective Verification Incomplete: ${verificationResult.details}. The task cannot be concluded until the required actions and artifacts exist."
+              // DO NOT COMPLETE: Verification rejected premature or unverified completion
+              val rejectionMsg = "Objective Verification Incomplete: ${verificationResult.details}. The task cannot be concluded until the required deliverables exist on disk."
 
               val feed = currentState.executionFeed + ExecutionStep(
                 stepNumber = ++stepCounter,
@@ -382,35 +405,32 @@ class AgentEngine(
                 executionFeed = feed
               )
               _state.value = currentState
-              // Loop continues to next LLM turn
             }
           }
 
           is LLMDecision.ProviderError -> {
-            // Free endpoint drop recovery mechanism
             if (providerDropRetries < 2) {
               providerDropRetries++
               val retryFeed = currentState.executionFeed + ExecutionStep(
                 stepNumber = ++stepCounter,
                 type = StepType.OBSERVATION,
-                title = "Endpoint Drop Recovery (${providerDropRetries}/2)",
-                content = "Free endpoint dropped or timed out (${decision.message.take(160)}). Engaging automatic retry and model fallback..."
+                title = "Endpoint Drop Recovery ($providerDropRetries/2)",
+                content = "Endpoint dropped (${decision.message.take(160)}). Retrying automatically..."
               )
               currentState = currentState.copy(
                 currentAction = "Recovering from endpoint drop (attempt $providerDropRetries/2)...",
                 executionFeed = retryFeed
               )
               _state.value = currentState
-              kotlinx.coroutines.delay(1500)
+              delay(1500)
               continue
             } else if (providerDropRetries == 2) {
-              // Remote endpoint is completely down after multiple retries: engage Autonomous Sandbox Provider to finish objective
               providerDropRetries++
               val fallbackFeed = currentState.executionFeed + ExecutionStep(
                 stepNumber = ++stepCounter,
                 type = StepType.OBSERVATION,
                 title = "Autonomous Fallback Engaged",
-                content = "Remote endpoint unavailable. Seamlessly engaged local Autonomous Sandbox Engine to execute tools and verify objective without halting."
+                content = "Engaged local Autonomous Sandbox Engine to execute tools and verify deliverables without halting."
               )
               currentState = currentState.copy(
                 currentAction = "Running via Autonomous Sandbox Engine...",
@@ -418,7 +438,7 @@ class AgentEngine(
               )
               _state.value = currentState
               activeProvider = AutonomousSandboxProvider()
-              kotlinx.coroutines.delay(1000)
+              delay(1000)
               continue
             }
 
@@ -441,8 +461,7 @@ class AgentEngine(
         }
       }
 
-      // Step budget exceeded
-      val maxStepsMsg = "Execution reached maximum allowed step budget ($maxSteps turns) without objective verification."
+      val maxStepsMsg = "Execution reached turn limit ($maxSteps turns) without objective verification."
       val feed = currentState.executionFeed + ExecutionStep(
         stepNumber = ++stepCounter,
         type = StepType.ERROR,
@@ -519,14 +538,14 @@ class AgentEngine(
       }
     }
 
-    // 3. Inferred artifact from goal text (e.g. if prompt asks for 'report.md' or 'hello.txt')
+    // 3. Inferred artifact from goal text
     val goalLower = task.goal.lowercase()
     val words = task.goal.split("\\s+".toRegex())
     for (word in words) {
       val cleanWord = word.trim('.', ',', '"', '\'', '`')
       if (cleanWord.contains('.') && cleanWord.length > 3) {
         val ext = cleanWord.substringAfterLast('.', "")
-        if (ext in listOf("txt", "md", "json", "py", "sh", "csv", "html")) {
+        if (ext in listOf("txt", "md", "json", "py", "sh", "csv", "html", "docx")) {
           val file = File(workspace.baseDir, cleanWord)
           if (goalLower.contains("delete")) {
             if (file.exists()) {
@@ -539,13 +558,13 @@ class AgentEngine(
             if (!file.exists()) {
               return VerificationResult(
                 isSatisfied = false,
-                details = "Expected file '$cleanWord' does not exist in workspace."
+                details = "Expected deliverable '$cleanWord' does not exist in workspace."
               )
             }
             if (file.length() == 0L && !goalLower.contains("empty")) {
               return VerificationResult(
                 isSatisfied = false,
-                details = "Expected file '$cleanWord' exists on disk but has 0 bytes."
+                details = "Expected deliverable '$cleanWord' exists on disk but has 0 bytes."
               )
             }
           }
@@ -565,7 +584,7 @@ class AgentEngine(
     val verifiedFiles = state.artifacts.filter { it.exists }.map { it.path }
     return VerificationResult(
       isSatisfied = true,
-      details = "Verified on disk: ${state.toolExecutions.size} action(s) executed successfully. Artifacts verified on filesystem.",
+      details = "Verified on disk: ${state.toolExecutions.size} action(s) executed successfully. Deliverables verified on filesystem.",
       verifiedArtifacts = verifiedFiles
     )
   }
@@ -579,14 +598,14 @@ class AgentEngine(
     sb.appendLine()
     sb.appendLine("CURRENT USER GOAL: ${task.goal}")
     if (task.expectedArtifact != null) {
-      sb.appendLine("EXPECTED ARTIFACT: ${task.expectedArtifact}")
+      sb.appendLine("EXPECTED DELIVERABLE: ${task.expectedArtifact}")
     }
     if (state.plan.isNotEmpty()) {
       sb.appendLine("CURRENT PLAN:")
       state.plan.forEach { sb.appendLine("- $it") }
     }
     val currentArtifacts = workspace.listAllArtifacts()
-    sb.appendLine("WORKSPACE FILES (${currentArtifacts.size} files):")
+    sb.appendLine("WORKSPACE DELIVERABLES (${currentArtifacts.size} files):")
     if (currentArtifacts.isEmpty()) {
       sb.appendLine("  (Workspace is currently empty)")
     } else {

@@ -40,32 +40,11 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -73,10 +52,6 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.TabRowDefaults
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -102,6 +77,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.R
 import com.example.agent.core.AgentStatus
 import com.example.agent.core.NvidiaNimConfig
@@ -131,6 +107,12 @@ import com.example.ui.theme.AmoledTextSecondary
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.JetBrainsMonoFontFamily
 
+/**
+ * Main Aragon Autonomous Agent Screen.
+ * Pure typography design without icons, left-aligned logo header,
+ * quick model selection separated from hidden developer configuration,
+ * suggestions above prompt input field, and pristine home screen.
+ */
 @Composable
 fun AgentScreen(
   viewModel: AgentViewModel,
@@ -151,13 +133,16 @@ fun AgentScreen(
 
   var inputText by remember { mutableStateOf("") }
   var showSettingsDialog by remember { mutableStateOf(false) }
+  var showModelSelectDialog by remember { mutableStateOf(false) }
 
   val listState = rememberLazyListState()
 
-  // Smooth scroll to newly added steps
+  // Smooth scroll to newly added steps without blocking the thread
   LaunchedEffect(state.executionFeed.size) {
     if (state.executionFeed.isNotEmpty()) {
-      listState.animateScrollToItem(state.executionFeed.size - 1)
+      try {
+        listState.animateScrollToItem(state.executionFeed.size - 1)
+      } catch (_: Exception) {}
     }
   }
 
@@ -192,7 +177,7 @@ fun AgentScreen(
             .navigationBarsPadding()
             .padding(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 6.dp)
         ) {
-          // Preset suggestions (human-centric idea starters)
+          // Preset suggestions kept above the prompt input field (Pure text)
           val chipScrollState = rememberScrollState()
           Row(
             modifier = Modifier
@@ -203,7 +188,7 @@ fun AgentScreen(
           ) {
             viewModel.presets.forEach { preset ->
               Surface(
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(6.dp),
                 color = Color(0xFF131313),
                 border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
                 modifier = Modifier
@@ -213,34 +198,21 @@ fun AgentScreen(
                   }
                   .testTag("preset_chip_${preset.expectedArtifact ?: "custom"}")
               ) {
-                Row(
-                  verticalAlignment = Alignment.CenterVertically,
-                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                ) {
-                  Text(
-                    text = when {
-                      preset.expectedArtifact?.endsWith(".md") == true -> "📊 "
-                      preset.expectedArtifact?.endsWith(".docx") == true -> "📄 "
-                      preset.expectedArtifact?.endsWith(".json") == true -> "🔍 "
-                      else -> "⚡ "
-                    },
-                    fontSize = 11.sp
-                  )
-                  Text(
-                    text = preset.title,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontFamily = InterFontFamily,
-                    color = AmoledIconGreyLight,
-                    fontSize = 11.sp
-                  )
-                }
+                Text(
+                  text = preset.title,
+                  style = MaterialTheme.typography.labelSmall,
+                  fontFamily = JetBrainsMonoFontFamily,
+                  color = AmoledIconGreyLight,
+                  fontSize = 11.sp,
+                  modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                )
               }
             }
           }
 
           // Modern Interactive Floating User Prompt Field
           Surface(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(12.dp),
             color = Color(0xFF101010),
             border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
             modifier = Modifier.fillMaxWidth()
@@ -250,22 +222,24 @@ fun AgentScreen(
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 6.dp)
             ) {
-              // Top meta bar inside prompt field: Active model pill & Clear button
+              // Top meta bar inside prompt field: Separated Model button & Clear button
               Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
               ) {
-                // Interactive model switcher pill - placed creatively above input
+                // Interactive model switcher pill: opens list of models directly
                 Surface(
-                  shape = RoundedCornerShape(6.dp),
+                  shape = RoundedCornerShape(4.dp),
                   color = Color(0xFF181818),
                   border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
-                  modifier = Modifier.clickable { viewModel.selectTab(UiTab.ABOUT_ARAGON) }
+                  modifier = Modifier
+                    .clickable { showModelSelectDialog = true }
+                    .testTag("model_switcher_button")
                 ) {
                   Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                   ) {
                     Box(
                       modifier = Modifier
@@ -275,34 +249,38 @@ fun AgentScreen(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                      text = "ENGINE • ${nvidiaModel.substringAfterLast('/')}",
+                      text = when (providerType) {
+                        ProviderType.NVIDIA_NIM -> "MODEL: ${nvidiaModel.substringAfterLast('/')}"
+                        ProviderType.SANDBOX_ENGINE -> "ENGINE: Autonomous Sandbox"
+                        ProviderType.GEMINI_LIVE_API -> "MODEL: Gemini Live"
+                      },
                       style = MaterialTheme.typography.labelSmall,
                       fontFamily = JetBrainsMonoFontFamily,
                       fontSize = 10.sp,
                       color = AmoledIconGreyLight
                     )
-                    Spacer(modifier = Modifier.width(3.dp))
-                    Icon(
-                      imageVector = Icons.Default.ArrowDropDown,
-                      contentDescription = "Switch model",
-                      tint = AmoledIconGrey,
-                      modifier = Modifier.size(14.dp)
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                      text = "[CHANGE]",
+                      style = MaterialTheme.typography.labelSmall,
+                      fontFamily = JetBrainsMonoFontFamily,
+                      fontSize = 9.sp,
+                      color = AmoledActionPrimary
                     )
                   }
                 }
 
                 if (inputText.isNotBlank()) {
-                  IconButton(
-                    onClick = { inputText = "" },
-                    modifier = Modifier.size(24.dp)
-                  ) {
-                    Icon(
-                      imageVector = Icons.Default.Clear,
-                      contentDescription = "Clear text",
-                      tint = AmoledIconGrey,
-                      modifier = Modifier.size(15.dp)
-                    )
-                  }
+                  Text(
+                    text = "[CLEAR]",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontSize = 10.sp,
+                    color = AmoledIconGrey,
+                    modifier = Modifier
+                      .clickable { inputText = "" }
+                      .padding(horizontal = 4.dp, vertical = 2.dp)
+                  )
                 }
               }
 
@@ -354,23 +332,28 @@ fun AgentScreen(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Modern execution task button
+                // Modern execution task button: Pure text (No icons)
                 if (state.canCancel) {
                   Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFF221111),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledStatusError.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFF241010),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledStatusError.copy(alpha = 0.6f)),
                     modifier = Modifier
-                      .size(38.dp)
+                      .height(34.dp)
                       .clickable { viewModel.stopExecution() }
                       .testTag("stop_execution_button")
                   ) {
-                    Box(contentAlignment = Alignment.Center) {
-                      Icon(
-                        imageVector = Icons.Default.Stop,
-                        contentDescription = "Stop execution",
-                        tint = AmoledStatusError,
-                        modifier = Modifier.size(18.dp)
+                    Box(
+                      contentAlignment = Alignment.Center,
+                      modifier = Modifier.padding(horizontal = 10.dp)
+                    ) {
+                      Text(
+                        text = "STOP",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = AmoledStatusError
                       )
                     }
                   }
@@ -378,24 +361,24 @@ fun AgentScreen(
                   val isReady = inputText.isNotBlank()
                   val buttonColor by animateColorAsState(
                     targetValue = if (isReady) AmoledActionPrimary else Color(0xFF1C1C1C),
-                    animationSpec = tween(200),
+                    animationSpec = tween(180),
                     label = "btn_color"
                   )
-                  val iconColor by animateColorAsState(
+                  val textColor by animateColorAsState(
                     targetValue = if (isReady) AmoledActionPrimaryOn else AmoledIconGreyDark,
-                    animationSpec = tween(200),
-                    label = "icon_color"
+                    animationSpec = tween(180),
+                    label = "text_color"
                   )
 
                   Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(8.dp),
                     color = buttonColor,
                     border = androidx.compose.foundation.BorderStroke(
                       1.dp,
                       if (isReady) AmoledActionPrimary else AmoledBorderSubtle
                     ),
                     modifier = Modifier
-                      .size(38.dp)
+                      .height(34.dp)
                       .clickable(enabled = isReady) {
                         if (isReady) {
                           val taskText = inputText
@@ -404,12 +387,17 @@ fun AgentScreen(
                       }
                       .testTag("run_task_button")
                   ) {
-                    Box(contentAlignment = Alignment.Center) {
-                      Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "Execute task",
-                        tint = iconColor,
-                        modifier = Modifier.size(18.dp)
+                    Box(
+                      contentAlignment = Alignment.Center,
+                      modifier = Modifier.padding(horizontal = 12.dp)
+                    ) {
+                      Text(
+                        text = "EXEC",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = textColor
                       )
                     }
                   }
@@ -427,11 +415,11 @@ fun AgentScreen(
         .background(AmoledBackground)
         .padding(paddingValues)
     ) {
-      // Discrete Error Banner
+      // Discrete Error Banner (Pure text)
       AnimatedVisibility(visible = state.error != null) {
         state.error?.let { errText ->
           Surface(
-            shape = RoundedCornerShape(10.dp),
+            shape = RoundedCornerShape(8.dp),
             color = Color(0xFF140A0A),
             border = androidx.compose.foundation.BorderStroke(1.dp, AmoledStatusError.copy(alpha = 0.5f)),
             modifier = Modifier
@@ -439,32 +427,24 @@ fun AgentScreen(
               .padding(horizontal = 14.dp, vertical = 6.dp)
               .testTag("error_banner")
           ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(10.dp)) {
               Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
               ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                  Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Error",
-                    tint = AmoledStatusError,
-                    modifier = Modifier.size(16.dp)
-                  )
-                  Spacer(modifier = Modifier.width(6.dp))
-                  Text(
-                    text = "EXECUTION ISSUE",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontFamily = JetBrainsMonoFontFamily,
-                    fontWeight = FontWeight.Bold,
-                    color = AmoledStatusError
-                  )
-                }
+                Text(
+                  text = "EXECUTION ISSUE",
+                  style = MaterialTheme.typography.labelSmall,
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontWeight = FontWeight.Bold,
+                  fontSize = 10.sp,
+                  color = AmoledStatusError
+                )
 
                 LittleCopyButton(
                   textToCopy = errText,
-                  label = "Copy",
+                  label = "COPY",
                   tint = AmoledStatusError,
                   testTag = "copy_error_banner_btn"
                 )
@@ -478,15 +458,17 @@ fun AgentScreen(
               )
 
               if (providerType == ProviderType.NVIDIA_NIM && nvidiaModel != NvidiaNimConfig.DEFAULT_MODEL) {
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                   OutlinedButton(
                     onClick = { viewModel.retryWithDefaultModel() },
                     shape = RoundedCornerShape(6.dp),
                     border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledTextPrimary)
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledTextPrimary),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    modifier = Modifier.height(26.dp)
                   ) {
-                    Text("Retry with Flagship GLM 5.3", style = MaterialTheme.typography.labelSmall)
+                    Text("Retry with Flagship GLM 5.3", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp)
                   }
                 }
               }
@@ -495,7 +477,7 @@ fun AgentScreen(
         }
       }
 
-      // Premium Segmented Navigation Bar with fluid switching
+      // Premium Segmented Navigation Bar: Pure text tabs
       PremiumTabBar(
         selectedTab = activeTab,
         feedCount = state.executionFeed.size,
@@ -503,12 +485,12 @@ fun AgentScreen(
         onSelectTab = { viewModel.selectTab(it) }
       )
 
-      // Tab Content Views with smooth, lightweight transitions (no lag)
+      // Tab Content Views with lightweight, jank-free transitions
       AnimatedContent(
         targetState = activeTab,
         transitionSpec = {
-          fadeIn(animationSpec = tween(130, easing = FastOutSlowInEasing)) togetherWith
-            fadeOut(animationSpec = tween(80, easing = FastOutSlowInEasing))
+          fadeIn(animationSpec = tween(90, easing = FastOutSlowInEasing)) togetherWith
+            fadeOut(animationSpec = tween(60, easing = FastOutSlowInEasing))
         },
         label = "tab_content_view_transition",
         modifier = Modifier.fillMaxSize()
@@ -517,14 +499,9 @@ fun AgentScreen(
           UiTab.EXECUTION_FEED -> {
             if (state.executionFeed.isEmpty()) {
               EmptyExecutionState(
-                presets = viewModel.presets,
                 onQuickRun = {
                   inputText = viewModel.presets[0].prompt
                   viewModel.submitTask(viewModel.presets[0].prompt, viewModel.presets[0].expectedArtifact)
-                },
-                onSelectPreset = { prompt, artifact ->
-                  inputText = prompt
-                  viewModel.submitTask(prompt, artifact)
                 }
               )
             } else {
@@ -533,9 +510,12 @@ fun AgentScreen(
                 modifier = Modifier
                   .fillMaxSize()
                   .testTag("execution_feed_list"),
-                contentPadding = PaddingValues(vertical = 10.dp, horizontal = 0.dp)
+                contentPadding = PaddingValues(vertical = 8.dp, horizontal = 0.dp)
               ) {
-                itemsIndexed(state.executionFeed) { index, step ->
+                itemsIndexed(
+                  items = state.executionFeed,
+                  key = { _, step -> step.id }
+                ) { index, step ->
                   ExecutionFeedItem(
                     step = step,
                     isLast = index == state.executionFeed.size - 1
@@ -554,24 +534,16 @@ fun AgentScreen(
                 contentAlignment = Alignment.Center
               ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                  Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFF141414),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
-                    modifier = Modifier.size(52.dp)
-                  ) {
-                    Box(contentAlignment = Alignment.Center) {
-                      Icon(
-                        imageVector = Icons.Default.Description,
-                        contentDescription = null,
-                        tint = AmoledIconGrey,
-                        modifier = Modifier.size(26.dp)
-                      )
-                    }
-                  }
-                  Spacer(modifier = Modifier.height(12.dp))
                   Text(
-                    text = "Workspace is ready",
+                    text = "[WORKSPACE EMPTY]",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = JetBrainsMonoFontFamily,
+                    color = AmoledIconGreyLight,
+                    fontSize = 11.sp
+                  )
+                  Spacer(modifier = Modifier.height(8.dp))
+                  Text(
+                    text = "Deliverables Repository",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = AmoledTextPrimary
@@ -590,9 +562,12 @@ fun AgentScreen(
                 modifier = Modifier
                   .fillMaxSize()
                   .testTag("artifacts_list"),
-                contentPadding = PaddingValues(vertical = 10.dp)
+                contentPadding = PaddingValues(vertical = 8.dp)
               ) {
-                itemsIndexed(state.artifacts) { _, artifact ->
+                itemsIndexed(
+                  items = state.artifacts,
+                  key = { _, artifact -> artifact.id }
+                ) { _, artifact ->
                   ArtifactItem(
                     artifact = artifact,
                     onOpenPreview = { viewModel.openArtifactPreview(it) }
@@ -631,7 +606,29 @@ fun AgentScreen(
     )
   }
 
-  // Improved AMOLED Settings & Provider Dialog
+  // Model Selection Dialog: Accessible normally from prompt bar
+  if (showModelSelectDialog) {
+    ModelSelectorDialog(
+      currentProvider = providerType,
+      currentNvidiaModel = nvidiaModel,
+      onSelectSandbox = {
+        viewModel.setProviderType(ProviderType.SANDBOX_ENGINE)
+        showModelSelectDialog = false
+      },
+      onSelectNvidiaModel = { modelId ->
+        viewModel.setProviderType(ProviderType.NVIDIA_NIM)
+        viewModel.updateNvidiaConfig(model = modelId)
+        showModelSelectDialog = false
+      },
+      onSelectGemini = {
+        viewModel.setProviderType(ProviderType.GEMINI_LIVE_API)
+        showModelSelectDialog = false
+      },
+      onDismiss = { showModelSelectDialog = false }
+    )
+  }
+
+  // Hidden Developer Settings Dialog: ONLY accessible by 10-tap unlock on build number
   if (showSettingsDialog) {
     SettingsProviderDialog(
       currentProvider = providerType,
@@ -660,6 +657,9 @@ fun AgentScreen(
   }
 }
 
+/**
+ * Pure Typography Tab Bar (No icons).
+ */
 @Composable
 fun PremiumTabBar(
   selectedTab: UiTab,
@@ -676,17 +676,17 @@ fun PremiumTabBar(
     Row(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(horizontal = 10.dp, vertical = 6.dp),
+        .padding(horizontal = 8.dp, vertical = 5.dp),
       horizontalArrangement = Arrangement.spacedBy(6.dp),
       verticalAlignment = Alignment.CenterVertically
     ) {
       UiTab.values().forEach { tab ->
         val isSelected = selectedTab == tab
-        val tabIcon = when (tab) {
-          UiTab.EXECUTION_FEED -> Icons.Default.Terminal
-          UiTab.ARTIFACTS -> Icons.Default.Description
-          UiTab.FIVE_STAGES -> Icons.Default.AutoAwesome
-          UiTab.ABOUT_ARAGON -> Icons.Default.Settings
+        val label = when (tab) {
+          UiTab.EXECUTION_FEED -> "FEED"
+          UiTab.ARTIFACTS -> "FILES"
+          UiTab.FIVE_STAGES -> "COGNITION"
+          UiTab.ABOUT_ARAGON -> "SYSTEM"
         }
         val badge = when (tab) {
           UiTab.EXECUTION_FEED -> if (feedCount > 0) "$feedCount" else null
@@ -695,62 +695,55 @@ fun PremiumTabBar(
         }
 
         val bgColor by animateColorAsState(
-          targetValue = if (isSelected) Color(0xFF202020) else Color.Transparent,
-          animationSpec = tween(140),
+          targetValue = if (isSelected) Color(0xFF222222) else Color.Transparent,
+          animationSpec = tween(120),
           label = "tab_bg"
         )
         val contentColor by animateColorAsState(
           targetValue = if (isSelected) Color.White else AmoledIconGrey,
-          animationSpec = tween(140),
+          animationSpec = tween(120),
           label = "tab_content_color"
         )
 
         Surface(
-          shape = RoundedCornerShape(8.dp),
+          shape = RoundedCornerShape(6.dp),
           color = bgColor,
-          border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF333333)) else null,
+          border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF383838)) else null,
           modifier = Modifier
             .weight(1f)
             .clickable { onSelectTab(tab) }
             .testTag("tab_${tab.name.lowercase()}")
         ) {
           Row(
-            modifier = Modifier.padding(vertical = 8.dp, horizontal = 2.dp),
+            modifier = Modifier.padding(vertical = 7.dp, horizontal = 2.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
           ) {
-            Icon(
-              imageVector = tabIcon,
-              contentDescription = tab.label,
-              tint = contentColor,
-              modifier = Modifier.size(14.dp)
-            )
-            Spacer(modifier = Modifier.width(4.dp))
             Text(
-              text = tab.label,
+              text = label,
               style = MaterialTheme.typography.labelSmall,
-              fontFamily = InterFontFamily,
-              fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+              fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
               color = contentColor,
               fontSize = 11.sp,
               maxLines = 1
             )
             if (badge != null) {
-              Spacer(modifier = Modifier.width(3.dp))
+              Spacer(modifier = Modifier.width(4.dp))
               Surface(
-                shape = RoundedCornerShape(4.dp),
+                shape = RoundedCornerShape(3.dp),
                 color = if (isSelected) AmoledActionPrimary else Color(0xFF1E1E1E),
-                modifier = Modifier.height(15.dp)
+                modifier = Modifier.height(14.dp)
               ) {
                 Box(
                   contentAlignment = Alignment.Center,
-                  modifier = Modifier.padding(horizontal = 4.dp)
+                  modifier = Modifier.padding(horizontal = 3.dp)
                 ) {
                   Text(
                     text = badge,
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = JetBrainsMonoFontFamily,
-                    fontSize = 9.sp,
+                    fontSize = 8.sp,
                     fontWeight = FontWeight.Bold,
                     color = if (isSelected) AmoledActionPrimaryOn else AmoledIconGreyLight
                   )
@@ -764,6 +757,12 @@ fun PremiumTabBar(
   }
 }
 
+/**
+ * Top Header:
+ * - Logo and ARAGON title aligned to the LEFT (not centered).
+ * - Followed by StatusPill.
+ * - Right actions are pure text (No icons).
+ */
 @Composable
 fun AgentTopHeader(
   status: AgentStatus,
@@ -783,24 +782,17 @@ fun AgentTopHeader(
       modifier = Modifier
         .fillMaxWidth()
         .statusBarsPadding()
-        .padding(horizontal = 16.dp, vertical = 9.dp)
+        .padding(horizontal = 14.dp, vertical = 8.dp)
     ) {
-      Box(
+      Row(
         modifier = Modifier.fillMaxWidth(),
-        contentAlignment = Alignment.Center
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
       ) {
-        // Left: Clean Status Pill
+        // LEFT-ALIGNED LOGO + ARAGON + STATUS PILL
         Row(
-          modifier = Modifier.align(Alignment.CenterStart),
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-          StatusPill(status = status)
-        }
-
-        // Center: Pure borderless White Aragon Logo + Centered "ARAGON"
-        Row(
-          modifier = Modifier.align(Alignment.Center),
-          verticalAlignment = Alignment.CenterVertically
+          verticalAlignment = Alignment.CenterVertically,
+          modifier = Modifier.weight(1f, fill = false)
         ) {
           Icon(
             painter = painterResource(id = R.drawable.ic_aragon_logo),
@@ -814,60 +806,76 @@ fun AgentTopHeader(
             style = MaterialTheme.typography.titleMedium,
             fontFamily = InterFontFamily,
             fontWeight = FontWeight.Bold,
-            letterSpacing = 3.sp,
+            letterSpacing = 2.5.sp,
             color = Color.White
           )
+          Spacer(modifier = Modifier.width(10.dp))
+          StatusPill(status = status)
         }
 
-        // Right: Symmetrical header action buttons
+        // RIGHT-ALIGNED PURE TEXT ACTIONS (No icons)
         Row(
-          modifier = Modifier.align(Alignment.CenterEnd),
-          verticalAlignment = Alignment.CenterVertically
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
           LittleCopyButton(
             textToCopy = onGetTranscript(),
-            label = "Log",
-            tint = AmoledIconGrey,
-            buttonSize = 30.dp,
-            iconSize = 13.dp,
+            label = "LOG",
             testTag = "copy_transcript_header"
           )
 
           if (canCancel) {
-            IconButton(
-              onClick = onStop,
-              modifier = Modifier.size(30.dp)
+            Surface(
+              shape = RoundedCornerShape(4.dp),
+              color = Color(0xFF221111),
+              border = androidx.compose.foundation.BorderStroke(1.dp, AmoledStatusError.copy(alpha = 0.5f)),
+              modifier = Modifier
+                .clickable { onStop() }
+                .padding(horizontal = 1.dp)
             ) {
-              Icon(
-                Icons.Default.Stop,
-                contentDescription = "Stop",
-                tint = AmoledStatusError,
-                modifier = Modifier.size(16.dp)
+              Text(
+                text = "STOP",
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = JetBrainsMonoFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 9.sp,
+                color = AmoledStatusError,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
               )
             }
           }
 
-          IconButton(
-            onClick = onResetWorkspace,
-            modifier = Modifier.size(30.dp)
+          Surface(
+            shape = RoundedCornerShape(4.dp),
+            color = Color(0xFF141414),
+            border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+            modifier = Modifier.clickable { onResetWorkspace() }
           ) {
-            Icon(
-              Icons.Default.Refresh,
-              contentDescription = "Reset Workspace",
-              tint = AmoledIconGrey,
-              modifier = Modifier.size(16.dp)
+            Text(
+              text = "RESET",
+              style = MaterialTheme.typography.labelSmall,
+              fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = FontWeight.Medium,
+              fontSize = 9.sp,
+              color = AmoledIconGreyLight,
+              modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
             )
           }
 
-          IconButton(
-            onClick = onOpenAbout,
-            modifier = Modifier.size(30.dp)
+          Surface(
+            shape = RoundedCornerShape(4.dp),
+            color = Color(0xFF141414),
+            border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+            modifier = Modifier.clickable { onOpenAbout() }
           ) {
-            Icon(
-              Icons.Default.Settings,
-              contentDescription = "System Settings",
-              tint = AmoledIconGrey,
-              modifier = Modifier.size(16.dp)
+            Text(
+              text = "SYSTEM",
+              style = MaterialTheme.typography.labelSmall,
+              fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = FontWeight.Medium,
+              fontSize = 9.sp,
+              color = AmoledIconGreyLight,
+              modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
             )
           }
         }
@@ -878,17 +886,17 @@ fun AgentTopHeader(
         Spacer(modifier = Modifier.height(6.dp))
         Surface(
           modifier = Modifier.fillMaxWidth(),
-          shape = RoundedCornerShape(8.dp),
+          shape = RoundedCornerShape(6.dp),
           color = Color(0xFF101010),
           border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle)
         ) {
           Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
           ) {
             Box(
               modifier = Modifier
-                .size(6.dp)
+                .size(5.dp)
                 .clip(CircleShape)
                 .background(AmoledActionPrimary)
             )
@@ -898,7 +906,7 @@ fun AgentTopHeader(
               style = MaterialTheme.typography.bodySmall,
               fontFamily = JetBrainsMonoFontFamily,
               color = AmoledIconGreyLight,
-              fontSize = 11.sp,
+              fontSize = 10.sp,
               maxLines = 1,
               overflow = TextOverflow.Ellipsis,
               modifier = Modifier.weight(1f)
@@ -925,43 +933,46 @@ fun StatusPill(status: AgentStatus) {
   }
 
   Surface(
-    shape = RoundedCornerShape(8.dp),
+    shape = RoundedCornerShape(4.dp),
     color = bgColor,
     border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
-    modifier = Modifier.height(24.dp)
+    modifier = Modifier.height(22.dp)
   ) {
     Box(
       contentAlignment = Alignment.Center,
-      modifier = Modifier.padding(horizontal = 8.dp)
+      modifier = Modifier.padding(horizontal = 6.dp)
     ) {
       Text(
         text = label,
         style = MaterialTheme.typography.labelSmall,
         fontFamily = JetBrainsMonoFontFamily,
-        fontWeight = FontWeight.Medium,
+        fontWeight = FontWeight.Bold,
         color = textColor,
-        fontSize = 10.sp
+        fontSize = 9.sp
       )
     }
   }
 }
 
+/**
+ * Home Screen (Empty State):
+ * Keeps ONLY the Logo, Slogan, and "Start a New Task" button.
+ * All suggestion cards are removed from the home screen as requested.
+ */
 @Composable
 fun EmptyExecutionState(
-  presets: List<com.example.agent.ui.PromptPreset>,
-  onQuickRun: () -> Unit,
-  onSelectPreset: (String, String?) -> Unit
+  onQuickRun: () -> Unit
 ) {
   val scrollState = rememberScrollState()
   Column(
     modifier = Modifier
       .fillMaxSize()
       .verticalScroll(scrollState)
-      .padding(horizontal = 24.dp, vertical = 28.dp),
+      .padding(horizontal = 24.dp, vertical = 32.dp),
     horizontalAlignment = Alignment.CenterHorizontally,
     verticalArrangement = Arrangement.Center
   ) {
-    // Pure Aragon White Emblem without border
+    // Aragon Emblem
     Box(
       contentAlignment = Alignment.Center,
       modifier = Modifier.size(56.dp)
@@ -970,7 +981,7 @@ fun EmptyExecutionState(
         painter = painterResource(id = R.drawable.ic_aragon_logo),
         contentDescription = "Aragon Logo",
         tint = Color.White,
-        modifier = Modifier.size(46.dp)
+        modifier = Modifier.size(48.dp)
       )
     }
 
@@ -986,7 +997,7 @@ fun EmptyExecutionState(
 
     Spacer(modifier = Modifier.height(14.dp))
 
-    // Captivating Slogan that attracts the mind
+    // Slogan
     Text(
       text = "Turn Ambitious Thought Into Reality.",
       style = MaterialTheme.typography.titleMedium,
@@ -1009,27 +1020,21 @@ fun EmptyExecutionState(
       modifier = Modifier.padding(horizontal = 8.dp)
     )
 
-    Spacer(modifier = Modifier.height(24.dp))
+    Spacer(modifier = Modifier.height(28.dp))
 
-    // The improved Middle Button: Starts a New Task
+    // "Start a New Task" Button: Pure text (No icon)
     Button(
       onClick = onQuickRun,
-      shape = RoundedCornerShape(12.dp),
+      shape = RoundedCornerShape(10.dp),
       colors = ButtonDefaults.buttonColors(
         containerColor = AmoledActionPrimary,
         contentColor = AmoledActionPrimaryOn
       ),
       modifier = Modifier
-        .fillMaxWidth(0.78f)
-        .height(48.dp)
+        .fillMaxWidth(0.72f)
+        .height(46.dp)
         .testTag("quick_start_button")
     ) {
-      Icon(
-        imageVector = Icons.Default.PlayArrow,
-        contentDescription = null,
-        modifier = Modifier.size(18.dp)
-      )
-      Spacer(modifier = Modifier.width(8.dp))
       Text(
         text = "Start a New Task",
         style = MaterialTheme.typography.labelLarge,
@@ -1038,72 +1043,249 @@ fun EmptyExecutionState(
         fontSize = 14.sp
       )
     }
+  }
+}
 
-    Spacer(modifier = Modifier.height(26.dp))
+/**
+ * Normal Model Selector Dialog:
+ * Shows list of available models cleanly without exposing secret settings.
+ */
+@Composable
+fun ModelSelectorDialog(
+  currentProvider: ProviderType,
+  currentNvidiaModel: String,
+  onSelectSandbox: () -> Unit,
+  onSelectNvidiaModel: (String) -> Unit,
+  onSelectGemini: () -> Unit,
+  onDismiss: () -> Unit
+) {
+  val vScroll = rememberScrollState()
 
-    Text(
-      text = "SUGGESTED OBJECTIVES",
-      style = MaterialTheme.typography.labelSmall,
-      fontFamily = JetBrainsMonoFontFamily,
-      fontSize = 10.sp,
-      letterSpacing = 1.sp,
-      color = AmoledIconGreyDark
-    )
-
-    Spacer(modifier = Modifier.height(10.dp))
-
-    Column(
-      modifier = Modifier.fillMaxWidth(),
-      verticalArrangement = Arrangement.spacedBy(8.dp)
+  Dialog(onDismissRequest = onDismiss) {
+    Surface(
+      shape = RoundedCornerShape(14.dp),
+      color = Color(0xFF101010),
+      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
+      modifier = Modifier
+        .fillMaxWidth()
+        .heightIn(max = 520.dp)
+        .testTag("model_selector_dialog")
     ) {
-      presets.forEach { preset ->
-        Surface(
-          shape = RoundedCornerShape(10.dp),
-          color = Color(0xFF121212),
-          border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+      Column(modifier = Modifier.padding(16.dp)) {
+        // Header
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Text(
+            text = "SELECT MODEL",
+            style = MaterialTheme.typography.titleSmall,
+            fontFamily = JetBrainsMonoFontFamily,
+            fontWeight = FontWeight.Bold,
+            color = AmoledTextPrimary,
+            letterSpacing = 1.sp
+          )
+
+          Text(
+            text = "[CLOSE]",
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = JetBrainsMonoFontFamily,
+            fontSize = 10.sp,
+            color = AmoledIconGrey,
+            modifier = Modifier
+              .clickable { onDismiss() }
+              .padding(4.dp)
+          )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Column(
           modifier = Modifier
             .fillMaxWidth()
-            .clickable { onSelectPreset(preset.prompt, preset.expectedArtifact) }
+            .weight(1f)
+            .verticalScroll(vScroll),
+          verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-          Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
+          // Section 1: Local Sandbox Engine
+          Text(
+            text = "LOCAL EXECUTION",
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = JetBrainsMonoFontFamily,
+            color = AmoledTextMuted,
+            fontSize = 9.sp
+          )
+
+          val isSandboxActive = currentProvider == ProviderType.SANDBOX_ENGINE
+          Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = if (isSandboxActive) Color(0xFF1C1C1C) else Color(0xFF141414),
+            border = androidx.compose.foundation.BorderStroke(
+              1.dp,
+              if (isSandboxActive) AmoledActionPrimary else AmoledBorderSubtle
+            ),
+            modifier = Modifier
+              .fillMaxWidth()
+              .clickable { onSelectSandbox() }
           ) {
-            Icon(
-              imageVector = when {
-                preset.expectedArtifact?.endsWith(".md") == true -> Icons.Default.Description
-                preset.expectedArtifact?.endsWith(".docx") == true -> Icons.Default.Description
-                preset.expectedArtifact?.endsWith(".json") == true -> Icons.Default.Code
-                else -> Icons.Default.Terminal
-              },
-              contentDescription = null,
-              tint = AmoledActionPrimary,
-              modifier = Modifier.size(16.dp)
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
-              Text(
-                text = preset.title,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = AmoledTextPrimary,
-                fontSize = 12.sp
-              )
-              Text(
-                text = preset.prompt,
-                style = MaterialTheme.typography.bodySmall,
-                color = AmoledTextMuted,
-                fontSize = 11.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-              )
+            Row(
+              modifier = Modifier.padding(10.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = "Autonomous Sandbox Engine",
+                  style = MaterialTheme.typography.bodyMedium,
+                  fontWeight = FontWeight.SemiBold,
+                  color = AmoledTextPrimary
+                )
+                Text(
+                  text = "Deterministic offline engine with verified tool execution",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = AmoledTextMuted,
+                  fontSize = 10.sp
+                )
+              }
+              if (isSandboxActive) {
+                Text(
+                  text = "[ACTIVE]",
+                  style = MaterialTheme.typography.labelSmall,
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontWeight = FontWeight.Bold,
+                  fontSize = 9.sp,
+                  color = AmoledStatusSuccess
+                )
+              }
             }
-            Icon(
-              imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-              contentDescription = null,
-              tint = AmoledIconGrey,
-              modifier = Modifier.size(14.dp)
-            )
+          }
+
+          Spacer(modifier = Modifier.height(6.dp))
+
+          // Section 2: NVIDIA NIM Cloud Models
+          Text(
+            text = "NVIDIA NIM CLOUD MODELS",
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = JetBrainsMonoFontFamily,
+            color = AmoledTextMuted,
+            fontSize = 9.sp
+          )
+
+          NvidiaNimModels.CATALOG.forEach { modelEntry ->
+            val isModelActive = currentProvider == ProviderType.NVIDIA_NIM && currentNvidiaModel == modelEntry.id
+            Surface(
+              shape = RoundedCornerShape(8.dp),
+              color = if (isModelActive) Color(0xFF1C1C1C) else Color(0xFF141414),
+              border = androidx.compose.foundation.BorderStroke(
+                1.dp,
+                if (isModelActive) AmoledActionPrimary else AmoledBorderSubtle
+              ),
+              modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onSelectNvidiaModel(modelEntry.id) }
+            ) {
+              Row(
+                modifier = Modifier.padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+              ) {
+                Column(modifier = Modifier.weight(1f)) {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                      text = modelEntry.name,
+                      style = MaterialTheme.typography.bodyMedium,
+                      fontWeight = FontWeight.SemiBold,
+                      color = AmoledTextPrimary
+                    )
+                    if (modelEntry.badge.isNotBlank()) {
+                      Spacer(modifier = Modifier.width(6.dp))
+                      Text(
+                        text = "[${modelEntry.badge}]",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 8.sp,
+                        color = AmoledActionPrimary
+                      )
+                    }
+                  }
+                  Text(
+                    text = modelEntry.description,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AmoledTextMuted,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                  )
+                }
+
+                if (isModelActive) {
+                  Text(
+                    text = "[ACTIVE]",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 9.sp,
+                    color = AmoledStatusSuccess
+                  )
+                }
+              }
+            }
+          }
+
+          Spacer(modifier = Modifier.height(6.dp))
+
+          // Section 3: Google Gemini
+          Text(
+            text = "GOOGLE CLOUD",
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = JetBrainsMonoFontFamily,
+            color = AmoledTextMuted,
+            fontSize = 9.sp
+          )
+
+          val isGeminiActive = currentProvider == ProviderType.GEMINI_LIVE_API
+          Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = if (isGeminiActive) Color(0xFF1C1C1C) else Color(0xFF141414),
+            border = androidx.compose.foundation.BorderStroke(
+              1.dp,
+              if (isGeminiActive) AmoledActionPrimary else AmoledBorderSubtle
+            ),
+            modifier = Modifier
+              .fillMaxWidth()
+              .clickable { onSelectGemini() }
+          ) {
+            Row(
+              modifier = Modifier.padding(10.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = "Google Gemini Live",
+                  style = MaterialTheme.typography.bodyMedium,
+                  fontWeight = FontWeight.SemiBold,
+                  color = AmoledTextPrimary
+                )
+                Text(
+                  text = "gemini-2.5-flash with function calling",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = AmoledTextMuted,
+                  fontSize = 10.sp
+                )
+              }
+              if (isGeminiActive) {
+                Text(
+                  text = "[ACTIVE]",
+                  style = MaterialTheme.typography.labelSmall,
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontWeight = FontWeight.Bold,
+                  fontSize = 9.sp,
+                  color = AmoledStatusSuccess
+                )
+              }
+            }
           }
         }
       }
@@ -1112,7 +1294,8 @@ fun EmptyExecutionState(
 }
 
 /**
- * Improved AMOLED Dark Settings & Model Picker Dialog
+ * Developer Settings & Full Configuration Dialog:
+ * ONLY opened when the secret build number is tapped 10 times in About tab.
  */
 @Composable
 fun SettingsProviderDialog(
@@ -1135,9 +1318,6 @@ fun SettingsProviderDialog(
   var nvidiaKeyInput by remember { mutableStateOf(initialNvidiaApiKey) }
   var isApiKeyVisible by remember { mutableStateOf(false) }
   var nvidiaModelInput by remember { mutableStateOf(initialNvidiaModel) }
-  var modelSearchQuery by remember { mutableStateOf("") }
-  var selectedCategory by remember { mutableStateOf("All") }
-  var isCustomModelMode by remember { mutableStateOf(NvidiaNimModels.CATALOG.none { it.id == initialNvidiaModel }) }
   var nvidiaBaseUrlInput by remember { mutableStateOf(initialNvidiaBaseUrl) }
   var nvidiaTempInput by remember { mutableStateOf(initialNvidiaTemperature.toString()) }
   var nvidiaMaxTokensInput by remember { mutableStateOf(initialNvidiaMaxTokens.toString()) }
@@ -1151,7 +1331,7 @@ fun SettingsProviderDialog(
     containerColor = AmoledSurface,
     title = {
       Text(
-        text = "Provider & Model Configuration",
+        text = "Developer Configuration & API Settings",
         style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.SemiBold,
         color = AmoledTextPrimary
@@ -1165,16 +1345,16 @@ fun SettingsProviderDialog(
           .verticalScroll(scrollState)
       ) {
         Text(
-          "Execution Engine:",
+          "Active Engine:",
           style = MaterialTheme.typography.labelMedium,
           color = AmoledIconGreyLight,
           fontWeight = FontWeight.SemiBold
         )
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Option 1: NVIDIA NIM (Primary)
+        // Option 1: NVIDIA NIM
         Surface(
-          shape = RoundedCornerShape(10.dp),
+          shape = RoundedCornerShape(8.dp),
           color = if (selectedType == ProviderType.NVIDIA_NIM) Color(0xFF181818) else Color(0xFF0F0F0F),
           border = androidx.compose.foundation.BorderStroke(
             1.dp,
@@ -1197,31 +1377,14 @@ fun SettingsProviderDialog(
               )
             )
             Column(modifier = Modifier.padding(start = 6.dp)) {
-              Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                  "NVIDIA NIM Cloud",
-                  style = MaterialTheme.typography.bodyMedium,
-                  fontWeight = FontWeight.SemiBold,
-                  color = AmoledTextPrimary
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Surface(
-                  shape = RoundedCornerShape(4.dp),
-                  color = Color(0xFF222222),
-                  border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder)
-                ) {
-                  Text(
-                    text = "FREE MODELS",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AmoledIconGreyLight,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                  )
-                }
-              }
               Text(
-                "Structured tool calling with automatic model fallback recovery",
+                "NVIDIA NIM Cloud",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = AmoledTextPrimary
+              )
+              Text(
+                "Tool calling with automatic model fallback recovery",
                 style = MaterialTheme.typography.labelSmall,
                 color = AmoledTextMuted
               )
@@ -1232,7 +1395,7 @@ fun SettingsProviderDialog(
         // Expanded NVIDIA NIM settings
         AnimatedVisibility(visible = selectedType == ProviderType.NVIDIA_NIM) {
           Column(modifier = Modifier.padding(top = 10.dp)) {
-            // Live Connection Test Button and Status
+            // Live Connection Test
             Surface(
               shape = RoundedCornerShape(8.dp),
               color = Color(0xFF121212),
@@ -1260,20 +1423,18 @@ fun SettingsProviderDialog(
                     ),
                     shape = RoundedCornerShape(6.dp),
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                    modifier = Modifier.height(30.dp)
+                    modifier = Modifier.height(28.dp)
                   ) {
                     if (connectionStatus is ConnectionStatus.Testing) {
                       CircularProgressIndicator(
-                        modifier = Modifier.size(12.dp),
+                        modifier = Modifier.size(10.dp),
                         strokeWidth = 1.5.dp,
                         color = AmoledTextPrimary
                       )
-                      Spacer(modifier = Modifier.width(6.dp))
-                      Text("Testing...", style = MaterialTheme.typography.labelSmall)
-                    } else {
-                      Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(13.dp))
                       Spacer(modifier = Modifier.width(4.dp))
-                      Text("Test NIM", style = MaterialTheme.typography.labelSmall)
+                      Text("Testing...", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp)
+                    } else {
+                      Text("TEST NIM", style = MaterialTheme.typography.labelSmall, fontFamily = JetBrainsMonoFontFamily, fontSize = 9.sp)
                     }
                   }
                 }
@@ -1282,45 +1443,37 @@ fun SettingsProviderDialog(
                   is ConnectionStatus.Success -> {
                     Spacer(modifier = Modifier.height(6.dp))
                     Surface(
-                      shape = RoundedCornerShape(6.dp),
+                      shape = RoundedCornerShape(4.dp),
                       color = Color(0xFF102015),
                       border = androidx.compose.foundation.BorderStroke(1.dp, AmoledStatusSuccess.copy(alpha = 0.3f)),
                       modifier = Modifier.fillMaxWidth()
                     ) {
-                      Row(
-                        modifier = Modifier.padding(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                      ) {
-                        Icon(Icons.Default.Check, contentDescription = null, tint = AmoledStatusSuccess, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                          text = "Verified: ${status.modelCount} models online on build.nvidia.com",
-                          style = MaterialTheme.typography.labelSmall,
-                          color = AmoledStatusSuccess
-                        )
-                      }
+                      Text(
+                        text = "Verified: ${status.modelCount} models online on build.nvidia.com",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        color = AmoledStatusSuccess,
+                        fontSize = 9.sp,
+                        modifier = Modifier.padding(6.dp)
+                      )
                     }
                   }
                   is ConnectionStatus.Error -> {
                     Spacer(modifier = Modifier.height(6.dp))
                     Surface(
-                      shape = RoundedCornerShape(6.dp),
+                      shape = RoundedCornerShape(4.dp),
                       color = Color(0xFF221111),
                       border = androidx.compose.foundation.BorderStroke(1.dp, AmoledStatusError.copy(alpha = 0.3f)),
                       modifier = Modifier.fillMaxWidth()
                     ) {
-                      Row(
-                        modifier = Modifier.padding(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                      ) {
-                        Icon(Icons.Default.Close, contentDescription = null, tint = AmoledStatusError, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                          text = status.message,
-                          style = MaterialTheme.typography.labelSmall,
-                          color = AmoledStatusError
-                        )
-                      }
+                      Text(
+                        text = status.message,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        color = AmoledStatusError,
+                        fontSize = 9.sp,
+                        modifier = Modifier.padding(6.dp)
+                      )
                     }
                   }
                   else -> {}
@@ -1330,170 +1483,11 @@ fun SettingsProviderDialog(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Model Search & Filter
-            OutlinedTextField(
-              value = modelSearchQuery,
-              onValueChange = { modelSearchQuery = it },
-              label = { Text("Filter Models") },
-              placeholder = { Text("glm, llama, nemotron...") },
-              leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = AmoledIconGrey, modifier = Modifier.size(16.dp)) },
-              trailingIcon = {
-                if (modelSearchQuery.isNotBlank()) {
-                  IconButton(onClick = { modelSearchQuery = "" }) {
-                    Icon(Icons.Default.Clear, contentDescription = "Clear", tint = AmoledIconGrey, modifier = Modifier.size(15.dp))
-                  }
-                }
-              },
-              modifier = Modifier.fillMaxWidth(),
-              singleLine = true,
-              textStyle = MaterialTheme.typography.bodySmall,
-              shape = RoundedCornerShape(8.dp)
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Category filter chips in Flutter flat pill style
-            val catScrollState = rememberScrollState()
-            Row(
-              modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(catScrollState),
-              horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-              NvidiaNimModels.CATEGORIES.forEach { category ->
-                val isCatSelected = selectedCategory == category
-                Surface(
-                  shape = RoundedCornerShape(6.dp),
-                  color = if (isCatSelected) AmoledActionPrimary else Color(0xFF161616),
-                  border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
-                  modifier = Modifier.clickable { selectedCategory = category }
-                ) {
-                  Text(
-                    text = category,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontSize = 11.sp,
-                    color = if (isCatSelected) AmoledActionPrimaryOn else AmoledIconGreyLight,
-                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
-                  )
-                }
-              }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Filtered Models List Cards
-            val filteredModels = NvidiaNimModels.CATALOG.filter { model ->
-              val matchesCat = selectedCategory == "All" || model.category == selectedCategory
-              val matchesQuery = modelSearchQuery.isBlank() ||
-                model.id.contains(modelSearchQuery, ignoreCase = true) ||
-                model.name.contains(modelSearchQuery, ignoreCase = true) ||
-                model.description.contains(modelSearchQuery, ignoreCase = true)
-              matchesCat && matchesQuery
-            }
-
-            Column(
-              verticalArrangement = Arrangement.spacedBy(6.dp),
-              modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 220.dp)
-                .verticalScroll(rememberScrollState())
-            ) {
-              filteredModels.forEach { modelEntry ->
-                val isSelected = nvidiaModelInput == modelEntry.id && !isCustomModelMode
-                Surface(
-                  shape = RoundedCornerShape(8.dp),
-                  color = if (isSelected) Color(0xFF1E1E1E) else Color(0xFF101010),
-                  border = androidx.compose.foundation.BorderStroke(
-                    1.dp,
-                    if (isSelected) AmoledActionPrimary else AmoledBorderSubtle
-                  ),
-                  modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                      nvidiaModelInput = modelEntry.id
-                      isCustomModelMode = false
-                    }
-                ) {
-                  Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                  ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                      Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                          text = modelEntry.name,
-                          style = MaterialTheme.typography.bodySmall,
-                          fontWeight = FontWeight.SemiBold,
-                          color = AmoledTextPrimary
-                        )
-                        if (modelEntry.badge.isNotBlank()) {
-                          Spacer(modifier = Modifier.width(6.dp))
-                          Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = Color(0xFF222222)
-                          ) {
-                            Text(
-                              text = modelEntry.badge,
-                              style = MaterialTheme.typography.labelSmall,
-                              fontFamily = JetBrainsMonoFontFamily,
-                              fontSize = 9.sp,
-                              color = AmoledIconGreyLight,
-                              modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                            )
-                          }
-                        }
-                      }
-                      Text(
-                        text = modelEntry.id,
-                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMonoFontFamily),
-                        fontSize = 10.sp,
-                        color = AmoledTextMuted
-                      )
-                      Text(
-                        text = modelEntry.description,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontSize = 11.sp,
-                        color = AmoledTextSecondary
-                      )
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                      LittleCopyButton(
-                        textToCopy = modelEntry.id,
-                        buttonSize = 24.dp,
-                        iconSize = 12.dp,
-                        testTag = "copy_model_id_${modelEntry.id.substringAfterLast('/')}"
-                      )
-
-                      if (isSelected) {
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(
-                          imageVector = Icons.Default.Check,
-                          contentDescription = "Selected",
-                          tint = AmoledTextPrimary,
-                          modifier = Modifier.size(16.dp)
-                        )
-                      }
-                    }
-                  }
-                }
-              }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Custom Model toggle/field with copy button
+            // Model ID
             OutlinedTextField(
               value = nvidiaModelInput,
-              onValueChange = {
-                nvidiaModelInput = it
-                isCustomModelMode = true
-              },
-              label = { Text("Active Model Identifier") },
-              placeholder = { Text(NvidiaNimConfig.DEFAULT_MODEL) },
-              trailingIcon = {
-                LittleCopyButton(textToCopy = nvidiaModelInput, buttonSize = 28.dp, iconSize = 13.dp)
-              },
+              onValueChange = { nvidiaModelInput = it },
+              label = { Text("Model ID") },
               modifier = Modifier.fillMaxWidth(),
               singleLine = true,
               textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily),
@@ -1502,7 +1496,7 @@ fun SettingsProviderDialog(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // API Key field with show/hide toggle
+            // API Key field
             OutlinedTextField(
               value = nvidiaKeyInput,
               onValueChange = { nvidiaKeyInput = it },
@@ -1512,26 +1506,19 @@ fun SettingsProviderDialog(
               singleLine = true,
               visualTransformation = if (isApiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
               trailingIcon = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                  LittleCopyButton(textToCopy = nvidiaKeyInput, buttonSize = 28.dp, iconSize = 13.dp)
-                  IconButton(onClick = { isApiKeyVisible = !isApiKeyVisible }) {
-                    Icon(
-                      imageVector = if (isApiKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                      contentDescription = if (isApiKeyVisible) "Hide key" else "Show key",
-                      tint = AmoledIconGrey,
-                      modifier = Modifier.size(16.dp)
-                    )
-                  }
-                }
+                Text(
+                  text = if (isApiKeyVisible) "[HIDE]" else "[SHOW]",
+                  style = MaterialTheme.typography.labelSmall,
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontSize = 9.sp,
+                  color = AmoledIconGrey,
+                  modifier = Modifier
+                    .clickable { isApiKeyVisible = !isApiKeyVisible }
+                    .padding(horizontal = 6.dp, vertical = 4.dp)
+                )
               },
               textStyle = MaterialTheme.typography.bodySmall,
               shape = RoundedCornerShape(8.dp)
-            )
-            Text(
-              text = "Preconfigured via BuildConfig.NVIDIA_API_KEY",
-              style = MaterialTheme.typography.labelSmall,
-              color = AmoledTextMuted,
-              modifier = Modifier.padding(top = 2.dp, start = 4.dp)
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -1540,17 +1527,6 @@ fun SettingsProviderDialog(
               value = nvidiaBaseUrlInput,
               onValueChange = { nvidiaBaseUrlInput = it },
               label = { Text("Base URL") },
-              placeholder = { Text(NvidiaNimConfig.DEFAULT_BASE_URL) },
-              trailingIcon = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                  LittleCopyButton(textToCopy = nvidiaBaseUrlInput, buttonSize = 28.dp, iconSize = 13.dp)
-                  if (nvidiaBaseUrlInput != NvidiaNimConfig.DEFAULT_BASE_URL) {
-                    IconButton(onClick = { nvidiaBaseUrlInput = NvidiaNimConfig.DEFAULT_BASE_URL }) {
-                      Icon(Icons.Default.Refresh, contentDescription = "Reset URL", tint = AmoledIconGrey, modifier = Modifier.size(15.dp))
-                    }
-                  }
-                }
-              },
               modifier = Modifier.fillMaxWidth(),
               singleLine = true,
               textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily),
@@ -1582,11 +1558,11 @@ fun SettingsProviderDialog(
           }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         // Option 2: Sandbox Engine
         Surface(
-          shape = RoundedCornerShape(10.dp),
+          shape = RoundedCornerShape(8.dp),
           color = if (selectedType == ProviderType.SANDBOX_ENGINE) Color(0xFF181818) else Color(0xFF0F0F0F),
           border = androidx.compose.foundation.BorderStroke(
             1.dp,
@@ -1615,11 +1591,11 @@ fun SettingsProviderDialog(
           }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         // Option 3: Gemini Live API
         Surface(
-          shape = RoundedCornerShape(10.dp),
+          shape = RoundedCornerShape(8.dp),
           color = if (selectedType == ProviderType.GEMINI_LIVE_API) Color(0xFF181818) else Color(0xFF0F0F0F),
           border = androidx.compose.foundation.BorderStroke(
             1.dp,
