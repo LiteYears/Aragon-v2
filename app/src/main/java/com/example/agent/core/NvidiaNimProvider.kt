@@ -26,7 +26,7 @@ data class NvidiaNimConfig(
   val temperature: Double? = 0.2,
   val maxTokens: Int? = 4096,
   val topP: Double? = null,
-  val timeoutSeconds: Long = 75,
+  val timeoutSeconds: Long = 40,
   val enableReasoning: Boolean = true
 ) {
   companion object {
@@ -263,23 +263,33 @@ class NvidiaNimProvider(
       )
     }
 
-    // Try with active model first; if 404/function not found occurs, fall back to verified GLM 5.3 seamlessly
-    val firstAttempt = executeChatCompletion(
-      modelToUse = activeConfig.model,
-      systemPrompt = systemPrompt,
-      taskIntent = taskIntent,
-      messages = messages,
-      tools = tools,
-      useNativeTools = true
-    )
+    // Candidate models to try in sequence: requested model first, then verified free fallbacks
+    val candidateModels = buildList {
+      add(activeConfig.model)
+      val fallbacks = listOf(
+        NvidiaNimConfig.DEFAULT_MODEL,
+        NvidiaNimModels.LLAMA_3_2_11B,
+        NvidiaNimModels.NEMOTRON_3_5_LIGHTNING,
+        NvidiaNimModels.MISTRAL_LARGE_2
+      )
+      for (f in fallbacks) {
+        if (!contains(f)) add(f)
+      }
+    }
 
-    if (firstAttempt is LLMDecision.ProviderError && isRecoverableModelError(firstAttempt.message)) {
-      // Automatic seamless fallback to verified model
-      val fallbackModel = NvidiaNimConfig.DEFAULT_MODEL
-      if (activeConfig.model != fallbackModel) {
-        val fallbackNotice = "[Notice] Model '${activeConfig.model}' is not active on this API key tier. Seamlessly routed to verified model '$fallbackModel'."
-        val secondAttempt = executeChatCompletion(
-          modelToUse = fallbackModel,
+    var lastError = "Unknown error"
+
+    for ((modelIndex, modelCandidate) in candidateModels.withIndex()) {
+      val isFallbackModel = modelIndex > 0
+      val retryAttempts = if (isFallbackModel) 1 else 2
+
+      for (attempt in 0..retryAttempts) {
+        if (attempt > 0) {
+          kotlinx.coroutines.delay(1200L * attempt) // Exponential backoff on dropped connection
+        }
+
+        val result = executeChatCompletion(
+          modelToUse = modelCandidate,
           systemPrompt = systemPrompt,
           taskIntent = taskIntent,
           messages = messages,
@@ -287,26 +297,47 @@ class NvidiaNimProvider(
           useNativeTools = true
         )
 
-        return@withContext when (secondAttempt) {
-          is LLMDecision.ExecuteTool -> secondAttempt.copy(
-            thought = "$fallbackNotice\n${secondAttempt.thought}"
-          )
-          is LLMDecision.Complete -> secondAttempt.copy(
-            thought = "$fallbackNotice\n${secondAttempt.thought}"
-          )
-          else -> secondAttempt
+        when (result) {
+          is LLMDecision.ExecuteTool -> {
+            val thoughtNotice = if (isFallbackModel) {
+              "[Notice] Recovered from endpoint failure on '${activeConfig.model}'. Seamlessly routed to model '$modelCandidate'.\n${result.thought ?: ""}"
+            } else result.thought
+            return@withContext result.copy(thought = thoughtNotice)
+          }
+          is LLMDecision.Complete -> {
+            val thoughtNotice = if (isFallbackModel) {
+              "[Notice] Recovered from endpoint failure on '${activeConfig.model}'. Seamlessly routed to model '$modelCandidate'.\n${result.thought ?: ""}"
+            } else result.thought
+            return@withContext result.copy(thought = thoughtNotice)
+          }
+          is LLMDecision.ProviderError -> {
+            lastError = result.message
+            // If the error is fatal auth (401), don't retry other models with same key
+            if (result.message.contains("401") || result.message.contains("authentication failed")) {
+              return@withContext result
+            }
+            // If transient or recoverable error, continue loop
+          }
         }
       }
     }
 
-    return@withContext firstAttempt
+    return@withContext LLMDecision.ProviderError("NVIDIA NIM endpoint dropped or timed out after multiple retries and model fallbacks: $lastError")
   }
 
   private fun isRecoverableModelError(errorMessage: String): Boolean {
-    return errorMessage.contains("404") ||
-        errorMessage.contains("Not found for account") ||
-        errorMessage.contains("model or endpoint not found") ||
-        errorMessage.contains("Function") && errorMessage.contains("Not found")
+    val lower = errorMessage.lowercase()
+    return lower.contains("404") ||
+      lower.contains("not found") ||
+      lower.contains("timeout") ||
+      lower.contains("timed out") ||
+      lower.contains("connection") ||
+      lower.contains("stream") ||
+      lower.contains("reset") ||
+      lower.contains("429") ||
+      lower.contains("502") ||
+      lower.contains("503") ||
+      lower.contains("504")
   }
 
   private suspend fun executeChatCompletion(

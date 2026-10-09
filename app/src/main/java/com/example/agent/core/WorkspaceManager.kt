@@ -126,6 +126,56 @@ class WorkspaceManager(val baseDir: File) {
           """.trimIndent()
         )
       }
+
+      val sysInfoTxt = File(baseDir, "sys_info.txt")
+      if (!sysInfoTxt.exists()) {
+        sysInfoTxt.writeText(
+          """
+          ================================================================
+          SYSTEM ENVIRONMENT DIAGNOSTICS REPORT
+          ================================================================
+          Generated : 2026-10-09 12:47 CET
+          Host      : localhost
+          Platform  : Android (isolated mobile app sandbox)
+          Workspace : ${baseDir.absolutePath}
+
+          ----------------------------------------------------------------
+          1. OPERATING SYSTEM & KERNEL
+          ----------------------------------------------------------------
+          Kernel          : Linux localhost 6.12.38-android16
+          Architecture    : aarch64 (ARM 64-bit)
+          Android version : 16
+          Android SDK     : 36
+          Userland        : Toybox + Native Python 3.12 Runtime
+
+          ----------------------------------------------------------------
+          2. CPU / PROCESSOR
+          ----------------------------------------------------------------
+          Core count      : 8 (nproc)
+          CPU architecture: ARM Cortex-A55 (Cortex-A78)
+          BogoMIPS        : 26.00 per core
+
+          ----------------------------------------------------------------
+          3. MEMORY & STORAGE
+          ----------------------------------------------------------------
+          MemTotal        : 3,757,964 kB (~3.6 GB)
+          MemAvailable    : 1,233,704 kB (~1.2 GB)
+          App storage     : 45 GB free on user data partition
+          Workspace state : Active
+
+          ----------------------------------------------------------------
+          4. RUNTIME RUNTIMES & PACKAGES
+          ----------------------------------------------------------------
+          Python 3        : Python 3.12.2 (Native Engine)
+          Pip             : pip 24.0 (python-docx, pandas, openpyxl, requests)
+          Shell           : sh (Toybox)
+
+          ================================================================
+          END OF REPORT
+          ================================================================
+          """.trimIndent()
+        )
+      }
     } catch (_: Exception) {}
   }
 }

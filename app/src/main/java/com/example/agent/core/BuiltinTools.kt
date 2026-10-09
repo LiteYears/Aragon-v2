@@ -123,6 +123,25 @@ class TerminalTool(private val workspace: WorkspaceManager) : Tool {
         val stdout = stdoutSb.toString().trim()
         val stderr = stderrSb.toString().trim()
 
+        // If system shell cannot find python/pip (common in Android sandboxes), seamlessly execute via PythonRuntime
+        if ((exitCode != 0 || stderr.contains("not found") || stderr.contains("inaccessible")) && PythonRuntime.matches(command)) {
+          val pyResult = PythonRuntime.execute(command, workspace.baseDir)
+          val currentArtifacts = workspace.listAllArtifacts()
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = if (pyResult.exitCode == 0) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
+            arguments = arguments,
+            output = pyResult.stdout.ifEmpty { null },
+            error = if (pyResult.exitCode != 0) pyResult.stderr.ifBlank { "Python execution failed" } else null,
+            artifacts = currentArtifacts,
+            duration = System.currentTimeMillis() - startTime,
+            stdout = pyResult.stdout,
+            stderr = pyResult.stderr,
+            exitCode = pyResult.exitCode
+          )
+        }
+
         val status = if (exitCode == 0) ToolStatus.SUCCEEDED else ToolStatus.FAILED
         val errorText = if (exitCode != 0) {
           if (stderr.isNotBlank()) stderr else "Command exited with non-zero exit code: $exitCode"
@@ -150,6 +169,23 @@ class TerminalTool(private val workspace: WorkspaceManager) : Tool {
         process?.destroyForcibly()
         throw ce
       } catch (e: Exception) {
+        if (PythonRuntime.matches(command)) {
+          val pyResult = PythonRuntime.execute(command, workspace.baseDir)
+          val currentArtifacts = workspace.listAllArtifacts()
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = if (pyResult.exitCode == 0) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
+            arguments = arguments,
+            output = pyResult.stdout.ifEmpty { null },
+            error = if (pyResult.exitCode != 0) pyResult.stderr.ifBlank { "Python execution failed" } else null,
+            artifacts = currentArtifacts,
+            duration = System.currentTimeMillis() - startTime,
+            stdout = pyResult.stdout,
+            stderr = pyResult.stderr,
+            exitCode = pyResult.exitCode
+          )
+        }
         ToolResult(
           callId = callId,
           toolName = name,
@@ -709,5 +745,114 @@ class InspectArtifactTool(private val workspace: WorkspaceManager) : Tool {
           exitCode = 1
         )
       }
+    }
+}
+
+/**
+ * Executes Python 3 code or scripts in the sandboxed workspace.
+ */
+class PythonTool(private val workspace: WorkspaceManager) : Tool {
+  override val name: String = "python3"
+  override val description: String =
+    "Execute Python 3 scripts or inline code in the sandboxed workspace. Supports standard libraries, python-docx (.docx Word document creation), pandas, csv, json, os, and pip-installed libraries."
+
+  override val schema: ToolSchema = ToolSchema(
+    listOf(
+      ToolParameter(
+        name = "code",
+        type = "string",
+        description = "Inline Python 3 code to execute (e.g., 'import docx; doc = docx.Document(); ...'). Optional if script file is specified.",
+        required = false
+      ),
+      ToolParameter(
+        name = "script",
+        type = "string",
+        description = "Path to an existing .py script in the workspace to execute (e.g., 'transform.py').",
+        required = false
+      ),
+      ToolParameter(
+        name = "command",
+        type = "string",
+        description = "Full python3 command line (e.g. 'python3 transform.py').",
+        required = false
+      )
+    )
+  )
+
+  override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
+    withContext(Dispatchers.IO) {
+      val startTime = System.currentTimeMillis()
+      val code = arguments["code"]?.toString()
+      val script = arguments["script"]?.toString()
+      val command = arguments["command"]?.toString()
+
+      val pyResult = when {
+        !code.isNullOrBlank() -> PythonRuntime.runPythonCode(code, workspace.baseDir, emptyList())
+        !script.isNullOrBlank() -> PythonRuntime.execute("python3 $script", workspace.baseDir)
+        !command.isNullOrBlank() -> PythonRuntime.execute(command, workspace.baseDir)
+        else -> PythonRuntime.execute("python3 --version", workspace.baseDir)
+      }
+
+      val artifacts = workspace.listAllArtifacts()
+      val duration = System.currentTimeMillis() - startTime
+
+      ToolResult(
+        callId = callId,
+        toolName = name,
+        status = if (pyResult.exitCode == 0) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
+        arguments = arguments,
+        output = pyResult.stdout.ifEmpty { null },
+        error = if (pyResult.exitCode != 0) pyResult.stderr.ifBlank { "Python execution error" } else null,
+        artifacts = artifacts,
+        duration = duration,
+        stdout = pyResult.stdout,
+        stderr = pyResult.stderr,
+        exitCode = pyResult.exitCode
+      )
+    }
+}
+
+/**
+ * Pip package manager tool for managing Python packages in the workspace.
+ */
+class PipTool(private val workspace: WorkspaceManager) : Tool {
+  override val name: String = "pip"
+  override val description: String =
+    "Install, list, or inspect Python packages using the native Pip package manager (e.g., 'pip install python-docx', 'pip list')."
+
+  override val schema: ToolSchema = ToolSchema(
+    listOf(
+      ToolParameter(
+        name = "command",
+        type = "string",
+        description = "The pip command to execute (e.g., 'install python-docx', 'install pandas', 'list').",
+        required = true
+      )
+    )
+  )
+
+  override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
+    withContext(Dispatchers.IO) {
+      val startTime = System.currentTimeMillis()
+      val cmd = arguments["command"]?.toString() ?: "list"
+      val fullCmd = if (cmd.startsWith("pip")) cmd else "pip $cmd"
+
+      val pipResult = PythonRuntime.execute(fullCmd, workspace.baseDir)
+      val artifacts = workspace.listAllArtifacts()
+      val duration = System.currentTimeMillis() - startTime
+
+      ToolResult(
+        callId = callId,
+        toolName = name,
+        status = if (pipResult.exitCode == 0) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
+        arguments = arguments,
+        output = pipResult.stdout.ifEmpty { null },
+        error = if (pipResult.exitCode != 0) pipResult.stderr.ifBlank { "Pip error" } else null,
+        artifacts = artifacts,
+        duration = duration,
+        stdout = pipResult.stdout,
+        stderr = pipResult.stderr,
+        exitCode = pipResult.exitCode
+      )
     }
 }

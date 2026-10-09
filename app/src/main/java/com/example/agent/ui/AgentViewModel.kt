@@ -141,6 +141,11 @@ class AgentViewModel(
       expectedArtifact = "report.md"
     ),
     PromptPreset(
+      title = "Python Word Doc",
+      prompt = "Transform sys_info.txt into a structured Word document (sys_info.docx) using Python 3 and python-docx.",
+      expectedArtifact = "sys_info.docx"
+    ),
+    PromptPreset(
       title = "Project Summary",
       prompt = "Inspect workspace files and synthesize a structured project_summary.json document.",
       expectedArtifact = "project_summary.json"

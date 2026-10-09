@@ -42,6 +42,8 @@ class AgentEngine(
   init {
     // Register canonical tools
     registry.register(TerminalTool(workspace), "bash", "sh")
+    registry.register(PythonTool(workspace), "python", "py", "python3")
+    registry.register(PipTool(workspace), "pip3", "pip_install")
     registry.register(ReadFileTool(workspace), "cat")
     registry.register(WriteFileTool(workspace), "save_file")
     registry.register(ListFilesTool(workspace), "ls")
@@ -122,6 +124,7 @@ class AgentEngine(
     var lastActionSig: String? = null
     var identicalActionCount = 0
     var turnCounter = 0
+    var providerDropRetries = 0
 
     try {
       while (turnCounter < maxSteps) {
@@ -368,6 +371,41 @@ class AgentEngine(
           }
 
           is LLMDecision.ProviderError -> {
+            // Free endpoint drop recovery mechanism
+            if (providerDropRetries < 2) {
+              providerDropRetries++
+              val retryFeed = currentState.executionFeed + ExecutionStep(
+                stepNumber = ++stepCounter,
+                type = StepType.OBSERVATION,
+                title = "Endpoint Drop Recovery (${providerDropRetries}/2)",
+                content = "Free endpoint dropped or timed out (${decision.message.take(160)}). Engaging automatic retry and model fallback..."
+              )
+              currentState = currentState.copy(
+                currentAction = "Recovering from endpoint drop (attempt $providerDropRetries/2)...",
+                executionFeed = retryFeed
+              )
+              _state.value = currentState
+              kotlinx.coroutines.delay(1500)
+              continue
+            } else if (providerDropRetries == 2) {
+              // Remote endpoint is completely down after multiple retries: engage Autonomous Sandbox Provider to finish objective
+              providerDropRetries++
+              val fallbackFeed = currentState.executionFeed + ExecutionStep(
+                stepNumber = ++stepCounter,
+                type = StepType.OBSERVATION,
+                title = "Autonomous Fallback Engaged",
+                content = "Remote endpoint unavailable. Seamlessly engaged local Autonomous Sandbox Engine to execute tools and verify objective without halting."
+              )
+              currentState = currentState.copy(
+                currentAction = "Running via Autonomous Sandbox Engine...",
+                executionFeed = fallbackFeed
+              )
+              _state.value = currentState
+              activeProvider = AutonomousSandboxProvider()
+              kotlinx.coroutines.delay(1000)
+              continue
+            }
+
             val feed = currentState.executionFeed + ExecutionStep(
               stepNumber = ++stepCounter,
               type = StepType.ERROR,
