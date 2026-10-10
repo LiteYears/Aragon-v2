@@ -1,6 +1,7 @@
 package com.example.agent.ui
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.agent.core.AgentEngine
@@ -14,6 +15,8 @@ import com.example.agent.core.NvidiaNimConfig
 import com.example.agent.core.NvidiaNimModels
 import com.example.agent.core.NvidiaNimProvider
 import com.example.agent.core.StepType
+import com.example.agent.service.AgentExecutionService
+import com.example.agent.service.AgentServiceBridge
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -57,6 +60,8 @@ class AgentViewModel(
 
   val workspaceDir: File = resolveWorkspaceDir(application)
 
+  private val prefs = application.getSharedPreferences("aragon_agent_prefs", Context.MODE_PRIVATE)
+
   private val initialNvidiaKey = getInitialNvidiaApiKey()
   private val hasNvidiaKey = initialNvidiaKey.isNotBlank()
 
@@ -64,17 +69,30 @@ class AgentViewModel(
   private val nvidiaProvider = NvidiaNimProvider(
     NvidiaNimConfig(
       apiKey = initialNvidiaKey,
-      model = NvidiaNimConfig.DEFAULT_MODEL
+      model = getInitialNvidiaModel(),
+      baseUrl = getInitialNvidiaBaseUrl(),
+      temperature = getInitialNvidiaTemperature(),
+      maxTokens = getInitialNvidiaMaxTokens()
     )
   )
   private val geminiProvider = GeminiLLMProvider(
     apiKey = getInitialGeminiApiKey()
   )
 
+  private val initialProviderType = getInitialProviderType()
+
   private val engine = AgentEngine(
     workspaceDir = workspaceDir,
-    initialProvider = if (hasNvidiaKey) nvidiaProvider else sandboxProvider
+    initialProvider = when (initialProviderType) {
+      ProviderType.NVIDIA_NIM -> if (hasNvidiaKey) nvidiaProvider else sandboxProvider
+      ProviderType.SANDBOX_ENGINE -> sandboxProvider
+      ProviderType.GEMINI_LIVE_API -> geminiProvider
+    }
   )
+
+  init {
+    AgentServiceBridge.engine = engine
+  }
 
   val state: StateFlow<AgentState> = engine.state.stateIn(
     scope = viewModelScope,
@@ -85,24 +103,22 @@ class AgentViewModel(
   private val _activeTab = MutableStateFlow(UiTab.EXECUTION_FEED)
   val activeTab: StateFlow<UiTab> = _activeTab.asStateFlow()
 
-  private val _providerType = MutableStateFlow(
-    if (hasNvidiaKey) ProviderType.NVIDIA_NIM else ProviderType.SANDBOX_ENGINE
-  )
+  private val _providerType = MutableStateFlow(initialProviderType)
   val providerType: StateFlow<ProviderType> = _providerType.asStateFlow()
 
   private val _nvidiaApiKey = MutableStateFlow(initialNvidiaKey)
   val nvidiaApiKey: StateFlow<String> = _nvidiaApiKey.asStateFlow()
 
-  private val _nvidiaModel = MutableStateFlow(NvidiaNimConfig.DEFAULT_MODEL)
+  private val _nvidiaModel = MutableStateFlow(getInitialNvidiaModel())
   val nvidiaModel: StateFlow<String> = _nvidiaModel.asStateFlow()
 
-  private val _nvidiaBaseUrl = MutableStateFlow(NvidiaNimConfig.DEFAULT_BASE_URL)
+  private val _nvidiaBaseUrl = MutableStateFlow(getInitialNvidiaBaseUrl())
   val nvidiaBaseUrl: StateFlow<String> = _nvidiaBaseUrl.asStateFlow()
 
-  private val _nvidiaTemperature = MutableStateFlow(0.2)
+  private val _nvidiaTemperature = MutableStateFlow(getInitialNvidiaTemperature())
   val nvidiaTemperature: StateFlow<Double> = _nvidiaTemperature.asStateFlow()
 
-  private val _nvidiaMaxTokens = MutableStateFlow(4096)
+  private val _nvidiaMaxTokens = MutableStateFlow(getInitialNvidiaMaxTokens())
   val nvidiaMaxTokens: StateFlow<Int> = _nvidiaMaxTokens.asStateFlow()
 
   private val _geminiApiKey = MutableStateFlow(getInitialGeminiApiKey())
@@ -118,6 +134,8 @@ class AgentViewModel(
   val connectionStatus: StateFlow<ConnectionStatus> = _connectionStatus.asStateFlow()
 
   private fun getInitialNvidiaApiKey(): String {
+    val saved = prefs.getString("nvidia_api_key", null)?.trim()
+    if (!saved.isNullOrBlank()) return saved
     return try {
       val rawKey = com.example.BuildConfig.NVIDIA_API_KEY
       if (rawKey.isNotBlank() && rawKey != "MY_NVIDIA_API_KEY" && rawKey != "\"MY_NVIDIA_API_KEY\"") {
@@ -131,6 +149,8 @@ class AgentViewModel(
   }
 
   private fun getInitialGeminiApiKey(): String {
+    val saved = prefs.getString("gemini_api_key", null)?.trim()
+    if (!saved.isNullOrBlank()) return saved
     return try {
       val field = com.example.BuildConfig::class.java.getField("GEMINI_API_KEY")
       val rawKey = field.get(null) as? String ?: ""
@@ -142,6 +162,36 @@ class AgentViewModel(
     } catch (_: Exception) {
       ""
     }
+  }
+
+  private fun getInitialProviderType(): ProviderType {
+    val saved = prefs.getString("provider_type", null)
+    if (!saved.isNullOrBlank()) {
+      try {
+        return ProviderType.valueOf(saved)
+      } catch (_: Exception) {}
+    }
+    return if (hasNvidiaKey) ProviderType.NVIDIA_NIM else ProviderType.SANDBOX_ENGINE
+  }
+
+  private fun getInitialNvidiaModel(): String {
+    return prefs.getString("nvidia_model", null)?.trim()?.ifBlank { null }
+      ?: NvidiaNimConfig.DEFAULT_MODEL
+  }
+
+  private fun getInitialNvidiaBaseUrl(): String {
+    return prefs.getString("nvidia_base_url", null)?.trim()?.ifBlank { null }
+      ?: NvidiaNimConfig.DEFAULT_BASE_URL
+  }
+
+  private fun getInitialNvidiaTemperature(): Double {
+    val saved = prefs.getFloat("nvidia_temp", -1f)
+    return if (saved >= 0f) saved.toDouble() else 0.2
+  }
+
+  private fun getInitialNvidiaMaxTokens(): Int {
+    val saved = prefs.getInt("nvidia_max_tokens", -1)
+    return if (saved > 0) saved else 4096
   }
 
   val presets = listOf(
@@ -178,6 +228,7 @@ class AgentViewModel(
 
   fun setProviderType(type: ProviderType) {
     _providerType.value = type
+    prefs.edit().putString("provider_type", type.name).apply()
     when (type) {
       ProviderType.SANDBOX_ENGINE -> {
         engine.setProvider(sandboxProvider)
@@ -200,11 +251,31 @@ class AgentViewModel(
     temperature: Double? = null,
     maxTokens: Int? = null
   ) {
-    apiKey?.let { _nvidiaApiKey.value = it.trim() }
-    model?.let { _nvidiaModel.value = it.trim() }
-    baseUrl?.let { _nvidiaBaseUrl.value = it.trim() }
-    temperature?.let { _nvidiaTemperature.value = it }
-    maxTokens?.let { _nvidiaMaxTokens.value = it }
+    val editor = prefs.edit()
+    apiKey?.let {
+      val clean = it.trim()
+      _nvidiaApiKey.value = clean
+      editor.putString("nvidia_api_key", clean)
+    }
+    model?.let {
+      val clean = it.trim()
+      _nvidiaModel.value = clean
+      editor.putString("nvidia_model", clean)
+    }
+    baseUrl?.let {
+      val clean = it.trim()
+      _nvidiaBaseUrl.value = clean
+      editor.putString("nvidia_base_url", clean)
+    }
+    temperature?.let {
+      _nvidiaTemperature.value = it
+      editor.putFloat("nvidia_temp", it.toFloat())
+    }
+    maxTokens?.let {
+      _nvidiaMaxTokens.value = it
+      editor.putInt("nvidia_max_tokens", it)
+    }
+    editor.apply()
 
     applyNvidiaConfig()
     if (_providerType.value == ProviderType.NVIDIA_NIM) {
@@ -289,8 +360,10 @@ class AgentViewModel(
   }
 
   fun updateGeminiApiKey(key: String) {
-    _geminiApiKey.value = key
-    geminiProvider.setApiKey(key)
+    val clean = key.trim()
+    _geminiApiKey.value = clean
+    prefs.edit().putString("gemini_api_key", clean).apply()
+    geminiProvider.setApiKey(clean)
     if (_providerType.value == ProviderType.GEMINI_LIVE_API) {
       engine.setProvider(geminiProvider)
     }
@@ -298,6 +371,9 @@ class AgentViewModel(
 
   fun submitTask(intent: String, expectedArtifact: String? = null) {
     _activeTab.value = UiTab.EXECUTION_FEED
+    _selectedArtifactForPreview.value = null
+    _previewContent.value = null
+    AgentExecutionService.start(getApplication(), intent)
     engine.submitTask(intent, expectedArtifact)
   }
 
@@ -306,6 +382,7 @@ class AgentViewModel(
     val currentSessionId = state.value.sessionId
     if (!currentGoal.isNullOrBlank() && currentSessionId.isNotBlank()) {
       _activeTab.value = UiTab.EXECUTION_FEED
+      AgentExecutionService.start(getApplication(), currentGoal)
       engine.submitTask(currentGoal, state.value.task?.expectedArtifact, resumeSessionId = currentSessionId)
     }
   }
@@ -314,6 +391,7 @@ class AgentViewModel(
    * Starts a completely empty, fresh task with an isolated new session and removed artifacts.
    */
   fun startNewTask() {
+    AgentExecutionService.stop(getApplication())
     engine.cancel()
     engine.startNewSession()
     _selectedArtifactForPreview.value = null
@@ -322,10 +400,12 @@ class AgentViewModel(
   }
 
   fun stopExecution() {
+    AgentExecutionService.stop(getApplication())
     engine.cancel()
   }
 
   fun resetWorkspace(cleanFiles: Boolean = true) {
+    AgentExecutionService.stop(getApplication())
     engine.reset(cleanFiles)
     _selectedArtifactForPreview.value = null
     _previewContent.value = null

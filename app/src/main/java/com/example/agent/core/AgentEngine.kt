@@ -38,7 +38,7 @@ class AgentEngine(
 
   private val _state = MutableStateFlow(
     AgentState(
-      artifacts = workspace.listAllArtifacts()
+      artifacts = emptyList()
     )
   )
   val state: StateFlow<AgentState> = _state.asStateFlow()
@@ -73,10 +73,9 @@ class AgentEngine(
     registry.register(ExtractWebDataTool(), "extract_tables", "web_extract")
     registry.register(DeepResearchTool(workspace), "research", "auto_research")
 
-    // Seed default workspace dataset so sample analysis workflows work out of the box
+    // Initialize workspace and seed baseline inputs if needed
     try {
       workspace.seedWorkspaceDefaults()
-      _state.value = _state.value.copy(artifacts = workspace.listAllArtifacts())
     } catch (_: Exception) {}
   }
 
