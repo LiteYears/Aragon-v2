@@ -250,8 +250,9 @@ class WebSearchTool : Tool {
           .get()
           .build()
 
-        val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
+        val responseBody = httpClient.newCall(request).execute().use { response ->
+          response.body?.string() ?: ""
+        }
 
         val results = parseDuckDuckGoResults(responseBody, maxResults)
 
@@ -363,8 +364,9 @@ class WebSearchTool : Tool {
     return try {
       val url = "https://api.duckduckgo.com/?q=${URLEncoder.encode(query, "UTF-8")}&format=json&no_redirect=1&no_html=1"
       val req = Request.Builder().url(url).build()
-      val res = httpClient.newCall(req).execute()
-      val body = res.body?.string() ?: return emptyList()
+      val body = httpClient.newCall(req).execute().use { res ->
+        res.body?.string()
+      } ?: return emptyList()
       val json = JSONObject(body)
 
       val results = mutableListOf<WebSearchResult>()
@@ -611,9 +613,10 @@ class WebBrowseTool(private val workspace: WorkspaceManager) : Tool {
         .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
         .get()
         .build()
-      val res = httpClient.newCall(req).execute()
-      val body = res.body?.string() ?: ""
-      if (res.isSuccessful && body.isNotBlank()) return body
+      val body = httpClient.newCall(req).execute().use { res ->
+        if (res.isSuccessful) res.body?.string().orEmpty() else ""
+      }
+      if (body.isNotBlank()) return body
     } catch (_: Exception) {}
 
     // Layer 2.5: Semantic tool retry — fallback to mobile / AMP / Wayback archive
@@ -631,9 +634,10 @@ class WebBrowseTool(private val workspace: WorkspaceManager) : Tool {
           .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
           .get()
           .build()
-        val res = httpClient.newCall(req).execute()
-        val body = res.body?.string() ?: ""
-        if (res.isSuccessful && body.isNotBlank()) return body
+        val body = httpClient.newCall(req).execute().use { res ->
+          if (res.isSuccessful) res.body?.string().orEmpty() else ""
+        }
+        if (body.isNotBlank()) return body
       } catch (_: Exception) {}
     }
     return ""
@@ -731,9 +735,9 @@ class WebCrawlerTool(private val workspace: WorkspaceManager) : Tool {
             .header("User-Agent", "Aragon-WebCrawler/2.4 (Autonomous Research Engine)")
             .get()
             .build()
-          val res = httpClient.newCall(req).execute()
-          if (!res.isSuccessful) continue
-          val html = res.body?.string() ?: continue
+          val html = httpClient.newCall(req).execute().use { res ->
+            if (res.isSuccessful) res.body?.string() else null
+          } ?: continue
 
           val (markdown, links) = WebContentConverter.cleanHtmlToMarkdown(html, currentUrl)
           val title = html.substringAfter("<title>", "").substringBefore("</title>").trim()
@@ -860,8 +864,9 @@ class ExtractWebDataTool : Tool {
           .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
           .get()
           .build()
-        val res = httpClient.newCall(req).execute()
-        val html = res.body?.string() ?: ""
+        val html = httpClient.newCall(req).execute().use { res ->
+          res.body?.string().orEmpty()
+        }
 
         val output = when (extractionType) {
           "tables" -> {
@@ -1187,8 +1192,9 @@ class BrowserAutomationTool(private val workspace: WorkspaceManager) : Tool {
             .header("Sec-Ch-Ua", "\"Chromium\";v=\"124\", \"Google Chrome\";v=\"124\"")
             .get()
             .build()
-          val res = httpClient.newCall(req).execute()
-          lastHtml = res.body?.string() ?: ""
+          lastHtml = httpClient.newCall(req).execute().use { res ->
+            res.body?.string().orEmpty()
+          }
         }
 
         val artifacts = mutableListOf<Artifact>()
@@ -1257,8 +1263,9 @@ class BrowserAutomationTool(private val workspace: WorkspaceManager) : Tool {
             if (matchedLink != null) {
               currentUrl = matchedLink.url
               val req = Request.Builder().url(currentUrl).header("User-Agent", "Playwright-Browser").get().build()
-              val res = httpClient.newCall(req).execute()
-              lastHtml = res.body?.string() ?: ""
+              lastHtml = httpClient.newCall(req).execute().use { res ->
+                res.body?.string().orEmpty()
+              }
               "Clicked element '$target'. Navigated to: ${matchedLink.url}\nNew page title: ${extractTitle(lastHtml)}"
             } else {
               "Clicked element matching '$target' in virtual DOM. Dispatched click event successfully."

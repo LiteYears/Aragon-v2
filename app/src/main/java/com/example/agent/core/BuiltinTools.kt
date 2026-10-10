@@ -86,14 +86,17 @@ class TerminalTool(private val workspace: WorkspaceManager) : Tool {
 
         val stdoutSb = StringBuilder()
         val stderrSb = StringBuilder()
+        val streamLock = Any()
 
         val stdoutThread = Thread {
           try {
             BufferedReader(InputStreamReader(p.inputStream)).use { reader ->
               var line: String?
               while (reader.readLine().also { line = it } != null) {
-                if (stdoutSb.length < 32000) {
-                  stdoutSb.appendLine(line)
+                synchronized(streamLock) {
+                  if (stdoutSb.length < 32000) {
+                    stdoutSb.appendLine(line)
+                  }
                 }
               }
             }
@@ -105,8 +108,10 @@ class TerminalTool(private val workspace: WorkspaceManager) : Tool {
             BufferedReader(InputStreamReader(p.errorStream)).use { reader ->
               var line: String?
               while (reader.readLine().also { line = it } != null) {
-                if (stderrSb.length < 32000) {
-                  stderrSb.appendLine(line)
+                synchronized(streamLock) {
+                  if (stderrSb.length < 32000) {
+                    stderrSb.appendLine(line)
+                  }
                 }
               }
             }
@@ -117,30 +122,32 @@ class TerminalTool(private val workspace: WorkspaceManager) : Tool {
         stderrThread.start()
 
         val completed = p.waitFor(timeoutSeconds, TimeUnit.SECONDS)
-        stdoutThread.join(500)
-        stderrThread.join(500)
+        stdoutThread.join(800)
+        stderrThread.join(800)
 
         val duration = System.currentTimeMillis() - startTime
 
         if (!completed) {
           p.destroyForcibly()
+          val out = synchronized(streamLock) { stdoutSb.toString().trim() }
           return@withContext ToolResult(
             callId = callId,
             toolName = name,
             status = ToolStatus.FAILED,
             arguments = arguments,
-            output = stdoutSb.toString().trim(),
+            output = out,
             error = "Execution timed out after ${timeoutSeconds}s",
             duration = duration,
-            stdout = stdoutSb.toString().trim(),
+            stdout = out,
             stderr = "Execution timed out after ${timeoutSeconds}s",
             exitCode = -1
           )
         }
 
         val exitCode = p.exitValue()
-        val stdout = stdoutSb.toString().trim()
-        val stderr = stderrSb.toString().trim()
+        val (stdout, stderr) = synchronized(streamLock) {
+          Pair(stdoutSb.toString().trim(), stderrSb.toString().trim())
+        }
 
         // If system shell cannot find python/pip (common in Android sandboxes), seamlessly execute via PythonRuntime
         if ((exitCode != 0 || stderr.contains("not found") || stderr.contains("inaccessible")) && PythonRuntime.matches(command)) {
@@ -430,11 +437,31 @@ class WriteFileTool(private val workspace: WorkspaceManager) : Tool {
         }
 
         // Atomic replace
-        if (file.exists()) file.delete()
-        val renameSuccess = tmpFile.renameTo(file)
-        if (!renameSuccess) {
-          tmpFile.copyTo(file, overwrite = true)
-          tmpFile.delete()
+        var replaced = false
+        try {
+          replaced = tmpFile.renameTo(file)
+          if (!replaced) {
+            try {
+              if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                java.nio.file.Files.move(
+                  tmpFile.toPath(),
+                  file.toPath(),
+                  java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                )
+                replaced = true
+              }
+            } catch (_: Throwable) {
+              // Fall back to copy
+            }
+          }
+          if (!replaced) {
+            tmpFile.copyTo(file, overwrite = true)
+            replaced = true
+          }
+        } finally {
+          if (tmpFile.exists()) {
+            tmpFile.delete()
+          }
         }
 
         // Strict verification on filesystem

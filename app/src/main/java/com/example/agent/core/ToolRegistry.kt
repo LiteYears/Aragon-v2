@@ -31,10 +31,15 @@ class ToolRegistry {
       ?: return "Unknown tool '${toolCall.toolName}'. Available tools: ${tools.keys.joinToString(", ")}"
 
     for (param in tool.schema.parameters) {
-      if (param.required) {
-        val value = toolCall.arguments[param.name]
-        if (value == null || (value is String && value.isBlank())) {
-          return "Missing required parameter '${param.name}' for tool '${tool.name}'"
+      val value = toolCall.arguments[param.name]
+      val isNullOrBlank = value == null || value == org.json.JSONObject.NULL || (value is String && value.isBlank())
+      if (param.required && isNullOrBlank) {
+        return "Missing required parameter '${param.name}' for tool '${tool.name}'"
+      }
+      if (!isNullOrBlank && param.enumValues != null) {
+        val strValue = value.toString()
+        if (!param.enumValues.contains(strValue)) {
+          return "Invalid value '$strValue' for parameter '${param.name}'. Allowed values: ${param.enumValues.joinToString(", ")}"
         }
       }
     }

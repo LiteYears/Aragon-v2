@@ -418,28 +418,30 @@ class HttpRequestTool : Tool {
             .build()
         } else client
 
-        val response = customClient.newCall(request).execute()
-        val code = response.code
-        val rawBody = response.body?.string() ?: ""
+        val (responseSummary, isSuccess, code) = customClient.newCall(request).execute().use { response ->
+          val code = response.code
+          val rawBody = response.body?.string() ?: ""
 
-        val truncatedBody = if (rawBody.length > 24000) {
-          rawBody.take(24000) + "\n...[response body truncated at 24,000 characters]..."
-        } else {
-          rawBody
+          val truncatedBody = if (rawBody.length > 24000) {
+            rawBody.take(24000) + "\n...[response body truncated at 24,000 characters]..."
+          } else {
+            rawBody
+          }
+
+          val summary = """
+          HTTP Status: $code ${response.message}
+          URL: ${response.request.url}
+          Headers:
+          - content-type: ${response.header("content-type", "none")}
+          - content-length: ${response.header("content-length", rawBody.length.toString())}
+
+          Body:
+          $truncatedBody
+          """.trimIndent()
+
+          Triple(summary, response.isSuccessful, code)
         }
 
-        val responseSummary = """
-        HTTP Status: $code ${response.message}
-        URL: ${response.request.url}
-        Headers:
-        - content-type: ${response.header("content-type", "none")}
-        - content-length: ${response.header("content-length", rawBody.length.toString())}
-
-        Body:
-        $truncatedBody
-        """.trimIndent()
-
-        val isSuccess = response.isSuccessful
         ToolResult(
           callId = callId,
           toolName = name,
@@ -632,7 +634,7 @@ class JsonProcessorTool(private val workspace: WorkspaceManager) : Tool {
     var current: Any? = root
 
     for (seg in segments) {
-      if (current == null) return null
+      if (current == null || current == JSONObject.NULL) return null
       current = when (current) {
         is JSONObject -> current.opt(seg)
         is JSONArray -> {
@@ -644,7 +646,7 @@ class JsonProcessorTool(private val workspace: WorkspaceManager) : Tool {
         else -> null
       }
     }
-    return current
+    return if (current == JSONObject.NULL) null else current
   }
 }
 
@@ -869,10 +871,11 @@ class DownloadFileTool(private val workspace: WorkspaceManager) : Tool {
         )
       }
 
-      try {
-        val destFile = workspace.resolveSafe(destination)
-        destFile.parentFile?.mkdirs()
+      val destFile = workspace.resolveSafe(destination)
+      destFile.parentFile?.mkdirs()
+      val tmpFile = File(destFile.parentFile, "${destFile.name}.${System.currentTimeMillis()}.tmp")
 
+      try {
         val client = if (timeoutSeconds != 30L) {
           httpClient.newBuilder().readTimeout(timeoutSeconds, TimeUnit.SECONDS).build()
         } else httpClient
@@ -883,25 +886,38 @@ class DownloadFileTool(private val workspace: WorkspaceManager) : Tool {
           .get()
           .build()
 
-        val response = client.newCall(req).execute()
-        if (!response.isSuccessful) {
+        val (isSuccessful, responseCode, responseMsg) = client.newCall(req).execute().use { response ->
+          if (!response.isSuccessful) {
+            Triple(false, response.code, response.message)
+          } else {
+            val body = response.body ?: throw IllegalStateException("Empty response body from $url")
+            tmpFile.outputStream().use { out ->
+              body.byteStream().copyTo(out)
+            }
+            Triple(true, response.code, response.message)
+          }
+        }
+
+        if (!isSuccessful) {
+          if (tmpFile.exists()) tmpFile.delete()
           return@withContext ToolResult(
             callId = callId,
             toolName = name,
             status = ToolStatus.FAILED,
             arguments = arguments,
             output = null,
-            error = "Download failed with HTTP ${response.code}: ${response.message}",
+            error = "Download failed with HTTP $responseCode: $responseMsg",
             duration = System.currentTimeMillis() - startTime,
             stdout = null,
-            stderr = "HTTP ${response.code}",
+            stderr = "HTTP $responseCode",
             exitCode = 1
           )
         }
 
-        val body = response.body ?: throw IllegalStateException("Empty response body from $url")
-        destFile.outputStream().use { out ->
-          body.byteStream().copyTo(out)
+        if (destFile.exists()) destFile.delete()
+        if (!tmpFile.renameTo(destFile)) {
+          tmpFile.copyTo(destFile, overwrite = true)
+          tmpFile.delete()
         }
 
         val bytes = destFile.length()
@@ -934,6 +950,10 @@ class DownloadFileTool(private val workspace: WorkspaceManager) : Tool {
           stderr = "Download error: ${e.message}",
           exitCode = 1
         )
+      } finally {
+        if (tmpFile.exists()) {
+          tmpFile.delete()
+        }
       }
     }
 }

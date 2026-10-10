@@ -59,6 +59,7 @@ import com.example.ui.theme.AmoledTextSecondary
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import kotlinx.coroutines.delay
+import java.util.Locale
 
 /**
  * Execution Feed Item:
@@ -98,7 +99,7 @@ fun ExecutionFeedItem(
         .padding(top = 3.dp)
     ) {
       Text(
-        text = String.format("%02d", step.stepNumber),
+        text = String.format(Locale.US, "%02d", step.stepNumber),
         style = MaterialTheme.typography.labelSmall,
         fontFamily = JetBrainsMonoFontFamily,
         fontSize = 9.sp,
@@ -375,7 +376,7 @@ fun ToolCallBoxView(
           if (step.durationMs != null) {
             Spacer(modifier = Modifier.width(6.dp))
             Text(
-              text = "${(step.durationMs / 1000.0).let { String.format("%.2fs", it) }}",
+              text = "${(step.durationMs / 1000.0).let { String.format(Locale.US, "%.2fs", it) }}",
               style = MaterialTheme.typography.labelSmall,
               fontFamily = JetBrainsMonoFontFamily,
               fontSize = 9.sp,

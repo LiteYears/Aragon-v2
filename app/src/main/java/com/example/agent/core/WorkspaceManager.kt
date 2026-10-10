@@ -53,6 +53,7 @@ class WorkspaceManager(val baseDir: File) {
     val src = resolveSafe(sourcePath)
     if (!src.exists()) throw IllegalArgumentException("Source '$sourcePath' does not exist.")
     val dst = resolveSafe(destPath)
+    if (src.canonicalPath == dst.canonicalPath) return dst
     dst.parentFile?.mkdirs()
     if (src.isDirectory) {
       src.copyRecursively(dst, overwrite = true)
@@ -69,6 +70,7 @@ class WorkspaceManager(val baseDir: File) {
     val src = resolveSafe(sourcePath)
     if (!src.exists()) throw IllegalArgumentException("Source '$sourcePath' does not exist.")
     val dst = resolveSafe(destPath)
+    if (src.canonicalPath == dst.canonicalPath) return dst
     dst.parentFile?.mkdirs()
     if (!src.renameTo(dst)) {
       if (src.isDirectory) {

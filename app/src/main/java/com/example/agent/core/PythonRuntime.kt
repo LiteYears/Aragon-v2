@@ -142,7 +142,7 @@ object PythonRuntime {
         sb.appendLine("Package          Version")
         sb.appendLine("---------------- -------")
         installedPackages.forEach { (pkg, ver) ->
-          sb.appendLine(String.format("%-16s %s", pkg, ver))
+          sb.appendLine(String.format(java.util.Locale.US, "%-16s %s", pkg, ver))
         }
         return Result(stdout = sb.toString().trim(), stderr = "", exitCode = 0)
       }
@@ -458,14 +458,16 @@ object PythonRuntime {
     if (csvFile.exists()) {
       val lines = csvFile.readLines()
       val headers = lines.firstOrNull()?.split(",")?.map { it.trim() } ?: emptyList()
+      val prodColIdx = headers.indexOfFirst { it.equals("product", ignoreCase = true) }.takeIf { it >= 0 } ?: 1
+      val revColIdx = headers.indexOfFirst { it.equals("revenue", ignoreCase = true) }.takeIf { it >= 0 } ?: 3
       var totalRev = 0L
       val products = mutableMapOf<String, Long>()
 
       for (line in lines.drop(1)) {
         val cols = line.split(",").map { it.trim() }
-        if (cols.size >= 3) {
-          val prod = cols.getOrElse(0) { "Item" }
-          val rev = cols.getOrElse(1) { "0" }.toLongOrNull() ?: 0L
+        if (cols.size > maxOf(prodColIdx, revColIdx)) {
+          val prod = cols.getOrElse(prodColIdx) { "Item" }
+          val rev = cols.getOrElse(revColIdx) { "0" }.toLongOrNull() ?: 0L
           totalRev += rev
           products[prod] = (products[prod] ?: 0L) + rev
         }
@@ -475,14 +477,14 @@ object PythonRuntime {
       val reportContent = buildString {
         appendLine("# Executive Financial Summary")
         appendLine()
-        appendLine("- **Total Gross Revenue:** $${String.format("%,d", totalRev)}")
+        appendLine("- **Total Gross Revenue:** $${String.format(java.util.Locale.US, "%,d", totalRev)}")
         appendLine("- **Total Products Tracked:** ${products.size}")
         appendLine()
         appendLine("## Product Performance Breakdown")
         appendLine()
         products.forEach { (prod, rev) ->
           appendLine("### $prod")
-          appendLine("- Revenue: $${String.format("%,d", rev)}")
+          appendLine("- Revenue: $${String.format(java.util.Locale.US, "%,d", rev)}")
         }
         appendLine()
         appendLine("### Verification Status")
@@ -491,9 +493,9 @@ object PythonRuntime {
       reportFile.writeText(reportContent, StandardCharsets.UTF_8)
 
       stdout.appendLine("=== Analyzing data.csv ===")
-      stdout.appendLine("Total Revenue: $${String.format("%,d", totalRev)}")
+      stdout.appendLine("Total Revenue: $${String.format(java.util.Locale.US, "%,d", totalRev)}")
       products.forEach { (p, r) ->
-        stdout.appendLine("Product: $p | Revenue: $${String.format("%,d", r)}")
+        stdout.appendLine("Product: $p | Revenue: $${String.format(java.util.Locale.US, "%,d", r)}")
       }
       stdout.appendLine("Report generated: report.md")
     } else {
@@ -510,16 +512,17 @@ object PythonRuntime {
       stdout.appendLine(cleanText)
     }
 
-    // Check if code writes a file
+    // Check if code writes a file (enforce sandbox boundary)
     val writeRegex = Regex("""with\s+open\(['"]([^'"]+)['"],\s*['"]w['"]\)\s+as\s+\w+:""")
     val writeMatch = writeRegex.find(code)
     if (writeMatch != null) {
-      val filename = writeMatch.groupValues[1]
-      val target = File(workspaceDir, filename)
+      val rawFilename = writeMatch.groupValues[1].trim()
+      val cleanFilename = File(rawFilename).name.ifBlank { "output.txt" }
+      val target = File(workspaceDir, cleanFilename)
       if (!target.exists()) {
         target.writeText("Generated output from Python script execution.\n")
       }
-      stdout.appendLine("Created artifact: $filename")
+      stdout.appendLine("Created artifact: $cleanFilename")
     }
   }
 }

@@ -148,7 +148,7 @@ class ScratchpadMemoryManager(private val workspace: WorkspaceManager) {
     private set
 
   fun initSession(sessionId: String = UUID.randomUUID().toString()) {
-    currentSessionId = sessionId
+    currentSessionId = sessionId.trim().replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { UUID.randomUUID().toString() }
     try {
       notesDir.mkdirs()
     } catch (_: Exception) {}

@@ -223,6 +223,12 @@ class NvidiaNimProvider(
   initialConfig: NvidiaNimConfig = NvidiaNimConfig()
 ) : LLMProvider {
 
+  private val sharedHttpClient = OkHttpClient.Builder()
+    .connectTimeout(30, TimeUnit.SECONDS)
+    .readTimeout(60, TimeUnit.SECONDS)
+    .writeTimeout(60, TimeUnit.SECONDS)
+    .build()
+
   @Volatile
   private var currentConfig: NvidiaNimConfig = initialConfig
 
@@ -330,7 +336,15 @@ class NvidiaNimProvider(
             if (result.message.contains("401") || result.message.contains("authentication failed")) {
               return@withContext result
             }
-            // If transient or recoverable error, continue loop
+            // If model does not exist (404), is forbidden (403), or not found, break immediately to fallback model
+            if (result.message.contains("404") || result.message.contains("403") || result.message.contains("not found")) {
+              break
+            }
+            // If error is non-recoverable on the current model, break to next model candidate
+            if (!isRecoverableModelError(result.message)) {
+              break
+            }
+            // Otherwise transient error: retry same model with exponential backoff
           }
         }
       }
@@ -341,14 +355,13 @@ class NvidiaNimProvider(
 
   private fun isRecoverableModelError(errorMessage: String): Boolean {
     val lower = errorMessage.lowercase()
-    return lower.contains("404") ||
-      lower.contains("not found") ||
-      lower.contains("timeout") ||
+    return lower.contains("timeout") ||
       lower.contains("timed out") ||
       lower.contains("connection") ||
       lower.contains("stream") ||
       lower.contains("reset") ||
       lower.contains("429") ||
+      lower.contains("500") ||
       lower.contains("502") ||
       lower.contains("503") ||
       lower.contains("504")
@@ -401,18 +414,22 @@ class NvidiaNimProvider(
         .post(requestBody)
         .build()
 
-      val httpClient = OkHttpClient.Builder()
-        .connectTimeout(activeConfig.timeoutSeconds, TimeUnit.SECONDS)
-        .readTimeout(activeConfig.timeoutSeconds, TimeUnit.SECONDS)
-        .writeTimeout(activeConfig.timeoutSeconds, TimeUnit.SECONDS)
-        .build()
+      val httpClient = if (activeConfig.timeoutSeconds != 60L) {
+        sharedHttpClient.newBuilder()
+          .connectTimeout(activeConfig.timeoutSeconds, TimeUnit.SECONDS)
+          .readTimeout(activeConfig.timeoutSeconds, TimeUnit.SECONDS)
+          .writeTimeout(activeConfig.timeoutSeconds, TimeUnit.SECONDS)
+          .build()
+      } else {
+        sharedHttpClient
+      }
 
-      val response = httpClient.newCall(request).execute()
-      val responseCode = response.code
-      val responseBodyString = response.body?.string() ?: ""
+      val (responseCode, isSuccessful, responseBodyString) = httpClient.newCall(request).execute().use { response ->
+        Triple(response.code, response.isSuccessful, response.body?.string() ?: "")
+      }
 
       // 5. HTTP Error Handling and Retry
-      if (!response.isSuccessful) {
+      if (!isSuccessful) {
         val errorDetail = extractErrorDetail(responseBodyString, responseCode, activeConfig.apiKey)
 
         // If tools are rejected by this model (HTTP 400 with 'tools' or 'extra input'), retry without native tools
@@ -915,17 +932,12 @@ class NvidiaNimProvider(
         .get()
         .build()
 
-      val httpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .build()
-
-      val response = httpClient.newCall(request).execute()
-      if (!response.isSuccessful) {
-        return@withContext Result.failure(IOException("HTTP ${response.code}: ${response.message}"))
+      val bodyStr = sharedHttpClient.newCall(request).execute().use { response ->
+        if (!response.isSuccessful) {
+          return@withContext Result.failure(IOException("HTTP ${response.code}: ${response.message}"))
+        }
+        response.body?.string() ?: ""
       }
-
-      val bodyStr = response.body?.string() ?: ""
       val json = JSONObject(bodyStr)
       val dataArr = json.optJSONArray("data") ?: JSONArray()
       val list = mutableListOf<String>()

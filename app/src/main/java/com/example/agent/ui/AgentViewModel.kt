@@ -248,7 +248,7 @@ class AgentViewModel(
 
   fun retryWithDefaultModel() {
     updateNvidiaConfig(model = NvidiaNimConfig.DEFAULT_MODEL)
-    val lastIntent = state.value.currentAction ?: presets[0].prompt
+    val lastIntent = state.value.task?.goal ?: presets[0].prompt
     submitTask(lastIntent)
   }
 
@@ -301,6 +301,15 @@ class AgentViewModel(
     engine.submitTask(intent, expectedArtifact)
   }
 
+  fun resumeTask() {
+    val currentGoal = state.value.task?.goal
+    val currentSessionId = state.value.sessionId
+    if (!currentGoal.isNullOrBlank() && currentSessionId.isNotBlank()) {
+      _activeTab.value = UiTab.EXECUTION_FEED
+      engine.submitTask(currentGoal, state.value.task?.expectedArtifact, resumeSessionId = currentSessionId)
+    }
+  }
+
   /**
    * Starts a completely empty, fresh task with an isolated new session and removed artifacts.
    */
@@ -341,7 +350,27 @@ class AgentViewModel(
         }
 
         if (file != null && file.exists() && file.isFile) {
-          _previewContent.value = file.readText()
+          if (!ArtifactDownloader.isTextFile(file.name)) {
+            val length = file.length()
+            val formatBadge = file.extension.uppercase()
+            _previewContent.value = """
+              [Binary Deliverable File]
+              Name: ${file.name}
+              Format: $formatBadge (${artifact.type})
+              Size: $length bytes
+              Path: ${file.path}
+              
+              This is a compiled/binary deliverable file.
+              Use 'SAVE FILE' to export to Downloads or 'SHARE' to open with external viewers.
+            """.trimIndent()
+          } else {
+            val raw = file.readText()
+            _previewContent.value = if (raw.length > 64000) {
+              raw.take(64000) + "\n\n...[Preview truncated at 64,000 characters to conserve memory]..."
+            } else {
+              raw
+            }
+          }
         } else {
           _previewContent.value = "(File not found or cannot be read)"
         }

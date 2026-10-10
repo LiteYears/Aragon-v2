@@ -114,16 +114,18 @@ class AgentEngine(
    * Dispatches a new task to the Agent in an isolated separate session.
    * Cancels any previously running execution and removes old artifacts to start clean.
    */
-  fun submitTask(intent: String, expectedArtifact: String? = null) {
+  fun submitTask(intent: String, expectedArtifact: String? = null, resumeSessionId: String? = null) {
     if (intent.isBlank()) return
 
     // Cancel any running job
     activeJob?.cancel()
 
-    // Isolated new session per task to prevent state/scratchpad mix-up
-    val sessionId = UUID.randomUUID().toString()
-    workspace.cleanAllArtifacts()
-    workspace.seedWorkspaceDefaults()
+    // Isolated new session per task to prevent state/scratchpad mix-up unless explicitly resuming
+    val sessionId = resumeSessionId ?: UUID.randomUUID().toString()
+    if (resumeSessionId == null) {
+      workspace.cleanAllArtifacts()
+      workspace.seedWorkspaceDefaults()
+    }
     scratchpad.initSession(sessionId)
 
     val task = Task(

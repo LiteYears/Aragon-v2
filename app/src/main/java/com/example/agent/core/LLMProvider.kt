@@ -251,15 +251,16 @@ class GeminiLLMProvider(
         .post(body)
         .build()
 
-      val response = httpClient.newCall(request).execute()
-      val responseBodyString = response.body?.string() ?: ""
+      val (responseCode, isSuccessful, responseBodyString) = httpClient.newCall(request).execute().use { response ->
+        Triple(response.code, response.isSuccessful, response.body?.string() ?: "")
+      }
 
-      if (!response.isSuccessful) {
+      if (!isSuccessful) {
         val errorMsg = try {
           val errObj = JSONObject(responseBodyString).optJSONObject("error")
-          errObj?.optString("message") ?: "HTTP error ${response.code}"
+          errObj?.optString("message") ?: "HTTP error $responseCode"
         } catch (_: Exception) {
-          "HTTP error ${response.code}: $responseBodyString"
+          "HTTP error $responseCode: $responseBodyString"
         }
         return@withContext LLMDecision.ProviderError("Gemini API call failed: $errorMsg")
       }
@@ -288,12 +289,7 @@ class GeminiLLMProvider(
           val functionCallObj = part.getJSONObject("functionCall")
           val toolName = functionCallObj.getString("name")
           val argsObj = functionCallObj.optJSONObject("args") ?: JSONObject()
-          val argsMap = mutableMapOf<String, Any?>()
-          val keys = argsObj.keys()
-          while (keys.hasNext()) {
-            val k = keys.next()
-            argsMap[k] = argsObj.get(k)
-          }
+          val argsMap = jsonObjectToMap(argsObj)
 
           toolCalls.add(
             ToolCall(
@@ -324,6 +320,31 @@ class GeminiLLMProvider(
       }
     } catch (e: Exception) {
       LLMDecision.ProviderError("Gemini LLM Provider error: ${e.message}")
+    }
+  }
+
+  private fun jsonObjectToMap(jsonObj: JSONObject): Map<String, Any?> {
+    val map = mutableMapOf<String, Any?>()
+    val keys = jsonObj.keys()
+    while (keys.hasNext()) {
+      val key = keys.next()
+      map[key] = jsonValueToKotlin(jsonObj.get(key))
+    }
+    return map
+  }
+
+  private fun jsonValueToKotlin(value: Any?): Any? {
+    return when (value) {
+      null, JSONObject.NULL -> null
+      is JSONObject -> jsonObjectToMap(value)
+      is JSONArray -> {
+        val list = mutableListOf<Any?>()
+        for (i in 0 until value.length()) {
+          list.add(jsonValueToKotlin(value.get(i)))
+        }
+        list
+      }
+      else -> value
     }
   }
 }

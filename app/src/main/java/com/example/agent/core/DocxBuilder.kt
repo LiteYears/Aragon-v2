@@ -251,12 +251,15 @@ class DocxBuilder {
     sb.append("</w:tc>")
   }
 
-  private fun escapeXml(str: String): String =
-    str.replace("&", "&amp;")
+  private fun escapeXml(str: String): String {
+    // Strip illegal XML 1.0 control characters [\u0000-\u0008\u000B\u000C\u000E-\u001F]
+    val sanitized = str.replace(Regex("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]"), "")
+    return sanitized.replace("&", "&amp;")
       .replace("<", "&lt;")
       .replace(">", "&gt;")
       .replace("\"", "&quot;")
       .replace("'", "&apos;")
+  }
 
   private data class Quad(val a: Int, val b: String, val c: Int, val d: Int)
 

@@ -124,6 +124,16 @@ object ArtifactDownloader {
     return null
   }
 
+  private fun showSafeToast(context: Context, message: String, duration: Int = Toast.LENGTH_SHORT) {
+    try {
+      android.os.Handler(android.os.Looper.getMainLooper()).post {
+        try {
+          Toast.makeText(context.applicationContext ?: context, message, duration).show()
+        } catch (_: Throwable) {}
+      }
+    } catch (_: Throwable) {}
+  }
+
   /**
    * Downloads and saves an artifact to the device's public Downloads directory,
    * falling back cleanly across Scoped Storage, MediaStore, and external storage.
@@ -136,7 +146,7 @@ object ArtifactDownloader {
     return try {
       val sourceFile = resolveArtifactFile(context, artifact, workspaceDir)
       if (sourceFile == null || !sourceFile.exists()) {
-        Toast.makeText(context, "File not found: ${artifact.name}", Toast.LENGTH_SHORT).show()
+        showSafeToast(context, "File not found: ${artifact.name}", Toast.LENGTH_SHORT)
         return false
       }
 
@@ -156,12 +166,17 @@ object ArtifactDownloader {
           val resolver = context.contentResolver
           val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
           if (uri != null) {
-            resolver.openOutputStream(uri)?.use { outputStream ->
-              outputStream.write(bytes)
-              outputStream.flush()
+            try {
+              resolver.openOutputStream(uri)?.use { outputStream ->
+                outputStream.write(bytes)
+                outputStream.flush()
+              }
+              showSafeToast(context, "Saved to Downloads: ${artifact.name}", Toast.LENGTH_LONG)
+              saved = true
+            } catch (writeErr: Throwable) {
+              try { resolver.delete(uri, null, null) } catch (_: Throwable) {}
+              saved = false
             }
-            Toast.makeText(context, "Saved to Downloads: ${artifact.name}", Toast.LENGTH_LONG).show()
-            saved = true
           }
         } catch (_: Throwable) {
           saved = false
@@ -182,7 +197,7 @@ object ArtifactDownloader {
               fos.write(bytes)
               fos.flush()
             }
-            Toast.makeText(context, "Saved to Downloads/AragonOutputs: ${artifact.name}", Toast.LENGTH_LONG).show()
+            showSafeToast(context, "Saved to Downloads/AragonOutputs: ${artifact.name}", Toast.LENGTH_LONG)
             saved = true
           }
         } catch (_: Throwable) {
@@ -205,7 +220,7 @@ object ArtifactDownloader {
               fos.write(bytes)
               fos.flush()
             }
-            Toast.makeText(context, "Saved to: ${targetFile.name}", Toast.LENGTH_LONG).show()
+            showSafeToast(context, "Saved to: ${targetFile.name}", Toast.LENGTH_LONG)
             saved = true
           }
         } catch (_: Throwable) {
@@ -222,14 +237,14 @@ object ArtifactDownloader {
           fos.write(bytes)
           fos.flush()
         }
-        Toast.makeText(context, "Saved to app storage: ${targetFile.name}", Toast.LENGTH_LONG).show()
+        showSafeToast(context, "Saved to app storage: ${targetFile.name}", Toast.LENGTH_LONG)
         saved = true
       }
 
       saved
     } catch (e: Exception) {
       e.printStackTrace()
-      Toast.makeText(context, "Download failed: ${e.message}", Toast.LENGTH_LONG).show()
+      showSafeToast(context, "Download failed: ${e.message}", Toast.LENGTH_LONG)
       false
     }
   }
@@ -245,7 +260,7 @@ object ArtifactDownloader {
     try {
       val sourceFile = resolveArtifactFile(context, artifact, workspaceDir)
       if (sourceFile == null || !sourceFile.exists()) {
-        Toast.makeText(context, "File not found: ${artifact.name}", Toast.LENGTH_SHORT).show()
+        showSafeToast(context, "File not found: ${artifact.name}", Toast.LENGTH_SHORT)
         return
       }
 
@@ -266,7 +281,7 @@ object ArtifactDownloader {
         downloadArtifact(context, artifact, workspaceDir)
       }
     } catch (e: Exception) {
-      Toast.makeText(context, "Share error: ${e.message}", Toast.LENGTH_SHORT).show()
+      showSafeToast(context, "Share error: ${e.message}", Toast.LENGTH_SHORT)
     }
   }
 

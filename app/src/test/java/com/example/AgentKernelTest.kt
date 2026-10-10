@@ -88,6 +88,15 @@ class AgentKernelTest {
     assertNotNull(error)
     assertTrue(error!!.contains("content"))
 
+    // Null JSON object parameter
+    val jsonNullCall = ToolCall(
+      toolName = "write_file",
+      arguments = mapOf("path" to "test.txt", "content" to org.json.JSONObject.NULL)
+    )
+    val jsonNullError = registry.validate(jsonNullCall)
+    assertNotNull(jsonNullError)
+    assertTrue(jsonNullError!!.contains("content"))
+
     // Unknown tool
     val unknownCall = ToolCall(
       toolName = "magic_tool",

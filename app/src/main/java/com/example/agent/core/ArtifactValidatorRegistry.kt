@@ -67,6 +67,22 @@ object ArtifactValidatorRegistry {
           ArtifactValidationResult(isValid = false, errorMessage = "Corrupted JSON syntax: ${e.message}")
         }
       }
+      "jsonl" -> {
+        try {
+          val badLines = file.useLines { lines ->
+            lines.filter { it.isNotBlank() }.filter { line ->
+              try { JSONObject(line.trim()); false } catch (_: Exception) { true }
+            }.count()
+          }
+          if (badLines > 0) {
+            ArtifactValidationResult(isValid = false, errorMessage = "Corrupted JSONL syntax: $badLines invalid line(s).")
+          } else {
+            ArtifactValidationResult(isValid = true, detectedFormat = "JSON Lines", byteCount = length)
+          }
+        } catch (e: Exception) {
+          ArtifactValidationResult(isValid = false, errorMessage = "Error reading JSONL: ${e.message}")
+        }
+      }
       "pdf" -> {
         if (length < 100L) {
           ArtifactValidationResult(isValid = false, errorMessage = "PDF file too small ($length bytes).")
