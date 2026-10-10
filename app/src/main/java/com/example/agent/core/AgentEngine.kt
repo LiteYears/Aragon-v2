@@ -64,6 +64,8 @@ class AgentEngine(
     registry.register(HttpRequestTool(), "curl", "fetch_api")
     registry.register(JsonProcessorTool(workspace), "jq", "json_tool")
     registry.register(CsvProcessorTool(workspace), "csv_tool")
+    registry.register(CreateDocxTool(workspace), "word_doc", "docx", "build_docx")
+    registry.register(InstallPackageTool(workspace), "install", "pkg_install", "setup_tool", "install_interpreter")
 
     // Register comprehensive Web Research & Browser Automation tools
     registry.register(WebSearchTool(), "search", "duckduckgo", "google")

@@ -18,11 +18,13 @@ import java.util.regex.Pattern
 
 /**
  * Standard configuration options for NVIDIA NIM OpenAI-compatible hosted API.
+ * Supports a pool of up to 15 API keys for round-robin rotation and automatic failover.
  */
 data class NvidiaNimConfig(
   val baseUrl: String = DEFAULT_BASE_URL,
   val model: String = DEFAULT_MODEL,
   val apiKey: String = "",
+  val apiKeys: List<String> = if (apiKey.isNotBlank()) listOf(apiKey) else emptyList(),
   val temperature: Double? = 0.2,
   val maxTokens: Int? = 4096,
   val topP: Double? = null,
@@ -32,6 +34,7 @@ data class NvidiaNimConfig(
   companion object {
     const val DEFAULT_BASE_URL = "https://integrate.api.nvidia.com/v1"
     const val DEFAULT_MODEL = "z-ai/glm-5.3"
+    const val MAX_API_KEYS = 15
   }
 }
 
@@ -232,6 +235,15 @@ class NvidiaNimProvider(
   @Volatile
   private var currentConfig: NvidiaNimConfig = initialConfig
 
+  @Volatile
+  private var keyPool: List<String> = if (initialConfig.apiKeys.isNotEmpty()) {
+    initialConfig.apiKeys.map { it.trim() }.filter { it.isNotBlank() }.take(15)
+  } else if (initialConfig.apiKey.isNotBlank()) {
+    listOf(initialConfig.apiKey.trim())
+  } else emptyList()
+
+  private val keyCounter = java.util.concurrent.atomic.AtomicInteger(0)
+
   val config: NvidiaNimConfig get() = currentConfig
 
   override val providerName: String
@@ -241,19 +253,41 @@ class NvidiaNimProvider(
     currentConfig = block(currentConfig)
   }
 
+  fun setApiKeys(keys: List<String>) {
+    val cleaned = keys.map { it.trim() }.filter { it.isNotBlank() }.take(15)
+    keyPool = cleaned
+    currentConfig = currentConfig.copy(
+      apiKeys = cleaned,
+      apiKey = cleaned.firstOrNull() ?: ""
+    )
+  }
+
   fun setApiKey(newKey: String) {
-    currentConfig = currentConfig.copy(apiKey = newKey.trim())
+    val clean = newKey.trim()
+    if (clean.isBlank()) {
+      setApiKeys(emptyList())
+    } else {
+      setApiKeys(listOf(clean))
+    }
   }
 
   fun setModel(newModel: String) {
-    currentConfig = currentConfig.copy(model = newModel.trim())
+    val clean = newModel.trim()
+    if (clean.isNotBlank()) {
+      currentConfig = currentConfig.copy(model = clean)
+    }
   }
 
   fun setBaseUrl(newBaseUrl: String) {
-    currentConfig = currentConfig.copy(baseUrl = newBaseUrl.trim())
+    val clean = newBaseUrl.trim()
+    if (clean.isNotBlank()) {
+      currentConfig = currentConfig.copy(baseUrl = clean)
+    }
   }
 
-  fun hasApiKey(): Boolean = currentConfig.apiKey.isNotBlank()
+  fun getApiKeys(): List<String> = keyPool
+
+  fun hasApiKey(): Boolean = keyPool.isNotEmpty()
 
   override suspend fun decideNextAction(
     systemPrompt: String,
@@ -262,15 +296,19 @@ class NvidiaNimProvider(
     tools: List<Tool>
   ): LLMDecision = withContext(Dispatchers.IO) {
     val activeConfig = currentConfig
+    val pool = keyPool
 
-    if (activeConfig.apiKey.isBlank()) {
+    if (pool.isEmpty()) {
       return@withContext LLMDecision.ProviderError(
-        "NVIDIA API key is not configured. Please supply your NVIDIA API key in Settings or configure via .env / BuildConfig.NVIDIA_API_KEY."
+        "NVIDIA API key is not configured. Please supply your NVIDIA API key in Settings (supports up to 15 keys with auto-rotation & fallback)."
       )
     }
 
-    // Candidate models to try in sequence: requested model first, then capability-verified coding & reasoning models only
-    // Exclude multimodal vision-only models (like llama-3.2-11b-vision-instruct) from reasoning fallback
+    val poolSize = pool.size
+    // If only 1 key is available: use it exclusively.
+    // If >= 2 keys are available: rotate round-robin across keys.
+    val initialKeyIndex = if (poolSize == 1) 0 else Math.floorMod(keyCounter.getAndIncrement(), poolSize)
+
     val candidateModels = buildList {
       add(activeConfig.model)
       val verifiedReasoningFallbacks = listOf(
@@ -288,69 +326,91 @@ class NvidiaNimProvider(
 
     var lastError = "Unknown error"
 
-    for ((modelIndex, modelCandidate) in candidateModels.withIndex()) {
-      val isFallbackModel = modelIndex > 0
-      val retryAttempts = if (isFallbackModel) 1 else 2
+    // Rotate and fallback across up to 15 configured API keys
+    for (keyAttempt in 0 until poolSize) {
+      val keyIndex = (initialKeyIndex + keyAttempt) % poolSize
+      val candidateKey = pool[keyIndex]
+      val keySlotLabel = if (poolSize > 1) "Key #${keyIndex + 1}" else "Primary Key"
+      val isFallbackKey = keyAttempt > 0
+      var keyExhausted = false
 
-      // Context-injection for fallback models so they don't act blind
-      val effectiveSystemPrompt = if (isFallbackModel) {
-        """
-        $systemPrompt
-        
-        [RECOVERY ROUTING CONTEXT]:
-        You are acting as a verified reasoning & tool-dispatching fallback for task: '$taskIntent'.
-        Never output placeholder section headers as content. Read workspace deliverables, notes, or research files before taking action.
-        """.trimIndent()
-      } else systemPrompt
+      for ((modelIndex, modelCandidate) in candidateModels.withIndex()) {
+        val isFallbackModel = modelIndex > 0
+        val retryAttempts = if (isFallbackModel) 1 else 2
 
-      for (attempt in 0..retryAttempts) {
-        if (attempt > 0) {
-          kotlinx.coroutines.delay(1200L * attempt) // Exponential backoff on dropped connection
+        val effectiveSystemPrompt = if (isFallbackModel || isFallbackKey) {
+          """
+          $systemPrompt
+          
+          [RECOVERY ROUTING CONTEXT]:
+          Operating via $keySlotLabel with model '$modelCandidate'.
+          Verify deliverables on disk before concluding.
+          """.trimIndent()
+        } else systemPrompt
+
+        for (attempt in 0..retryAttempts) {
+          if (attempt > 0) {
+            kotlinx.coroutines.delay(1000L * attempt)
+          }
+
+          val result = executeChatCompletion(
+            apiKeyToUse = candidateKey,
+            keyLabel = keySlotLabel,
+            modelToUse = modelCandidate,
+            systemPrompt = effectiveSystemPrompt,
+            taskIntent = taskIntent,
+            messages = messages,
+            tools = tools,
+            useNativeTools = true
+          )
+
+          when (result) {
+            is LLMDecision.ExecuteTool -> {
+              val thoughtNotice = if (isFallbackKey || isFallbackModel) {
+                "[Pool: $keySlotLabel / Model: $modelCandidate] ${result.thought ?: ""}"
+              } else result.thought
+              return@withContext result.copy(thought = thoughtNotice)
+            }
+            is LLMDecision.Complete -> {
+              val thoughtNotice = if (isFallbackKey || isFallbackModel) {
+                "[Pool: $keySlotLabel / Model: $modelCandidate] ${result.thought ?: ""}"
+              } else result.thought
+              return@withContext result.copy(thought = thoughtNotice)
+            }
+            is LLMDecision.ProviderError -> {
+              lastError = result.message
+              val isAuthOrQuotaError = result.message.contains("401") ||
+                result.message.contains("403") ||
+                result.message.contains("429") ||
+                result.message.contains("quota") ||
+                result.message.contains("rate limit")
+
+              if (isAuthOrQuotaError && poolSize > 1 && keyAttempt < poolSize - 1) {
+                // Key exhausted or unauthorized -> trigger immediate fallback to next key in pool
+                keyExhausted = true
+                break
+              }
+
+              if (result.message.contains("404") || result.message.contains("not found")) {
+                break
+              }
+              if (!isRecoverableModelError(result.message)) {
+                break
+              }
+            }
+          }
         }
 
-        val result = executeChatCompletion(
-          modelToUse = modelCandidate,
-          systemPrompt = effectiveSystemPrompt,
-          taskIntent = taskIntent,
-          messages = messages,
-          tools = tools,
-          useNativeTools = true
-        )
-
-        when (result) {
-          is LLMDecision.ExecuteTool -> {
-            val thoughtNotice = if (isFallbackModel) {
-              "[Notice] Recovered from endpoint failure on '${activeConfig.model}'. Seamlessly routed to model '$modelCandidate'.\n${result.thought ?: ""}"
-            } else result.thought
-            return@withContext result.copy(thought = thoughtNotice)
-          }
-          is LLMDecision.Complete -> {
-            val thoughtNotice = if (isFallbackModel) {
-              "[Notice] Recovered from endpoint failure on '${activeConfig.model}'. Seamlessly routed to model '$modelCandidate'.\n${result.thought ?: ""}"
-            } else result.thought
-            return@withContext result.copy(thought = thoughtNotice)
-          }
-          is LLMDecision.ProviderError -> {
-            lastError = result.message
-            // If the error is fatal auth (401), don't retry other models with same key
-            if (result.message.contains("401") || result.message.contains("authentication failed")) {
-              return@withContext result
-            }
-            // If model does not exist (404), is forbidden (403), or not found, break immediately to fallback model
-            if (result.message.contains("404") || result.message.contains("403") || result.message.contains("not found")) {
-              break
-            }
-            // If error is non-recoverable on the current model, break to next model candidate
-            if (!isRecoverableModelError(result.message)) {
-              break
-            }
-            // Otherwise transient error: retry same model with exponential backoff
-          }
+        if (keyExhausted) {
+          break // Try next key in the pool
         }
       }
     }
 
-    return@withContext LLMDecision.ProviderError("NVIDIA NIM endpoint dropped or timed out after multiple retries and model fallbacks: $lastError")
+    return@withContext LLMDecision.ProviderError(
+      if (poolSize > 1) "All $poolSize configured API keys failed or were rate-limited: $lastError"
+      else "NVIDIA NIM request failed: $lastError"
+    )
   }
 
   private fun isRecoverableModelError(errorMessage: String): Boolean {
@@ -368,6 +428,8 @@ class NvidiaNimProvider(
   }
 
   private suspend fun executeChatCompletion(
+    apiKeyToUse: String,
+    keyLabel: String,
     modelToUse: String,
     systemPrompt: String,
     taskIntent: String,
@@ -402,13 +464,13 @@ class NvidiaNimProvider(
       activeConfig.maxTokens?.let { requestJson.put("max_tokens", it) }
       activeConfig.topP?.let { requestJson.put("top_p", it) }
 
-      // 4. Build HTTP POST Request
+      // 4. Build HTTP POST Request with candidate key from pool
       val mediaType = "application/json; charset=utf-8".toMediaType()
       val requestBody = requestJson.toString().toRequestBody(mediaType)
 
       val request = Request.Builder()
         .url(endpoint)
-        .addHeader("Authorization", "Bearer ${activeConfig.apiKey.trim()}")
+        .addHeader("Authorization", "Bearer ${apiKeyToUse.trim()}")
         .addHeader("Content-Type", "application/json")
         .addHeader("Accept", "application/json")
         .post(requestBody)
@@ -435,6 +497,8 @@ class NvidiaNimProvider(
         // If tools are rejected by this model (HTTP 400 with 'tools' or 'extra input'), retry without native tools
         if (useNativeTools && responseCode == 400 && (errorDetail.contains("tool") || errorDetail.contains("extra input") || errorDetail.contains("parameters"))) {
           return executeChatCompletion(
+            apiKeyToUse = apiKeyToUse,
+            keyLabel = keyLabel,
             modelToUse = modelToUse,
             systemPrompt = "$systemPrompt\n\nAvailable tools:\n${formatToolsTextDescription(tools)}",
             taskIntent = taskIntent,
@@ -919,15 +983,16 @@ class NvidiaNimProvider(
    */
   suspend fun fetchLiveModels(): Result<List<String>> = withContext(Dispatchers.IO) {
     val activeConfig = currentConfig
-    if (activeConfig.apiKey.isBlank()) {
-      return@withContext Result.failure(IllegalStateException("API key is blank."))
+    val keyToUse = keyPool.firstOrNull() ?: activeConfig.apiKey
+    if (keyToUse.isBlank()) {
+      return@withContext Result.failure(IllegalStateException("No API key configured in pool."))
     }
     try {
       val baseUrlClean = activeConfig.baseUrl.trimEnd('/')
       val endpoint = "$baseUrlClean/models"
       val request = Request.Builder()
         .url(endpoint)
-        .addHeader("Authorization", "Bearer ${activeConfig.apiKey.trim()}")
+        .addHeader("Authorization", "Bearer ${keyToUse.trim()}")
         .addHeader("Accept", "application/json")
         .get()
         .build()

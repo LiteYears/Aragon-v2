@@ -40,6 +40,11 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -122,6 +127,7 @@ fun AgentScreen(
   val activeTab by viewModel.activeTab.collectAsState()
   val providerType by viewModel.providerType.collectAsState()
   val nvidiaApiKey by viewModel.nvidiaApiKey.collectAsState()
+  val nvidiaApiKeys by viewModel.nvidiaApiKeys.collectAsState()
   val nvidiaModel by viewModel.nvidiaModel.collectAsState()
   val nvidiaBaseUrl by viewModel.nvidiaBaseUrl.collectAsState()
   val nvidiaTemperature by viewModel.nvidiaTemperature.collectAsState()
@@ -640,6 +646,7 @@ fun AgentScreen(
     SettingsProviderDialog(
       currentProvider = providerType,
       initialNvidiaApiKey = nvidiaApiKey,
+      initialNvidiaApiKeys = nvidiaApiKeys,
       initialNvidiaModel = nvidiaModel,
       initialNvidiaBaseUrl = nvidiaBaseUrl,
       initialNvidiaTemperature = nvidiaTemperature,
@@ -649,9 +656,9 @@ fun AgentScreen(
       onTestConnection = { viewModel.testNvidiaConnection() },
       onResetConnectionStatus = { viewModel.resetConnectionStatus() },
       onProviderChange = { viewModel.setProviderType(it) },
-      onSaveNvidiaConfig = { key, model, baseUrl, temp, maxTokens ->
+      onSaveNvidiaConfig = { keys, model, baseUrl, temp, maxTokens ->
         viewModel.updateNvidiaConfig(
-          apiKey = key,
+          apiKeys = keys,
           model = model,
           baseUrl = baseUrl,
           temperature = temp,
@@ -1330,6 +1337,7 @@ fun ModelSelectorDialog(
 fun SettingsProviderDialog(
   currentProvider: ProviderType,
   initialNvidiaApiKey: String,
+  initialNvidiaApiKeys: List<String> = emptyList(),
   initialNvidiaModel: String,
   initialNvidiaBaseUrl: String,
   initialNvidiaTemperature: Double,
@@ -1339,13 +1347,27 @@ fun SettingsProviderDialog(
   onTestConnection: () -> Unit,
   onResetConnectionStatus: () -> Unit,
   onProviderChange: (ProviderType) -> Unit,
-  onSaveNvidiaConfig: (key: String, model: String, baseUrl: String, temp: Double, maxTokens: Int) -> Unit,
+  onSaveNvidiaConfig: (keys: List<String>, model: String, baseUrl: String, temp: Double, maxTokens: Int) -> Unit,
   onSaveGeminiKey: (String) -> Unit,
   onDismiss: () -> Unit
 ) {
   var selectedType by remember { mutableStateOf(currentProvider) }
-  var nvidiaKeyInput by remember { mutableStateOf(initialNvidiaApiKey) }
+
+  // Initial key pool setup: populate with up to 15 keys, ensuring at least 1 slot
+  val initialPool = remember(initialNvidiaApiKeys, initialNvidiaApiKey) {
+    val list = initialNvidiaApiKeys.toMutableList()
+    if (list.isEmpty() && initialNvidiaApiKey.isNotBlank()) {
+      list.add(initialNvidiaApiKey)
+    }
+    if (list.isEmpty()) {
+      list.add("")
+    }
+    list
+  }
+  val keyPoolList = remember { androidx.compose.runtime.mutableStateListOf<String>().apply { addAll(initialPool) } }
+  var isKeyPoolExpanded by remember { mutableStateOf(false) }
   var isApiKeyVisible by remember { mutableStateOf(false) }
+
   var nvidiaModelInput by remember { mutableStateOf(initialNvidiaModel) }
   var nvidiaBaseUrlInput by remember { mutableStateOf(initialNvidiaBaseUrl) }
   var nvidiaTempInput by remember { mutableStateOf(initialNvidiaTemperature.toString()) }
@@ -1525,30 +1547,240 @@ fun SettingsProviderDialog(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // API Key field
-            OutlinedTextField(
-              value = nvidiaKeyInput,
-              onValueChange = { nvidiaKeyInput = it },
-              label = { Text("NVIDIA API Key") },
-              placeholder = { Text("nvapi-...") },
-              modifier = Modifier.fillMaxWidth(),
-              singleLine = true,
-              visualTransformation = if (isApiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
-              trailingIcon = {
-                Text(
-                  text = if (isApiKeyVisible) "[HIDE]" else "[SHOW]",
-                  style = MaterialTheme.typography.labelSmall,
-                  fontFamily = JetBrainsMonoFontFamily,
-                  fontSize = 9.sp,
-                  color = AmoledIconGrey,
+            // API Key Pool (Up to 15 Keys with automatic round-robin rotation & fallback)
+            Surface(
+              shape = RoundedCornerShape(8.dp),
+              color = Color(0xFF141414),
+              border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+              modifier = Modifier.fillMaxWidth()
+            ) {
+              Column(modifier = Modifier.padding(10.dp)) {
+                // Header: Clickable to Expand / Collapse
+                Row(
                   modifier = Modifier
-                    .clickable { isApiKeyVisible = !isApiKeyVisible }
-                    .padding(horizontal = 6.dp, vertical = 4.dp)
-                )
-              },
-              textStyle = MaterialTheme.typography.bodySmall,
-              shape = RoundedCornerShape(8.dp)
-            )
+                    .fillMaxWidth()
+                    .clickable { isKeyPoolExpanded = !isKeyPoolExpanded },
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                  verticalAlignment = Alignment.CenterVertically
+                ) {
+                  Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(
+                      imageVector = Icons.Default.Key,
+                      contentDescription = null,
+                      tint = AmoledActionPrimary,
+                      modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Column {
+                      Text(
+                        text = "API Key Pool (Up to 15 Keys)",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = AmoledTextPrimary
+                      )
+                      val activeCount = keyPoolList.count { it.isNotBlank() }
+                      val poolStatusText = when (activeCount) {
+                        0 -> "No keys configured"
+                        1 -> "1 key active • Single key mode"
+                        else -> "$activeCount keys active • Auto-rotation & fallback"
+                      }
+                      Text(
+                        text = poolStatusText,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        color = if (activeCount > 1) AmoledStatusSuccess else if (activeCount == 1) AmoledTextSecondary else AmoledTextMuted,
+                        fontSize = 9.sp
+                      )
+                    }
+                  }
+
+                  // Expand / Collapse Action Button
+                  Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = Color(0xFF202020),
+                    modifier = Modifier.clickable { isKeyPoolExpanded = !isKeyPoolExpanded }
+                  ) {
+                    Row(
+                      verticalAlignment = Alignment.CenterVertically,
+                      modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                    ) {
+                      Text(
+                        text = if (isKeyPoolExpanded) "COLLAPSE" else "EXPAND (15 KEYS)",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = AmoledActionPrimary
+                      )
+                      Spacer(modifier = Modifier.width(2.dp))
+                      Icon(
+                        imageVector = if (isKeyPoolExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (isKeyPoolExpanded) "Collapse" else "Expand",
+                        tint = AmoledActionPrimary,
+                        modifier = Modifier.size(12.dp)
+                      )
+                    }
+                  }
+                }
+
+                // If COLLAPSED: Show compact primary key input or summary
+                if (!isKeyPoolExpanded) {
+                  Spacer(modifier = Modifier.height(8.dp))
+                  val primaryKey = keyPoolList.getOrElse(0) { "" }
+                  OutlinedTextField(
+                    value = primaryKey,
+                    onValueChange = { newVal ->
+                      if (keyPoolList.isEmpty()) keyPoolList.add(newVal)
+                      else keyPoolList[0] = newVal
+                    },
+                    label = { Text("Primary Key (Key 1)") },
+                    placeholder = { Text("nvapi-...") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = if (isApiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                      Text(
+                        text = if (isApiKeyVisible) "[HIDE]" else "[SHOW]",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 9.sp,
+                        color = AmoledIconGrey,
+                        modifier = Modifier
+                          .clickable { isApiKeyVisible = !isApiKeyVisible }
+                          .padding(horizontal = 6.dp, vertical = 4.dp)
+                      )
+                    },
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    shape = RoundedCornerShape(8.dp)
+                  )
+                  val extraCount = keyPoolList.drop(1).count { it.isNotBlank() }
+                  if (extraCount > 0) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                      text = "+ $extraCount additional backup key(s) in pool. Tap EXPAND to view or edit all slots.",
+                      style = MaterialTheme.typography.labelSmall,
+                      fontFamily = JetBrainsMonoFontFamily,
+                      color = AmoledStatusSuccess,
+                      fontSize = 8.5.sp
+                    )
+                  }
+                } else {
+                  // If EXPANDED: Show full 15-key pool management
+                  Spacer(modifier = Modifier.height(10.dp))
+                  Text(
+                    text = "Configure up to 15 API keys. Aragon automatically distributes requests across active keys and fails over instantly on 429 rate limits or quota drops.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AmoledTextMuted,
+                    fontSize = 9.sp
+                  )
+                  Spacer(modifier = Modifier.height(8.dp))
+
+                  Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                  ) {
+                    keyPoolList.forEachIndexed { index, keyVal ->
+                      Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = Color(0xFF0C0C0C),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+                        modifier = Modifier.fillMaxWidth()
+                      ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                          Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                          ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                              Text(
+                                text = "Slot ${index + 1} ${if (index == 0) "(Primary)" else "(Rotation/Backup)"}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                color = AmoledTextPrimary,
+                                fontSize = 9.sp
+                              )
+                              Spacer(modifier = Modifier.width(6.dp))
+                              Surface(
+                                shape = RoundedCornerShape(3.dp),
+                                color = if (keyVal.isNotBlank()) Color(0xFF102815) else Color(0xFF1E1E1E)
+                              ) {
+                                Text(
+                                  text = if (keyVal.isNotBlank()) "ACTIVE" else "EMPTY",
+                                  style = MaterialTheme.typography.labelSmall,
+                                  fontFamily = JetBrainsMonoFontFamily,
+                                  color = if (keyVal.isNotBlank()) AmoledStatusSuccess else AmoledTextMuted,
+                                  fontSize = 8.sp,
+                                  modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                )
+                              }
+                            }
+
+                            if (keyPoolList.size > 1) {
+                              Text(
+                                text = "REMOVE",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = JetBrainsMonoFontFamily,
+                                color = AmoledStatusError,
+                                fontSize = 8.sp,
+                                modifier = Modifier
+                                  .clickable { keyPoolList.removeAt(index) }
+                                  .padding(2.dp)
+                              )
+                            }
+                          }
+
+                          Spacer(modifier = Modifier.height(4.dp))
+                          OutlinedTextField(
+                            value = keyVal,
+                            onValueChange = { keyPoolList[index] = it },
+                            placeholder = { Text("nvapi-...", fontSize = 10.sp) },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            visualTransformation = if (isApiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp),
+                            shape = RoundedCornerShape(6.dp)
+                          )
+                        }
+                      }
+                    }
+
+                    // Add Slot & Collapse Controls
+                    Row(
+                      modifier = Modifier.fillMaxWidth(),
+                      horizontalArrangement = Arrangement.SpaceBetween,
+                      verticalAlignment = Alignment.CenterVertically
+                    ) {
+                      if (keyPoolList.size < 15) {
+                        OutlinedButton(
+                          onClick = { keyPoolList.add("") },
+                          shape = RoundedCornerShape(6.dp),
+                          contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                          modifier = Modifier.height(28.dp)
+                        ) {
+                          Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(10.dp)
+                          )
+                          Spacer(modifier = Modifier.width(4.dp))
+                          Text("Add Key Slot (${keyPoolList.size}/15)", fontSize = 8.5.sp, fontFamily = JetBrainsMonoFontFamily)
+                        }
+                      }
+
+                      TextButton(
+                        onClick = { isKeyPoolExpanded = false },
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                        modifier = Modifier.height(28.dp)
+                      ) {
+                        Text("Done / Collapse", fontSize = 8.5.sp, color = AmoledActionPrimary)
+                      }
+                    }
+                  }
+                }
+              }
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -1676,7 +1908,7 @@ fun SettingsProviderDialog(
           onProviderChange(selectedType)
           if (selectedType == ProviderType.NVIDIA_NIM) {
             onSaveNvidiaConfig(
-              nvidiaKeyInput,
+              keyPoolList.map { it.trim() }.filter { it.isNotBlank() },
               nvidiaModelInput,
               nvidiaBaseUrlInput,
               nvidiaTempInput.toDoubleOrNull() ?: 0.2,

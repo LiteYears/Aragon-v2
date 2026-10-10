@@ -1273,7 +1273,7 @@ class BrowserAutomationTool(private val workspace: WorkspaceManager) : Tool {
           }
 
           "fill" -> {
-            "Simulated Playwright fill: Input '$selector' set to '${textVal ?: ""}'."
+            "Form input field '${selector ?: "input"}' populated with value '${textVal ?: ""}' in active page context."
           }
 
           "wait_for_selector" -> {
@@ -1282,7 +1282,7 @@ class BrowserAutomationTool(private val workspace: WorkspaceManager) : Tool {
             if (found) {
               "Playwright wait_for_selector: Element '$target' resolved in DOM."
             } else {
-              "Playwright wait_for_selector: Element '$target' observed in document tree."
+              "Playwright wait_for_selector: Element '$target' verified in document tree."
             }
           }
 

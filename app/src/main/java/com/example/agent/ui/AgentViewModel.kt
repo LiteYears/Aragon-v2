@@ -62,13 +62,15 @@ class AgentViewModel(
 
   private val prefs = application.getSharedPreferences("aragon_agent_prefs", Context.MODE_PRIVATE)
 
-  private val initialNvidiaKey = getInitialNvidiaApiKey()
-  private val hasNvidiaKey = initialNvidiaKey.isNotBlank()
+  private val initialNvidiaKeys = getInitialNvidiaApiKeys()
+  private val initialNvidiaKey = initialNvidiaKeys.firstOrNull() ?: ""
+  private val hasNvidiaKey = initialNvidiaKeys.isNotEmpty()
 
   private val sandboxProvider = AutonomousSandboxProvider()
   private val nvidiaProvider = NvidiaNimProvider(
     NvidiaNimConfig(
       apiKey = initialNvidiaKey,
+      apiKeys = initialNvidiaKeys,
       model = getInitialNvidiaModel(),
       baseUrl = getInitialNvidiaBaseUrl(),
       temperature = getInitialNvidiaTemperature(),
@@ -106,6 +108,9 @@ class AgentViewModel(
   private val _providerType = MutableStateFlow(initialProviderType)
   val providerType: StateFlow<ProviderType> = _providerType.asStateFlow()
 
+  private val _nvidiaApiKeys = MutableStateFlow<List<String>>(initialNvidiaKeys)
+  val nvidiaApiKeys: StateFlow<List<String>> = _nvidiaApiKeys.asStateFlow()
+
   private val _nvidiaApiKey = MutableStateFlow(initialNvidiaKey)
   val nvidiaApiKey: StateFlow<String> = _nvidiaApiKey.asStateFlow()
 
@@ -133,19 +138,32 @@ class AgentViewModel(
   private val _connectionStatus = MutableStateFlow<ConnectionStatus>(ConnectionStatus.Idle)
   val connectionStatus: StateFlow<ConnectionStatus> = _connectionStatus.asStateFlow()
 
-  private fun getInitialNvidiaApiKey(): String {
-    val saved = prefs.getString("nvidia_api_key", null)?.trim()
-    if (!saved.isNullOrBlank()) return saved
-    return try {
-      val rawKey = com.example.BuildConfig.NVIDIA_API_KEY
-      if (rawKey.isNotBlank() && rawKey != "MY_NVIDIA_API_KEY" && rawKey != "\"MY_NVIDIA_API_KEY\"") {
-        rawKey.trim()
-      } else {
-        ""
+  private fun getInitialNvidiaApiKeys(): List<String> {
+    val loaded = mutableListOf<String>()
+    for (i in 0 until 15) {
+      val key = prefs.getString("nvidia_api_key_$i", null)?.trim()
+      if (!key.isNullOrBlank()) {
+        loaded.add(key)
       }
-    } catch (_: Exception) {
-      ""
     }
+    if (loaded.isEmpty()) {
+      val single = prefs.getString("nvidia_api_key", null)?.trim()
+      if (!single.isNullOrBlank()) {
+        loaded.add(single)
+      } else {
+        try {
+          val rawKey = com.example.BuildConfig.NVIDIA_API_KEY
+          if (rawKey.isNotBlank() && rawKey != "MY_NVIDIA_API_KEY" && rawKey != "\"MY_NVIDIA_API_KEY\"") {
+            loaded.add(rawKey.trim())
+          }
+        } catch (_: Exception) {}
+      }
+    }
+    return loaded.take(15)
+  }
+
+  private fun getInitialNvidiaApiKey(): String {
+    return getInitialNvidiaApiKeys().firstOrNull() ?: ""
   }
 
   private fun getInitialGeminiApiKey(): String {
@@ -246,17 +264,36 @@ class AgentViewModel(
 
   fun updateNvidiaConfig(
     apiKey: String? = null,
+    apiKeys: List<String>? = null,
     model: String? = null,
     baseUrl: String? = null,
     temperature: Double? = null,
     maxTokens: Int? = null
   ) {
     val editor = prefs.edit()
-    apiKey?.let {
-      val clean = it.trim()
-      _nvidiaApiKey.value = clean
-      editor.putString("nvidia_api_key", clean)
+    val updatedKeys = if (apiKeys != null) {
+      apiKeys.map { it.trim() }.filter { it.isNotBlank() }.take(15)
+    } else if (apiKey != null) {
+      val clean = apiKey.trim()
+      if (clean.isNotBlank()) listOf(clean) else emptyList()
+    } else {
+      _nvidiaApiKeys.value
     }
+
+    _nvidiaApiKeys.value = updatedKeys
+    val primary = updatedKeys.firstOrNull() ?: ""
+    _nvidiaApiKey.value = primary
+    editor.putString("nvidia_api_key", primary)
+
+    for (i in 0 until 15) {
+      val k = updatedKeys.getOrNull(i)
+      if (k != null) {
+        editor.putString("nvidia_api_key_$i", k)
+      } else {
+        editor.remove("nvidia_api_key_$i")
+      }
+    }
+
     model?.let {
       val clean = it.trim()
       _nvidiaModel.value = clean
@@ -284,7 +321,7 @@ class AgentViewModel(
   }
 
   private fun applyNvidiaConfig() {
-    nvidiaProvider.setApiKey(_nvidiaApiKey.value)
+    nvidiaProvider.setApiKeys(_nvidiaApiKeys.value)
     nvidiaProvider.setModel(_nvidiaModel.value)
     nvidiaProvider.setBaseUrl(_nvidiaBaseUrl.value)
     nvidiaProvider.updateConfig {

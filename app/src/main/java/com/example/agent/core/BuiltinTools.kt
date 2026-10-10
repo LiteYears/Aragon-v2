@@ -53,33 +53,23 @@ class TerminalTool(private val workspace: WorkspaceManager) : Tool {
         )
       }
 
-      // Seamless execution of Python/Pip commands via native PythonRuntime on Android sandbox
-      if (PythonRuntime.matches(command)) {
-        val pyResult = PythonRuntime.execute(command, workspace.baseDir)
-        val currentArtifacts = workspace.listAllArtifacts()
-        return@withContext ToolResult(
-          callId = callId,
-          toolName = name,
-          status = if (pyResult.exitCode == 0) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
-          arguments = arguments,
-          output = pyResult.stdout.ifEmpty { null },
-          error = if (pyResult.exitCode != 0) pyResult.stderr.ifBlank { "Python execution failed" } else null,
-          artifacts = currentArtifacts,
-          duration = System.currentTimeMillis() - startTime,
-          stdout = pyResult.stdout,
-          stderr = pyResult.stderr,
-          exitCode = pyResult.exitCode
-        )
-      }
-
       var process: Process? = null
       try {
         workspace.baseDir.mkdirs()
+        val binDir = File(workspace.baseDir, "bin").apply { mkdirs() }
+        val tmpDir = File(workspace.baseDir, "tmp").apply { mkdirs() }
+        val libDir = File(workspace.baseDir, "lib/python").apply { mkdirs() }
+
         val processBuilder = ProcessBuilder("sh", "-c", command)
         processBuilder.directory(workspace.baseDir)
         val env = processBuilder.environment()
+        val existingPath = env["PATH"] ?: "/system/bin:/system/xbin"
+        env["PATH"] = "${binDir.absolutePath}:/system/bin:/system/xbin:/vendor/bin:/apex/com.android.runtime/bin:$existingPath"
+        env["HOME"] = workspace.baseDir.absolutePath
         env["PWD"] = workspace.baseDir.absolutePath
         env["WORKSPACE"] = workspace.baseDir.absolutePath
+        env["TMPDIR"] = tmpDir.absolutePath
+        env["PYTHONPATH"] = "${libDir.absolutePath}:${workspace.baseDir.absolutePath}"
 
         val p = processBuilder.start()
         process = p
@@ -149,28 +139,17 @@ class TerminalTool(private val workspace: WorkspaceManager) : Tool {
           Pair(stdoutSb.toString().trim(), stderrSb.toString().trim())
         }
 
-        // If system shell cannot find python/pip (common in Android sandboxes), seamlessly execute via PythonRuntime
-        if ((exitCode != 0 || stderr.contains("not found") || stderr.contains("inaccessible")) && PythonRuntime.matches(command)) {
-          val pyResult = PythonRuntime.execute(command, workspace.baseDir)
-          val currentArtifacts = workspace.listAllArtifacts()
-          return@withContext ToolResult(
-            callId = callId,
-            toolName = name,
-            status = if (pyResult.exitCode == 0) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
-            arguments = arguments,
-            output = pyResult.stdout.ifEmpty { null },
-            error = if (pyResult.exitCode != 0) pyResult.stderr.ifBlank { "Python execution failed" } else null,
-            artifacts = currentArtifacts,
-            duration = System.currentTimeMillis() - startTime,
-            stdout = pyResult.stdout,
-            stderr = pyResult.stderr,
-            exitCode = pyResult.exitCode
-          )
-        }
-
         val status = if (exitCode == 0) ToolStatus.SUCCEEDED else ToolStatus.FAILED
         val errorText = if (exitCode != 0) {
-          if (stderr.isNotBlank()) stderr else "Command exited with non-zero exit code: $exitCode"
+          val baseErr = if (stderr.isNotBlank()) stderr else "Command exited with non-zero exit code: $exitCode"
+          val cmdTrimmed = command.trim()
+          if (cmdTrimmed.startsWith("which apt") || cmdTrimmed.startsWith("which pkg") || cmdTrimmed.startsWith("apt") || cmdTrimmed.startsWith("pkg")) {
+            "$baseErr\n[SANDBOX NOTE: System package managers ('apt', 'pkg') do not exist on Android. To install tools or interpreters, call 'install_package(name=\"...\")' or download binaries to workspace/bin/ using 'download_file'.]"
+          } else if (exitCode == 127 || baseErr.contains("not found") || baseErr.contains("inaccessible") || (cmdTrimmed.startsWith("which ") && stdout.isBlank())) {
+            "$baseErr\n[SANDBOX NOTE: The requested binary or interpreter is not in the sandbox PATH. Call 'install_package(name=\"<tool>\")' to install it directly into workspace/bin/ and add to PATH. For Word documents or data processing, use native tools: 'create_docx', 'json_processor', 'csv_processor', 'write_file'.]"
+          } else {
+            baseErr
+          }
         } else {
           if (stderr.isNotBlank()) stderr else null
         }
