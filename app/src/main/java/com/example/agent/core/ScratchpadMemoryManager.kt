@@ -1,5 +1,6 @@
 package com.example.agent.core
 
+import com.alibaba.opensandbox.sandbox.Sandbox
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -141,7 +142,7 @@ data class AgentCheckpoint(
  * Manages atomic filesystem scratchpad and checkpoint persistence.
  * Guarantees zero data loss across model re-routings or connection drops.
  */
-class ScratchpadMemoryManager(private val workspace: WorkspaceManager) {
+class ScratchpadMemoryManager(val sandbox: Sandbox) {
 
   @Volatile
   var currentSessionId: String = UUID.randomUUID().toString()
@@ -157,14 +158,14 @@ class ScratchpadMemoryManager(private val workspace: WorkspaceManager) {
   fun clearSessionMemory() {
     try {
       notesDir.deleteRecursively()
-      File(workspace.baseDir, "notes").deleteRecursively()
-      File(workspace.baseDir, "plan.md").delete()
-      File(workspace.baseDir, "checkpoint.json").delete()
+      File(sandbox.baseDir, "notes").deleteRecursively()
+      File(sandbox.baseDir, "plan.md").delete()
+      File(sandbox.baseDir, "checkpoint.json").delete()
     } catch (_: Exception) {}
   }
 
   private val notesDir: File
-    get() = File(workspace.baseDir, "notes/$currentSessionId").apply { if (!exists()) mkdirs() }
+    get() = File(sandbox.baseDir, "notes/$currentSessionId").apply { if (!exists()) mkdirs() }
 
   val researchFile: File
     get() = File(notesDir, "research.jsonl")

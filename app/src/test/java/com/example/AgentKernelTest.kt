@@ -24,7 +24,7 @@ import com.example.agent.core.ToolStatus
 import com.example.agent.core.WebBrowseTool
 import com.example.agent.core.WebCrawlerTool
 import com.example.agent.core.WebSearchTool
-import com.example.agent.core.WorkspaceManager
+import com.alibaba.opensandbox.sandbox.Sandbox
 import com.example.agent.core.WriteFileTool
 import com.example.agent.core.Artifact
 import com.example.agent.core.ArtifactDownloader
@@ -53,13 +53,13 @@ class AgentKernelTest {
   @get:Rule
   val tempFolder = TemporaryFolder()
 
-  private lateinit var workspace: WorkspaceManager
+  private lateinit var workspace: Sandbox
   private lateinit var registry: ToolRegistry
   private lateinit var executor: ToolExecutor
 
   @Before
   fun setUp() {
-    workspace = WorkspaceManager(tempFolder.newFolder("test_workspace"))
+    workspace = Sandbox.builder().baseDir(tempFolder.newFolder("test_workspace")).build()
     registry = ToolRegistry()
     registry.register(WriteFileTool(workspace), "save_file")
     registry.register(ReadFileTool(workspace), "cat")

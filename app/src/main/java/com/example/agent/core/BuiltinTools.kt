@@ -1,19 +1,20 @@
 package com.example.agent.core
 
+import com.alibaba.opensandbox.codeinterpreter.domain.models.execd.executions.RunCodeRequest
+import com.alibaba.opensandbox.sandbox.Sandbox
+import com.alibaba.opensandbox.sandbox.domain.models.execd.executions.RunCommandRequest
+import com.alibaba.opensandbox.sandbox.domain.models.execd.filesystem.WriteEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
-import java.io.File
-import java.io.InputStreamReader
-import java.util.concurrent.TimeUnit
+import java.time.Duration
 
 /**
- * Executes a shell command inside the sandboxed workspace.
+ * Executes a shell command inside the OpenSandbox runtime.
  */
-class TerminalTool(private val workspace: WorkspaceManager) : Tool {
+class TerminalTool(private val sandbox: Sandbox) : Tool {
   override val name: String = "terminal"
   override val description: String =
-    "Execute a shell command within the workspace directory. Returns stdout, stderr, and the process exit code."
+    "Execute a shell command within the OpenSandbox workspace. Returns stdout, stderr, and process exit code."
 
   override val schema: ToolSchema = ToolSchema(
     listOf(
@@ -26,7 +27,7 @@ class TerminalTool(private val workspace: WorkspaceManager) : Tool {
       ToolParameter(
         name = "timeoutSeconds",
         type = "number",
-        description = "Maximum execution time in seconds (default: 15).",
+        description = "Maximum execution time in seconds (default: 30).",
         required = false
       )
     )
@@ -36,7 +37,7 @@ class TerminalTool(private val workspace: WorkspaceManager) : Tool {
     withContext(Dispatchers.IO) {
       val startTime = System.currentTimeMillis()
       val command = arguments["command"]?.toString() ?: ""
-      val timeoutSeconds = (arguments["timeoutSeconds"] as? Number)?.toLong() ?: 15L
+      val timeoutSeconds = (arguments["timeoutSeconds"] as? Number)?.toLong() ?: 30L
 
       if (command.isBlank()) {
         return@withContext ToolResult(
@@ -53,171 +54,57 @@ class TerminalTool(private val workspace: WorkspaceManager) : Tool {
         )
       }
 
-      var process: Process? = null
-      try {
-        workspace.baseDir.mkdirs()
-        val binDir = File(workspace.baseDir, "bin").apply { mkdirs() }
-        val tmpDir = File(workspace.baseDir, "tmp").apply { mkdirs() }
-        val libDir = File(workspace.baseDir, "lib/python").apply { mkdirs() }
+      val execReq = RunCommandRequest.builder()
+        .command(command)
+        .timeout(Duration.ofSeconds(timeoutSeconds))
+        .build()
 
-        val processBuilder = ProcessBuilder("sh", "-c", command)
-        processBuilder.directory(workspace.baseDir)
-        val env = processBuilder.environment()
-        val existingPath = env["PATH"] ?: "/system/bin:/system/xbin"
-        env["PATH"] = "${binDir.absolutePath}:/system/bin:/system/xbin:/vendor/bin:/apex/com.android.runtime/bin:$existingPath"
-        env["HOME"] = workspace.baseDir.absolutePath
-        env["PWD"] = workspace.baseDir.absolutePath
-        env["WORKSPACE"] = workspace.baseDir.absolutePath
-        env["TMPDIR"] = tmpDir.absolutePath
-        env["PYTHONPATH"] = "${libDir.absolutePath}:${workspace.baseDir.absolutePath}"
+      val exec = sandbox.commands().run(execReq)
+      val duration = System.currentTimeMillis() - startTime
+      val exitCode = exec.exitCode ?: 0
+      val stdout = exec.stdoutText().trim()
+      val stderr = exec.stderrText().trim()
 
-        val p = processBuilder.start()
-        process = p
-
-        val stdoutSb = StringBuilder()
-        val stderrSb = StringBuilder()
-        val streamLock = Any()
-
-        val stdoutThread = Thread {
-          try {
-            BufferedReader(InputStreamReader(p.inputStream)).use { reader ->
-              var line: String?
-              while (reader.readLine().also { line = it } != null) {
-                synchronized(streamLock) {
-                  if (stdoutSb.length < 32000) {
-                    stdoutSb.appendLine(line)
-                  }
-                }
-              }
-            }
-          } catch (_: Exception) {}
-        }
-
-        val stderrThread = Thread {
-          try {
-            BufferedReader(InputStreamReader(p.errorStream)).use { reader ->
-              var line: String?
-              while (reader.readLine().also { line = it } != null) {
-                synchronized(streamLock) {
-                  if (stderrSb.length < 32000) {
-                    stderrSb.appendLine(line)
-                  }
-                }
-              }
-            }
-          } catch (_: Exception) {}
-        }
-
-        stdoutThread.start()
-        stderrThread.start()
-
-        val completed = p.waitFor(timeoutSeconds, TimeUnit.SECONDS)
-        stdoutThread.join(800)
-        stderrThread.join(800)
-
-        val duration = System.currentTimeMillis() - startTime
-
-        if (!completed) {
-          p.destroyForcibly()
-          val out = synchronized(streamLock) { stdoutSb.toString().trim() }
-          return@withContext ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.FAILED,
-            arguments = arguments,
-            output = out,
-            error = "Execution timed out after ${timeoutSeconds}s",
-            duration = duration,
-            stdout = out,
-            stderr = "Execution timed out after ${timeoutSeconds}s",
-            exitCode = -1
-          )
-        }
-
-        val exitCode = p.exitValue()
-        val (stdout, stderr) = synchronized(streamLock) {
-          Pair(stdoutSb.toString().trim(), stderrSb.toString().trim())
-        }
-
-        val status = if (exitCode == 0) ToolStatus.SUCCEEDED else ToolStatus.FAILED
-        val errorText = if (exitCode != 0) {
-          val baseErr = if (stderr.isNotBlank()) stderr else "Command exited with non-zero exit code: $exitCode"
-          val cmdTrimmed = command.trim()
-          if (cmdTrimmed.startsWith("which apt") || cmdTrimmed.startsWith("which pkg") || cmdTrimmed.startsWith("apt") || cmdTrimmed.startsWith("pkg")) {
-            "$baseErr\n[SANDBOX NOTE: System package managers ('apt', 'pkg') do not exist on Android. To install tools or interpreters, call 'install_package(name=\"...\")' or download binaries to workspace/bin/ using 'download_file'.]"
-          } else if (exitCode == 127 || baseErr.contains("not found") || baseErr.contains("inaccessible") || (cmdTrimmed.startsWith("which ") && stdout.isBlank())) {
-            "$baseErr\n[SANDBOX NOTE: The requested binary or interpreter is not in the sandbox PATH. Call 'install_package(name=\"<tool>\")' to install it directly into workspace/bin/ and add to PATH. For Word documents or data processing, use native tools: 'create_docx', 'json_processor', 'csv_processor', 'write_file'.]"
-          } else {
-            baseErr
-          }
+      val status = if (exitCode == 0) ToolStatus.SUCCEEDED else ToolStatus.FAILED
+      val errorText = if (exitCode != 0) {
+        val baseErr = if (stderr.isNotBlank()) stderr else exec.error?.value ?: "Command exited with non-zero exit code: $exitCode"
+        val cmdTrimmed = command.trim()
+        if (cmdTrimmed.startsWith("which apt") || cmdTrimmed.startsWith("which pkg") || cmdTrimmed.startsWith("apt") || cmdTrimmed.startsWith("pkg")) {
+          "$baseErr\n[OPENSANDBOX NOTE: Desktop package managers ('apt', 'pkg') do not exist on Android. Use 'install_package(name=\"...\")' or download binaries to bin/.]"
+        } else if (exitCode == 127 || baseErr.contains("not found") || baseErr.contains("inaccessible") || (cmdTrimmed.startsWith("which ") && stdout.isBlank())) {
+          "$baseErr\n[OPENSANDBOX NOTE: The requested binary or interpreter is not in the sandbox PATH. Call 'install_package(name=\"<tool>\")' to install it directly into workspace/bin/ and add to PATH. For Word documents or data processing, use native tools: 'create_docx', 'json_processor', 'csv_processor', 'write_file'.]"
         } else {
-          if (stderr.isNotBlank()) stderr else null
+          baseErr
         }
-
-        // Detect any newly created or modified artifacts in workspace
-        val currentArtifacts = workspace.listAllArtifacts()
-
-        ToolResult(
-          callId = callId,
-          toolName = name,
-          status = status,
-          arguments = arguments,
-          output = stdout.ifEmpty { null },
-          error = errorText,
-          artifacts = currentArtifacts,
-          duration = duration,
-          stdout = stdout,
-          stderr = stderr,
-          exitCode = exitCode
-        )
-      } catch (ce: kotlinx.coroutines.CancellationException) {
-        process?.destroyForcibly()
-        throw ce
-      } catch (e: Exception) {
-        if (PythonRuntime.matches(command)) {
-          val pyResult = PythonRuntime.execute(command, workspace.baseDir)
-          val currentArtifacts = workspace.listAllArtifacts()
-          return@withContext ToolResult(
-            callId = callId,
-            toolName = name,
-            status = if (pyResult.exitCode == 0) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
-            arguments = arguments,
-            output = pyResult.stdout.ifEmpty { null },
-            error = if (pyResult.exitCode != 0) pyResult.stderr.ifBlank { "Python execution failed" } else null,
-            artifacts = currentArtifacts,
-            duration = System.currentTimeMillis() - startTime,
-            stdout = pyResult.stdout,
-            stderr = pyResult.stderr,
-            exitCode = pyResult.exitCode
-          )
-        }
-        ToolResult(
-          callId = callId,
-          toolName = name,
-          status = ToolStatus.FAILED,
-          arguments = arguments,
-          output = null,
-          error = "Failed to spawn shell process: ${e.message}",
-          duration = System.currentTimeMillis() - startTime,
-          stdout = null,
-          stderr = "Failed to spawn shell process: ${e.message}",
-          exitCode = 127
-        )
-      } finally {
-        if (process != null && process.isAlive) {
-          process.destroyForcibly()
-        }
+      } else {
+        if (stderr.isNotBlank()) stderr else null
       }
+
+      val artifacts = sandbox.listArtifacts()
+
+      ToolResult(
+        callId = callId,
+        toolName = name,
+        status = status,
+        arguments = arguments,
+        output = stdout.ifEmpty { null },
+        error = errorText,
+        artifacts = artifacts,
+        duration = duration,
+        stdout = stdout,
+        stderr = stderr,
+        exitCode = exitCode
+      )
     }
 }
 
 /**
- * Reads the text content of a file in the workspace.
+ * Reads the text content of a file in OpenSandbox.
  */
-class ReadFileTool(private val workspace: WorkspaceManager) : Tool {
+class ReadFileTool(private val sandbox: Sandbox) : Tool {
   override val name: String = "read_file"
   override val description: String =
-    "Read the text content of a file in the workspace. Specify relative path."
+    "Read the text content of a file in the OpenSandbox workspace. Specify relative path."
 
   override val schema: ToolSchema = ToolSchema(
     listOf(
@@ -226,6 +113,18 @@ class ReadFileTool(private val workspace: WorkspaceManager) : Tool {
         type = "string",
         description = "Relative path of the file to read (e.g., 'data.csv', 'src/main.py').",
         required = true
+      ),
+      ToolParameter(
+        name = "offset",
+        type = "number",
+        description = "Optional starting line number (1-based).",
+        required = false
+      ),
+      ToolParameter(
+        name = "limit",
+        type = "number",
+        description = "Optional maximum number of lines to read.",
+        required = false
       )
     )
   )
@@ -234,40 +133,17 @@ class ReadFileTool(private val workspace: WorkspaceManager) : Tool {
     withContext(Dispatchers.IO) {
       val startTime = System.currentTimeMillis()
       val path = arguments["path"]?.toString() ?: ""
+      val offset = (arguments["offset"] as? Number)?.toInt()
+      val limit = (arguments["limit"] as? Number)?.toInt()
 
       try {
-        val file = workspace.resolveSafe(path)
-        if (!file.exists()) {
-          return@withContext ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.FAILED,
-            arguments = arguments,
-            output = null,
-            error = "File does not exist: $path",
-            duration = System.currentTimeMillis() - startTime,
-            stdout = null,
-            stderr = "File does not exist: $path",
-            exitCode = 1
-          )
-        }
-        if (file.isDirectory) {
-          return@withContext ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.FAILED,
-            arguments = arguments,
-            output = null,
-            error = "Target '$path' is a directory, not a regular file.",
-            duration = System.currentTimeMillis() - startTime,
-            stdout = null,
-            stderr = "Target '$path' is a directory, not a regular file.",
-            exitCode = 1
-          )
-        }
-
-        val content = file.readText()
-        val artifact = workspace.createArtifactFromFile(file, callId)
+        val content = sandbox.filesystem().readFile(
+          path = path,
+          encoding = "UTF-8",
+          range = null,
+          offset = offset,
+          limit = limit
+        )
 
         ToolResult(
           callId = callId,
@@ -276,7 +152,7 @@ class ReadFileTool(private val workspace: WorkspaceManager) : Tool {
           arguments = arguments,
           output = content,
           error = null,
-          artifacts = listOf(artifact),
+          artifacts = sandbox.listArtifacts(),
           duration = System.currentTimeMillis() - startTime,
           stdout = content,
           stderr = null,
@@ -289,10 +165,10 @@ class ReadFileTool(private val workspace: WorkspaceManager) : Tool {
           status = ToolStatus.FAILED,
           arguments = arguments,
           output = null,
-          error = "Error reading file: ${e.message}",
+          error = "Failed to read file '$path': ${e.message}",
           duration = System.currentTimeMillis() - startTime,
           stdout = null,
-          stderr = "Error reading file: ${e.message}",
+          stderr = "Failed to read file '$path': ${e.message}",
           exitCode = 1
         )
       }
@@ -300,26 +176,25 @@ class ReadFileTool(private val workspace: WorkspaceManager) : Tool {
 }
 
 /**
- * Writes text content to a file in the workspace.
- * Verifies that the write actually succeeded on disk.
+ * Writes text content to a file in OpenSandbox.
  */
-class WriteFileTool(private val workspace: WorkspaceManager) : Tool {
+class WriteFileTool(private val sandbox: Sandbox) : Tool {
   override val name: String = "write_file"
   override val description: String =
-    "Write text content to a file in the workspace. Automatically creates parent directories and verifies write."
+    "Create or overwrite a file in the OpenSandbox workspace with the provided content. Performs byte-level validation."
 
   override val schema: ToolSchema = ToolSchema(
     listOf(
       ToolParameter(
         name = "path",
         type = "string",
-        description = "Relative path of the target file to create or overwrite.",
+        description = "Path where the file should be saved (e.g., 'summary.md', 'output.json', 'script.py').",
         required = true
       ),
       ToolParameter(
         name = "content",
         type = "string",
-        description = "The exact text content to write to the file.",
+        description = "The text content to write into the file.",
         required = true
       )
     )
@@ -338,7 +213,7 @@ class WriteFileTool(private val workspace: WorkspaceManager) : Tool {
           status = ToolStatus.FAILED,
           arguments = arguments,
           output = null,
-          error = "Parameter 'path' cannot be blank.",
+          error = "Path cannot be blank",
           duration = System.currentTimeMillis() - startTime,
           stdout = null,
           stderr = "Path cannot be blank",
@@ -346,7 +221,6 @@ class WriteFileTool(private val workspace: WorkspaceManager) : Tool {
         )
       }
 
-      // Layer 2.1: Artifact format validation
       val validation = ArtifactValidatorRegistry.validateContent(path, content)
       if (!validation.isValid) {
         return@withContext ToolResult(
@@ -355,465 +229,20 @@ class WriteFileTool(private val workspace: WorkspaceManager) : Tool {
           status = ToolStatus.FAILED,
           arguments = arguments,
           output = null,
-          error = "Deliverable validation failed: ${validation.errorMessage}",
+          error = "Content validation failed: ${validation.errorMessage}",
           duration = System.currentTimeMillis() - startTime,
           stdout = null,
-          stderr = validation.errorMessage,
+          stderr = "Content validation failed: ${validation.errorMessage}",
           exitCode = 1
         )
       }
 
       try {
-        val file = workspace.resolveSafe(path)
-        file.parentFile?.mkdirs()
+        sandbox.filesystem().writeFile(path, content)
+        val artifacts = sandbox.listArtifacts()
+        val writtenArtifact = artifacts.find { it.path == path }
 
-        // Layer 2.2: Idempotency guard for deliverables
-        if (file.exists() && file.isFile) {
-          val isDocx = path.endsWith(".docx", ignoreCase = true) || path.endsWith(".doc", ignoreCase = true)
-          if (!isDocx && file.readText() == content) {
-            val note = "Idempotency notice: File '$path' already exists with identical content. Skipping redundant write."
-            return@withContext ToolResult(
-              callId = callId,
-              toolName = name,
-              status = ToolStatus.SUCCEEDED,
-              arguments = arguments,
-              output = note,
-              error = null,
-              artifacts = listOf(workspace.createArtifactFromFile(file, callId)),
-              duration = System.currentTimeMillis() - startTime,
-              stdout = note,
-              stderr = null,
-              exitCode = 0
-            )
-          }
-        }
-
-        // Layer 2.3: Atomic write to temporary file before atomic rename/replace
-        val tmpFile = File(file.parentFile, "${file.name}.${System.currentTimeMillis()}.tmp")
-
-        val isDocx = path.endsWith(".docx", ignoreCase = true) || path.endsWith(".doc", ignoreCase = true)
-
-        if (isDocx) {
-          DocxBuilder.fromMarkdownOrText(content).save(tmpFile)
-          val postCheck = ArtifactValidatorRegistry.validateExistingFile(tmpFile)
-          if (!postCheck.isValid) {
-            tmpFile.delete()
-            return@withContext ToolResult(
-              callId = callId,
-              toolName = name,
-              status = ToolStatus.FAILED,
-              arguments = arguments,
-              output = null,
-              error = "Deliverable validation failed on disk: ${postCheck.errorMessage}",
-              duration = System.currentTimeMillis() - startTime,
-              stdout = null,
-              stderr = postCheck.errorMessage,
-              exitCode = 1
-            )
-          }
-        } else {
-          tmpFile.writeText(content, Charsets.UTF_8)
-        }
-
-        // Atomic replace
-        var replaced = false
-        try {
-          replaced = tmpFile.renameTo(file)
-          if (!replaced) {
-            try {
-              if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                java.nio.file.Files.move(
-                  tmpFile.toPath(),
-                  file.toPath(),
-                  java.nio.file.StandardCopyOption.REPLACE_EXISTING
-                )
-                replaced = true
-              }
-            } catch (_: Throwable) {
-              // Fall back to copy
-            }
-          }
-          if (!replaced) {
-            tmpFile.copyTo(file, overwrite = true)
-            replaced = true
-          }
-        } finally {
-          if (tmpFile.exists()) {
-            tmpFile.delete()
-          }
-        }
-
-        // Strict verification on filesystem
-        if (!file.exists()) {
-          return@withContext ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.FAILED,
-            arguments = arguments,
-            output = null,
-            error = "Filesystem verification failed: '$path' does not exist after write operation.",
-            duration = System.currentTimeMillis() - startTime,
-            stdout = null,
-            stderr = "File not found after write",
-            exitCode = 1
-          )
-        }
-
-        val actualBytes = file.length()
-        val artifact = workspace.createArtifactFromFile(file, callId)
-        val successMsg = "Successfully wrote and validated deliverable '$path' ($actualBytes bytes on disk)."
-
-        ToolResult(
-          callId = callId,
-          toolName = name,
-          status = ToolStatus.SUCCEEDED,
-          arguments = arguments,
-          output = successMsg,
-          error = null,
-          artifacts = listOf(artifact),
-          duration = System.currentTimeMillis() - startTime,
-          stdout = successMsg,
-          stderr = null,
-          exitCode = 0
-        )
-      } catch (e: Exception) {
-        ToolResult(
-          callId = callId,
-          toolName = name,
-          status = ToolStatus.FAILED,
-          arguments = arguments,
-          output = null,
-          error = "Error writing file: ${e.message}",
-          duration = System.currentTimeMillis() - startTime,
-          stdout = null,
-          stderr = "Error writing file: ${e.message}",
-          exitCode = 1
-        )
-      }
-    }
-}
-
-/**
- * Lists files and directories in the workspace.
- */
-class ListFilesTool(private val workspace: WorkspaceManager) : Tool {
-  override val name: String = "list_files"
-  override val description: String =
-    "List files and directories in the workspace or a specified subfolder."
-
-  override val schema: ToolSchema = ToolSchema(
-    listOf(
-      ToolParameter(
-        name = "path",
-        type = "string",
-        description = "Relative path of folder to inspect (use '.' or '' for workspace root).",
-        required = false
-      )
-    )
-  )
-
-  override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
-    withContext(Dispatchers.IO) {
-      val startTime = System.currentTimeMillis()
-      val path = arguments["path"]?.toString()?.ifBlank { "." } ?: "."
-
-      try {
-        val target = workspace.resolveSafe(path)
-        if (!target.exists()) {
-          return@withContext ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.FAILED,
-            arguments = arguments,
-            output = null,
-            error = "Directory does not exist: $path",
-            duration = System.currentTimeMillis() - startTime,
-            stdout = null,
-            stderr = "Directory does not exist: $path",
-            exitCode = 1
-          )
-        }
-
-        val entries = target.listFiles()?.sortedWith(
-          compareBy<File> { !it.isDirectory }.thenBy { it.name.lowercase() }
-        ) ?: emptyList()
-
-        val sb = StringBuilder()
-        sb.appendLine("Contents of '${workspace.getRelativePath(target)}' (${entries.size} items):")
-        for (item in entries) {
-          val type = if (item.isDirectory) "[DIR] " else "[FILE]"
-          val size = if (item.isFile) "(${item.length()} bytes)" else ""
-          sb.appendLine("  $type ${item.name} $size")
-        }
-
-        val artifacts = entries.filter { it.isFile }.map { workspace.createArtifactFromFile(it, callId) }
-        val outputText = sb.toString().trim()
-
-        ToolResult(
-          callId = callId,
-          toolName = name,
-          status = ToolStatus.SUCCEEDED,
-          arguments = arguments,
-          output = outputText,
-          error = null,
-          artifacts = artifacts,
-          duration = System.currentTimeMillis() - startTime,
-          stdout = outputText,
-          stderr = null,
-          exitCode = 0
-        )
-      } catch (e: Exception) {
-        ToolResult(
-          callId = callId,
-          toolName = name,
-          status = ToolStatus.FAILED,
-          arguments = arguments,
-          output = null,
-          error = "Error listing files: ${e.message}",
-          duration = System.currentTimeMillis() - startTime,
-          stdout = null,
-          stderr = "Error listing files: ${e.message}",
-          exitCode = 1
-        )
-      }
-    }
-}
-
-/**
- * Deletes a file in the workspace.
- */
-class DeleteFileTool(private val workspace: WorkspaceManager) : Tool {
-  override val name: String = "delete_file"
-  override val description: String =
-    "Delete a file or empty directory in the workspace."
-
-  override val schema: ToolSchema = ToolSchema(
-    listOf(
-      ToolParameter(
-        name = "path",
-        type = "string",
-        description = "Relative path of file to delete.",
-        required = true
-      )
-    )
-  )
-
-  override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
-    withContext(Dispatchers.IO) {
-      val startTime = System.currentTimeMillis()
-      val path = arguments["path"]?.toString() ?: ""
-
-      try {
-        val file = workspace.resolveSafe(path)
-        if (!file.exists()) {
-          return@withContext ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.FAILED,
-            arguments = arguments,
-            output = null,
-            error = "File does not exist: $path",
-            duration = System.currentTimeMillis() - startTime,
-            stdout = null,
-            stderr = "File does not exist: $path",
-            exitCode = 1
-          )
-        }
-
-        val deleted = file.delete()
-        if (deleted) {
-          ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.SUCCEEDED,
-            arguments = arguments,
-            output = "Successfully deleted '$path'",
-            error = null,
-            duration = System.currentTimeMillis() - startTime,
-            stdout = "Successfully deleted '$path'",
-            stderr = null,
-            exitCode = 0
-          )
-        } else {
-          ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.FAILED,
-            arguments = arguments,
-            output = null,
-            error = "Failed to delete '$path'. If it is a directory, verify it is empty.",
-            duration = System.currentTimeMillis() - startTime,
-            stdout = null,
-            stderr = "Failed to delete '$path'",
-            exitCode = 1
-          )
-        }
-      } catch (e: Exception) {
-        ToolResult(
-          callId = callId,
-          toolName = name,
-          status = ToolStatus.FAILED,
-          arguments = arguments,
-          output = null,
-          error = "Error deleting file: ${e.message}",
-          duration = System.currentTimeMillis() - startTime,
-          stdout = null,
-          stderr = "Error deleting file: ${e.message}",
-          exitCode = 1
-        )
-      }
-    }
-}
-
-/**
- * Creates a directory in the workspace.
- */
-class CreateDirectoryTool(private val workspace: WorkspaceManager) : Tool {
-  override val name: String = "create_directory"
-  override val description: String =
-    "Create a new directory (and any necessary parent directories) in the workspace."
-
-  override val schema: ToolSchema = ToolSchema(
-    listOf(
-      ToolParameter(
-        name = "path",
-        type = "string",
-        description = "Relative directory path to create (e.g. 'output/charts', 'src/utils').",
-        required = true
-      )
-    )
-  )
-
-  override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
-    withContext(Dispatchers.IO) {
-      val startTime = System.currentTimeMillis()
-      val path = arguments["path"]?.toString() ?: ""
-
-      try {
-        val dir = workspace.resolveSafe(path)
-        if (dir.exists()) {
-          return@withContext ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.SUCCEEDED,
-            arguments = arguments,
-            output = "Directory '$path' already exists.",
-            error = null,
-            duration = System.currentTimeMillis() - startTime,
-            stdout = "Directory '$path' already exists.",
-            stderr = null,
-            exitCode = 0
-          )
-        }
-
-        val created = dir.mkdirs()
-        if (created || dir.exists()) {
-          ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.SUCCEEDED,
-            arguments = arguments,
-            output = "Successfully created directory '$path'",
-            error = null,
-            duration = System.currentTimeMillis() - startTime,
-            stdout = "Successfully created directory '$path'",
-            stderr = null,
-            exitCode = 0
-          )
-        } else {
-          ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.FAILED,
-            arguments = arguments,
-            output = null,
-            error = "Could not create directory '$path'",
-            duration = System.currentTimeMillis() - startTime,
-            stdout = null,
-            stderr = "Could not create directory '$path'",
-            exitCode = 1
-          )
-        }
-      } catch (e: Exception) {
-        ToolResult(
-          callId = callId,
-          toolName = name,
-          status = ToolStatus.FAILED,
-          arguments = arguments,
-          output = null,
-          error = "Error creating directory: ${e.message}",
-          duration = System.currentTimeMillis() - startTime,
-          stdout = null,
-          stderr = "Error creating directory: ${e.message}",
-          exitCode = 1
-        )
-      }
-    }
-}
-
-/**
- * Authoritatively inspects an artifact/file in the workspace.
- * Returns metadata: exists, size, lines count, type, preview.
- */
-class InspectArtifactTool(private val workspace: WorkspaceManager) : Tool {
-  override val name: String = "inspect_artifact"
-  override val description: String =
-    "Inspect metadata and contents of an artifact file in the workspace to objectively verify existence and properties."
-
-  override val schema: ToolSchema = ToolSchema(
-    listOf(
-      ToolParameter(
-        name = "path",
-        type = "string",
-        description = "Path of the artifact to inspect (e.g. 'report.md', 'output.json').",
-        required = true
-      ),
-      ToolParameter(
-        name = "previewLines",
-        type = "number",
-        description = "Number of initial lines to preview (default: 20).",
-        required = false
-      )
-    )
-  )
-
-  override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
-    withContext(Dispatchers.IO) {
-      val startTime = System.currentTimeMillis()
-      val path = arguments["path"]?.toString() ?: ""
-      val previewCount = (arguments["previewLines"] as? Number)?.toInt() ?: 20
-
-      try {
-        val file = workspace.resolveSafe(path)
-        if (!file.exists()) {
-          return@withContext ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.FAILED,
-            arguments = arguments,
-            output = null,
-            error = "Artifact does not exist at path: $path",
-            duration = System.currentTimeMillis() - startTime,
-            stdout = null,
-            stderr = "Artifact does not exist at path: $path",
-            exitCode = 1
-          )
-        }
-
-        val artifact = workspace.createArtifactFromFile(file, callId)
-        val lines = if (file.isFile) file.readLines() else emptyList()
-        val preview = lines.take(previewCount).joinToString("\n")
-
-        val summary = """
-        Artifact Inspection Report:
-        - Path: ${artifact.path}
-        - Exists: ${artifact.exists}
-        - Type: ${artifact.type}
-        - Size: ${artifact.size} bytes
-        - Total Lines: ${lines.size}
-        - Content Preview (first ${minOf(previewCount, lines.size)} lines):
-        $preview
-        """.trimIndent()
+        val summary = "Successfully saved '$path' (${validation.byteCount} bytes, format: ${validation.detectedFormat ?: "text"}) in OpenSandbox."
 
         ToolResult(
           callId = callId,
@@ -822,7 +251,7 @@ class InspectArtifactTool(private val workspace: WorkspaceManager) : Tool {
           arguments = arguments,
           output = summary,
           error = null,
-          artifacts = listOf(artifact),
+          artifacts = artifacts,
           duration = System.currentTimeMillis() - startTime,
           stdout = summary,
           stderr = null,
@@ -835,7 +264,293 @@ class InspectArtifactTool(private val workspace: WorkspaceManager) : Tool {
           status = ToolStatus.FAILED,
           arguments = arguments,
           output = null,
-          error = "Error inspecting artifact: ${e.message}",
+          error = "Failed to write file '$path': ${e.message}",
+          duration = System.currentTimeMillis() - startTime,
+          stdout = null,
+          stderr = "Failed to write file '$path': ${e.message}",
+          exitCode = 1
+        )
+      }
+    }
+}
+
+/**
+ * Lists entries in an OpenSandbox directory.
+ */
+class ListFilesTool(private val sandbox: Sandbox) : Tool {
+  override val name: String = "list_files"
+  override val description: String =
+    "List files and directories in the OpenSandbox workspace. Defaults to root directory."
+
+  override val schema: ToolSchema = ToolSchema(
+    listOf(
+      ToolParameter(
+        name = "path",
+        type = "string",
+        description = "Directory path to list (default: root '.').",
+        required = false
+      ),
+      ToolParameter(
+        name = "depth",
+        type = "number",
+        description = "Max traversal depth (default: 1).",
+        required = false
+      )
+    )
+  )
+
+  override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
+    withContext(Dispatchers.IO) {
+      val startTime = System.currentTimeMillis()
+      val path = arguments["path"]?.toString()?.ifBlank { "." } ?: "."
+      val depth = (arguments["depth"] as? Number)?.toInt() ?: 1
+
+      try {
+        val entries = sandbox.filesystem().listDirectory(path, depth)
+        val sb = StringBuilder()
+        sb.appendLine("OpenSandbox Directory Listing for '$path':")
+        if (entries.isEmpty()) {
+          sb.appendLine("  (directory is empty)")
+        } else {
+          entries.forEach { entry ->
+            val typeIndicator = if (entry.isDirectory) "[DIR]" else "[FILE]"
+            sb.appendLine("  $typeIndicator ${entry.path} (${entry.size} bytes, mode: ${Integer.toOctalString(entry.mode)})")
+          }
+        }
+
+        val out = sb.toString().trim()
+        ToolResult(
+          callId = callId,
+          toolName = name,
+          status = ToolStatus.SUCCEEDED,
+          arguments = arguments,
+          output = out,
+          error = null,
+          artifacts = sandbox.listArtifacts(),
+          duration = System.currentTimeMillis() - startTime,
+          stdout = out,
+          stderr = null,
+          exitCode = 0
+        )
+      } catch (e: Exception) {
+        ToolResult(
+          callId = callId,
+          toolName = name,
+          status = ToolStatus.FAILED,
+          arguments = arguments,
+          output = null,
+          error = "Failed to list directory '$path': ${e.message}",
+          duration = System.currentTimeMillis() - startTime,
+          stdout = null,
+          stderr = "Failed to list directory '$path': ${e.message}",
+          exitCode = 1
+        )
+      }
+    }
+}
+
+/**
+ * Deletes a file or directory from OpenSandbox.
+ */
+class DeleteFileTool(private val sandbox: Sandbox) : Tool {
+  override val name: String = "delete_file"
+  override val description: String =
+    "Delete a file or directory from the OpenSandbox workspace."
+
+  override val schema: ToolSchema = ToolSchema(
+    listOf(
+      ToolParameter(
+        name = "path",
+        type = "string",
+        description = "Path to the file or directory to delete.",
+        required = true
+      )
+    )
+  )
+
+  override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
+    withContext(Dispatchers.IO) {
+      val startTime = System.currentTimeMillis()
+      val path = arguments["path"]?.toString() ?: ""
+
+      try {
+        sandbox.filesystem().deleteFiles(listOf(path))
+        sandbox.filesystem().deleteDirectories(listOf(path))
+
+        val summary = "Successfully deleted '$path' from OpenSandbox."
+        ToolResult(
+          callId = callId,
+          toolName = name,
+          status = ToolStatus.SUCCEEDED,
+          arguments = arguments,
+          output = summary,
+          error = null,
+          artifacts = sandbox.listArtifacts(),
+          duration = System.currentTimeMillis() - startTime,
+          stdout = summary,
+          stderr = null,
+          exitCode = 0
+        )
+      } catch (e: Exception) {
+        ToolResult(
+          callId = callId,
+          toolName = name,
+          status = ToolStatus.FAILED,
+          arguments = arguments,
+          output = null,
+          error = "Failed to delete '$path': ${e.message}",
+          duration = System.currentTimeMillis() - startTime,
+          stdout = null,
+          stderr = "Failed to delete '$path': ${e.message}",
+          exitCode = 1
+        )
+      }
+    }
+}
+
+/**
+ * Creates a directory in OpenSandbox.
+ */
+class CreateDirectoryTool(private val sandbox: Sandbox) : Tool {
+  override val name: String = "create_directory"
+  override val description: String =
+    "Create a new directory in the OpenSandbox workspace."
+
+  override val schema: ToolSchema = ToolSchema(
+    listOf(
+      ToolParameter(
+        name = "path",
+        type = "string",
+        description = "Path of the directory to create (e.g. 'output', 'src/components').",
+        required = true
+      )
+    )
+  )
+
+  override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
+    withContext(Dispatchers.IO) {
+      val startTime = System.currentTimeMillis()
+      val path = arguments["path"]?.toString() ?: ""
+
+      try {
+        sandbox.filesystem().createDirectories(listOf(WriteEntry.builder().path(path).build()))
+        val summary = "Successfully created directory '$path' in OpenSandbox."
+        ToolResult(
+          callId = callId,
+          toolName = name,
+          status = ToolStatus.SUCCEEDED,
+          arguments = arguments,
+          output = summary,
+          error = null,
+          artifacts = sandbox.listArtifacts(),
+          duration = System.currentTimeMillis() - startTime,
+          stdout = summary,
+          stderr = null,
+          exitCode = 0
+        )
+      } catch (e: Exception) {
+        ToolResult(
+          callId = callId,
+          toolName = name,
+          status = ToolStatus.FAILED,
+          arguments = arguments,
+          output = null,
+          error = "Failed to create directory '$path': ${e.message}",
+          duration = System.currentTimeMillis() - startTime,
+          stdout = null,
+          stderr = "Failed to create directory '$path': ${e.message}",
+          exitCode = 1
+        )
+      }
+    }
+}
+
+/**
+ * Inspects authoritative filesystem metadata and preview of an artifact.
+ */
+class InspectArtifactTool(private val sandbox: Sandbox) : Tool {
+  override val name: String = "inspect_artifact"
+  override val description: String =
+    "Inspect authoritative filesystem metadata (size, lines, preview) of a workspace deliverable in OpenSandbox."
+
+  override val schema: ToolSchema = ToolSchema(
+    listOf(
+      ToolParameter(
+        name = "path",
+        type = "string",
+        description = "Path to the file to inspect.",
+        required = true
+      ),
+      ToolParameter(
+        name = "previewLines",
+        type = "number",
+        description = "Number of preview lines to display (default: 15).",
+        required = false
+      )
+    )
+  )
+
+  override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
+    withContext(Dispatchers.IO) {
+      val startTime = System.currentTimeMillis()
+      val path = arguments["path"]?.toString() ?: ""
+      val previewCount = (arguments["previewLines"] as? Number)?.toInt() ?: 15
+
+      try {
+        val infoMap = sandbox.filesystem().readFileInfo(listOf(path))
+        val entry = infoMap[path]
+        if (entry == null) {
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.FAILED,
+            arguments = arguments,
+            output = null,
+            error = "File '$path' does not exist in OpenSandbox.",
+            duration = System.currentTimeMillis() - startTime,
+            stdout = null,
+            stderr = "File '$path' does not exist in OpenSandbox.",
+            exitCode = 1
+          )
+        }
+
+        val preview = try {
+          sandbox.filesystem().readFile(path, offset = 1, limit = previewCount)
+        } catch (_: Exception) {
+          "(binary or non-text content)"
+        }
+
+        val summary = """
+          OpenSandbox Artifact Metadata:
+          - Path: ${entry.path}
+          - Mode: ${Integer.toOctalString(entry.mode)}
+          - Size: ${entry.size} bytes
+          - Modified: ${entry.modifiedAt}
+          - Content Preview (first $previewCount lines):
+          $preview
+        """.trimIndent()
+
+        ToolResult(
+          callId = callId,
+          toolName = name,
+          status = ToolStatus.SUCCEEDED,
+          arguments = arguments,
+          output = summary,
+          error = null,
+          artifacts = sandbox.listArtifacts(),
+          duration = System.currentTimeMillis() - startTime,
+          stdout = summary,
+          stderr = null,
+          exitCode = 0
+        )
+      } catch (e: Exception) {
+        ToolResult(
+          callId = callId,
+          toolName = name,
+          status = ToolStatus.FAILED,
+          arguments = arguments,
+          output = null,
+          error = "Error inspecting artifact '$path': ${e.message}",
           duration = System.currentTimeMillis() - startTime,
           stdout = null,
           stderr = "Error inspecting artifact: ${e.message}",
@@ -846,31 +561,31 @@ class InspectArtifactTool(private val workspace: WorkspaceManager) : Tool {
 }
 
 /**
- * Executes Python 3 code or scripts in the sandboxed workspace.
+ * Executes Python code or scripts using the OpenSandbox Code Interpreter.
  */
-class PythonTool(private val workspace: WorkspaceManager) : Tool {
+class PythonTool(private val sandbox: Sandbox) : Tool {
   override val name: String = "python3"
   override val description: String =
-    "Execute Python 3 scripts or inline code in the sandboxed workspace. Supports standard libraries, python-docx (.docx Word document creation), pandas, csv, json, os, and pip-installed libraries."
+    "Execute Python 3 scripts or inline code using the OpenSandbox Code Interpreter. Supports standard libraries, data processing, and document generation."
 
   override val schema: ToolSchema = ToolSchema(
     listOf(
       ToolParameter(
         name = "code",
         type = "string",
-        description = "Inline Python 3 code to execute (e.g., 'import docx; doc = docx.Document(); ...'). Optional if script file is specified.",
+        description = "Inline Python 3 code to execute.",
         required = false
       ),
       ToolParameter(
         name = "script",
         type = "string",
-        description = "Path to an existing .py script in the workspace to execute (e.g., 'transform.py').",
+        description = "Path to an existing .py script in the workspace to execute.",
         required = false
       ),
       ToolParameter(
         name = "command",
         type = "string",
-        description = "Full python3 command line (e.g. 'python3 transform.py').",
+        description = "Full python3 command line (e.g. 'python3 script.py arg1').",
         required = false
       )
     )
@@ -883,46 +598,59 @@ class PythonTool(private val workspace: WorkspaceManager) : Tool {
       val script = arguments["script"]?.toString()
       val command = arguments["command"]?.toString()
 
-      val pyResult = when {
-        !code.isNullOrBlank() -> PythonRuntime.runPythonCode(code, workspace.baseDir, emptyList())
-        !script.isNullOrBlank() -> PythonRuntime.execute("python3 $script", workspace.baseDir)
-        !command.isNullOrBlank() -> PythonRuntime.execute(command, workspace.baseDir)
-        else -> PythonRuntime.execute("python3 --version", workspace.baseDir)
+      val execution = when {
+        !code.isNullOrBlank() -> {
+          sandbox.codeInterpreter().codes().run(
+            RunCodeRequest.builder().code(code).build()
+          )
+        }
+        !script.isNullOrBlank() -> {
+          sandbox.commands().run("python3 $script")
+        }
+        !command.isNullOrBlank() -> {
+          sandbox.commands().run(command)
+        }
+        else -> {
+          sandbox.commands().run("python3 --version")
+        }
       }
 
-      val artifacts = workspace.listAllArtifacts()
       val duration = System.currentTimeMillis() - startTime
+      val exitCode = execution.exitCode ?: 0
+      val stdout = execution.stdoutText().trim()
+      val stderr = execution.stderrText().trim()
+      val status = if (exitCode == 0 && execution.error == null) ToolStatus.SUCCEEDED else ToolStatus.FAILED
 
       ToolResult(
         callId = callId,
         toolName = name,
-        status = if (pyResult.exitCode == 0) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
+        status = status,
         arguments = arguments,
-        output = pyResult.stdout.ifEmpty { null },
-        error = if (pyResult.exitCode != 0) pyResult.stderr.ifBlank { "Python execution error" } else null,
-        artifacts = artifacts,
+        output = stdout.ifEmpty { null },
+        error = if (status == ToolStatus.FAILED) stderr.ifBlank { execution.error?.value ?: "Python execution failed" } else null,
+        artifacts = sandbox.listArtifacts(),
         duration = duration,
-        stdout = pyResult.stdout,
-        stderr = pyResult.stderr,
-        exitCode = pyResult.exitCode
+        stdout = stdout,
+        stderr = stderr,
+        exitCode = exitCode
       )
     }
 }
 
 /**
- * Pip package manager tool for managing Python packages in the workspace.
+ * Pip package manager tool in OpenSandbox.
  */
-class PipTool(private val workspace: WorkspaceManager) : Tool {
+class PipTool(private val sandbox: Sandbox) : Tool {
   override val name: String = "pip"
   override val description: String =
-    "Install, list, or inspect Python packages using the native Pip package manager (e.g., 'pip install python-docx', 'pip list')."
+    "Install, list, or inspect Python packages in the OpenSandbox environment (e.g., 'pip install requests', 'pip list')."
 
   override val schema: ToolSchema = ToolSchema(
     listOf(
       ToolParameter(
         name = "command",
         type = "string",
-        description = "The pip command to execute (e.g., 'install python-docx', 'install pandas', 'list').",
+        description = "The pip command to execute (e.g., 'install pandas', 'list').",
         required = true
       )
     )
@@ -934,22 +662,25 @@ class PipTool(private val workspace: WorkspaceManager) : Tool {
       val cmd = arguments["command"]?.toString() ?: "list"
       val fullCmd = if (cmd.startsWith("pip")) cmd else "pip $cmd"
 
-      val pipResult = PythonRuntime.execute(fullCmd, workspace.baseDir)
-      val artifacts = workspace.listAllArtifacts()
+      val exec = sandbox.commands().run(fullCmd)
       val duration = System.currentTimeMillis() - startTime
+      val exitCode = exec.exitCode ?: 0
+      val stdout = exec.stdoutText().trim()
+      val stderr = exec.stderrText().trim()
+      val status = if (exitCode == 0 && exec.error == null) ToolStatus.SUCCEEDED else ToolStatus.FAILED
 
       ToolResult(
         callId = callId,
         toolName = name,
-        status = if (pipResult.exitCode == 0) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
+        status = status,
         arguments = arguments,
-        output = pipResult.stdout.ifEmpty { null },
-        error = if (pipResult.exitCode != 0) pipResult.stderr.ifBlank { "Pip error" } else null,
-        artifacts = artifacts,
+        output = stdout.ifEmpty { null },
+        error = if (status == ToolStatus.FAILED) stderr.ifBlank { exec.error?.value ?: "Pip execution failed" } else null,
+        artifacts = sandbox.listArtifacts(),
         duration = duration,
-        stdout = pipResult.stdout,
-        stderr = pipResult.stderr,
-        exitCode = pipResult.exitCode
+        stdout = stdout,
+        stderr = stderr,
+        exitCode = exitCode
       )
     }
 }

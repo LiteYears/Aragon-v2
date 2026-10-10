@@ -48,23 +48,29 @@ class DocxBuilder {
   fun save(targetFile: File) {
     targetFile.parentFile?.mkdirs()
     FileOutputStream(targetFile).use { fos ->
-      ZipOutputStream(fos).use { zos ->
-        // 1. [Content_Types].xml
-        putZipEntry(zos, "[Content_Types].xml", buildContentTypesXml())
-
-        // 2. _rels/.rels
-        putZipEntry(zos, "_rels/.rels", buildRootRelsXml())
-
-        // 3. word/_rels/document.xml.rels
-        putZipEntry(zos, "word/_rels/document.xml.rels", buildWordRelsXml())
-
-        // 4. word/styles.xml
-        putZipEntry(zos, "word/styles.xml", buildStylesXml())
-
-        // 5. word/document.xml
-        putZipEntry(zos, "word/document.xml", buildDocumentXml())
-      }
+      fos.write(buildByteArray())
     }
+  }
+
+  fun buildByteArray(): ByteArray {
+    val baos = java.io.ByteArrayOutputStream()
+    ZipOutputStream(baos).use { zos ->
+      // 1. [Content_Types].xml
+      putZipEntry(zos, "[Content_Types].xml", buildContentTypesXml())
+
+      // 2. _rels/.rels
+      putZipEntry(zos, "_rels/.rels", buildRootRelsXml())
+
+      // 3. word/_rels/document.xml.rels
+      putZipEntry(zos, "word/_rels/document.xml.rels", buildWordRelsXml())
+
+      // 4. word/styles.xml
+      putZipEntry(zos, "word/styles.xml", buildStylesXml())
+
+      // 5. word/document.xml
+      putZipEntry(zos, "word/document.xml", buildDocumentXml())
+    }
+    return baos.toByteArray()
   }
 
   private fun putZipEntry(zos: ZipOutputStream, path: String, content: String) {

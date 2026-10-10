@@ -1,5 +1,6 @@
 package com.example.agent.core
 
+import com.alibaba.opensandbox.sandbox.Sandbox
 import kotlinx.coroutines.CancellationException
 import java.util.UUID
 
@@ -9,7 +10,7 @@ import java.util.UUID
  */
 class ToolExecutor(
   private val registry: ToolRegistry,
-  private val workspace: WorkspaceManager
+  val sandbox: Sandbox
 ) {
 
   /**

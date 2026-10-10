@@ -1,5 +1,6 @@
 package com.example.agent.core
 
+import com.alibaba.opensandbox.sandbox.Sandbox
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -458,7 +459,7 @@ class WebSearchTool : Tool {
  * Web Navigation & Browsing Tool: Opens, fetches, and extracts clean Markdown from websites.
  * Handles dynamic content and extracts discovered links for crawling.
  */
-class WebBrowseTool(private val workspace: WorkspaceManager) : Tool {
+class WebBrowseTool(private val sandbox: Sandbox) : Tool {
   override val name: String = "web_browse"
   override val description: String =
     "Fetch and browse a webpage, convert HTML to clean Markdown, extract content, and discover outgoing links for crawling. Supports dynamic JS rendering and selector filtering."
@@ -536,7 +537,7 @@ class WebBrowseTool(private val workspace: WorkspaceManager) : Tool {
           except Exception as e:
               print(f"ERR: {e}")
           """.trimIndent()
-          val pyResult = PythonRuntime.runPythonCode(pyScript, workspace.baseDir, emptyList())
+          val pyResult = PythonRuntime.runPythonCode(pyScript, sandbox.baseDir, emptyList())
           if (pyResult.exitCode == 0 && pyResult.stdout.isNotBlank() && !pyResult.stdout.startsWith("ERR:")) {
             rawHtml = pyResult.stdout
             dynamicMethodUsed = "Python Render Runtime"
@@ -655,7 +656,7 @@ class WebBrowseTool(private val workspace: WorkspaceManager) : Tool {
 /**
  * Multi-Page Web Crawler: Recursively follows links and aggregates research dossiers across websites.
  */
-class WebCrawlerTool(private val workspace: WorkspaceManager) : Tool {
+class WebCrawlerTool(private val sandbox: Sandbox) : Tool {
   override val name: String = "web_crawl"
   override val description: String =
     "Crawl websites across multiple linked pages. Follows internal links up to a depth limit, extracts contents, and compiles an aggregated multi-page research dossier."
@@ -786,8 +787,8 @@ class WebCrawlerTool(private val workspace: WorkspaceManager) : Tool {
       val artifacts = mutableListOf<Artifact>()
 
       if (!outputFile.isNullOrBlank()) {
-        val file = workspace.writeWorkspaceFile(outputFile, dossierText)
-        artifacts.add(workspace.createArtifactFromFile(file, callId))
+        val file = sandbox.writeWorkspaceFile(outputFile, dossierText)
+        artifacts.add(sandbox.createArtifactFromFile(file, callId))
       }
 
       ToolResult(
@@ -940,7 +941,7 @@ class ExtractWebDataTool : Tool {
  * End-to-end Autonomous Deep Research Engine:
  * Conducts multi-step investigation: Search -> Browse Sources -> Crawl Links -> Synthesize -> Generate Markdown Dossier.
  */
-class DeepResearchTool(private val workspace: WorkspaceManager) : Tool {
+class DeepResearchTool(private val sandbox: Sandbox) : Tool {
   override val name: String = "deep_research"
   override val description: String =
     "Conduct an end-to-end multi-step research investigation on a topic. Executes searches, crawls authoritative sources, cross-references findings, and produces a structured, cited research report in the workspace."
@@ -969,7 +970,7 @@ class DeepResearchTool(private val workspace: WorkspaceManager) : Tool {
   )
 
   private val searchTool = WebSearchTool()
-  private val browseTool = WebBrowseTool(workspace)
+  private val browseTool = WebBrowseTool(sandbox)
 
   override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
     withContext(Dispatchers.IO) {
@@ -1065,8 +1066,8 @@ class DeepResearchTool(private val workspace: WorkspaceManager) : Tool {
       reportBuilder.appendLine("*Report created and verified on filesystem by Aragon Agent Kernel.*")
 
       val finalReport = reportBuilder.toString().trim()
-      val writtenFile = workspace.writeWorkspaceFile(outputFile, finalReport)
-      val artifact = workspace.createArtifactFromFile(writtenFile, callId)
+      val writtenFile = sandbox.writeWorkspaceFile(outputFile, finalReport)
+      val artifact = sandbox.createArtifactFromFile(writtenFile, callId)
 
       val summaryMsg = "Successfully completed deep research on '$topic'. Analyzed ${candidateUrls.size} sources and generated structured research report: '$outputFile' (${writtenFile.length()} bytes)."
 
@@ -1091,7 +1092,7 @@ class DeepResearchTool(private val workspace: WorkspaceManager) : Tool {
  * Handles dynamic JavaScript-heavy SPAs, client-rendered web apps, dynamic script evaluation,
  * DOM inspection, and structured interactive workflows.
  */
-class BrowserAutomationTool(private val workspace: WorkspaceManager) : Tool {
+class BrowserAutomationTool(private val sandbox: Sandbox) : Tool {
   override val name: String = "browser_tool"
   override val description: String =
     "Playwright-style browser automation tool for dynamic, JavaScript-heavy SPAs and interactive web applications. Actions: 'navigate', 'snapshot', 'evaluate', 'click', 'fill', 'wait_for_selector'. Executes scripts, hydrates client-side content, and captures structured DOM snapshots."
@@ -1220,8 +1221,8 @@ class BrowserAutomationTool(private val workspace: WorkspaceManager) : Tool {
             sb.appendLine(markdown.take(6000))
 
             if (!saveSnapshot.isNullOrBlank()) {
-              val file = workspace.writeWorkspaceFile(saveSnapshot, "# $title\n\nURL: $targetUrl\n\n$markdown")
-              artifacts.add(workspace.createArtifactFromFile(file, callId))
+              val file = sandbox.writeWorkspaceFile(saveSnapshot, "# $title\n\nURL: $targetUrl\n\n$markdown")
+              artifacts.add(sandbox.createArtifactFromFile(file, callId))
               sb.appendLine("\n*(Saved snapshot to $saveSnapshot)*")
             }
 
@@ -1240,8 +1241,8 @@ class BrowserAutomationTool(private val workspace: WorkspaceManager) : Tool {
               "\n" + markdown.take(8000)
 
             if (!saveSnapshot.isNullOrBlank()) {
-              val file = workspace.writeWorkspaceFile(saveSnapshot, markdown)
-              artifacts.add(workspace.createArtifactFromFile(file, callId))
+              val file = sandbox.writeWorkspaceFile(saveSnapshot, markdown)
+              artifacts.add(sandbox.createArtifactFromFile(file, callId))
             }
             output
           }

@@ -1,5 +1,7 @@
 package com.example.agent.core
 
+import com.alibaba.opensandbox.mcp.OpenSandboxMcpTool
+import com.alibaba.opensandbox.sandbox.Sandbox
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,10 +29,11 @@ class AgentEngine(
   private val maxSteps: Int = 35
 ) {
 
-  val workspace = WorkspaceManager(workspaceDir)
-  val scratchpad = ScratchpadMemoryManager(workspace)
+  val sandbox: Sandbox = Sandbox.builder().baseDir(workspaceDir).build()
+  val workspace: Sandbox get() = sandbox
+  val scratchpad = ScratchpadMemoryManager(sandbox)
   val registry = ToolRegistry()
-  val executor = ToolExecutor(registry, workspace)
+  val executor = ToolExecutor(registry, sandbox)
 
   private var activeProvider: LLMProvider = initialProvider
   private var activeJob: Job? = null
@@ -44,40 +47,45 @@ class AgentEngine(
   val state: StateFlow<AgentState> = _state.asStateFlow()
 
   init {
-    workspace.seedWorkspaceDefaults()
+    sandbox.seedWorkspaceDefaults()
 
-    // Register canonical sandbox tools
-    registry.register(TerminalTool(workspace), "bash", "sh")
-    registry.register(PythonTool(workspace), "python", "py", "python3")
-    registry.register(PipTool(workspace), "pip3", "pip_install")
-    registry.register(ReadFileTool(workspace), "cat")
-    registry.register(WriteFileTool(workspace), "save_file")
-    registry.register(EditFileTool(workspace), "patch_file", "replace_content")
-    registry.register(ListFilesTool(workspace), "ls", "dir")
-    registry.register(DeleteFileTool(workspace), "rm")
-    registry.register(CreateDirectoryTool(workspace), "mkdir")
-    registry.register(CopyFileTool(workspace), "cp")
-    registry.register(MoveFileTool(workspace), "mv", "rename")
-    registry.register(DownloadFileTool(workspace), "curl_download", "wget")
-    registry.register(InspectArtifactTool(workspace), "stat", "verify_artifact")
-    registry.register(FileSearchTool(workspace), "grep", "search_files")
+    // Register canonical sandbox tools backed by OpenSandbox
+    registry.register(TerminalTool(sandbox), "bash", "sh")
+    registry.register(PythonTool(sandbox), "python", "py", "python3")
+    registry.register(PipTool(sandbox), "pip3", "pip_install")
+    registry.register(ReadFileTool(sandbox), "cat")
+    registry.register(WriteFileTool(sandbox), "save_file")
+    registry.register(EditFileTool(sandbox), "patch_file", "replace_content")
+    registry.register(ListFilesTool(sandbox), "ls", "dir")
+    registry.register(DeleteFileTool(sandbox), "rm")
+    registry.register(CreateDirectoryTool(sandbox), "mkdir")
+    registry.register(CopyFileTool(sandbox), "cp")
+    registry.register(MoveFileTool(sandbox), "mv", "rename")
+    registry.register(DownloadFileTool(sandbox), "curl_download", "wget")
+    registry.register(InspectArtifactTool(sandbox), "stat", "verify_artifact")
+    registry.register(FileSearchTool(sandbox), "grep", "search_files")
     registry.register(HttpRequestTool(), "curl", "fetch_api")
-    registry.register(JsonProcessorTool(workspace), "jq", "json_tool")
-    registry.register(CsvProcessorTool(workspace), "csv_tool")
-    registry.register(CreateDocxTool(workspace), "word_doc", "docx", "build_docx")
-    registry.register(InstallPackageTool(workspace), "install", "pkg_install", "setup_tool", "install_interpreter")
+    registry.register(JsonProcessorTool(sandbox), "jq", "json_tool")
+    registry.register(CsvProcessorTool(sandbox), "csv_tool")
+    registry.register(CreateDocxTool(sandbox), "word_doc", "docx", "build_docx")
+    registry.register(InstallPackageTool(sandbox), "install", "pkg_install", "setup_tool", "install_interpreter")
 
     // Register comprehensive Web Research & Browser Automation tools
     registry.register(WebSearchTool(), "search", "duckduckgo", "google")
-    registry.register(WebBrowseTool(workspace), "browse", "open_url", "fetch_page")
-    registry.register(BrowserAutomationTool(workspace), "playwright", "headless_browser", "browser")
-    registry.register(WebCrawlerTool(workspace), "crawler", "crawl_site")
+    registry.register(WebBrowseTool(sandbox), "browse", "open_url", "fetch_page")
+    registry.register(BrowserAutomationTool(sandbox), "playwright", "headless_browser", "browser")
+    registry.register(WebCrawlerTool(sandbox), "crawler", "crawl_site")
     registry.register(ExtractWebDataTool(), "extract_tables", "web_extract")
-    registry.register(DeepResearchTool(workspace), "research", "auto_research")
+    registry.register(DeepResearchTool(sandbox), "research", "auto_research")
+
+    // Register OpenSandbox MCP Tools
+    OpenSandboxMcpTool.createAllTools(sandbox).forEach { tool ->
+      registry.register(tool)
+    }
 
     // Initialize workspace and seed baseline inputs if needed
     try {
-      workspace.seedWorkspaceDefaults()
+      sandbox.seedWorkspaceDefaults()
     } catch (_: Exception) {}
   }
 
