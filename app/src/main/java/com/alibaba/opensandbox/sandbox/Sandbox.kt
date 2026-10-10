@@ -62,6 +62,7 @@ class Sandbox internal constructor(
   fun listArtifacts(): List<Artifact> = runtime.listArtifacts()
   fun cleanAllArtifacts() = runtime.cleanAllArtifacts()
   fun seedWorkspaceDefaults() = runtime.seedWorkspaceDefaults()
+  fun seedCurlBinary() = runtime.seedCurlBinary()
   fun resolveSafe(relativePath: String): File = runtime.resolveSafe(relativePath)
   fun writeWorkspaceFile(relativePath: String, content: String): File = runtime.writeWorkspaceFile(relativePath, content)
   fun copyFile(sourcePath: String, destPath: String): File = runtime.copyFile(sourcePath, destPath)

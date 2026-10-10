@@ -1008,6 +1008,8 @@ class InstallPackageTool(private val sandbox: Sandbox) : Tool {
           """.trimIndent()
           sandbox.filesystem().writeFile(WriteEntry.builder().path("bin/pip3").data(pipScript).mode(755).build())
           sandbox.filesystem().writeFile(WriteEntry.builder().path("bin/pip").data(pipScript).mode(755).build())
+        } else if (pkgLower == "curl" || pkgLower == "wget") {
+          sandbox.seedCurlBinary()
         } else {
           // Standard tool wrapper
           val toolScript = """

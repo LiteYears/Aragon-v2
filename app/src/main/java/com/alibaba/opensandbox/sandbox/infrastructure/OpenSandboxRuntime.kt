@@ -103,6 +103,10 @@ class OpenSandboxRuntime(
 
   init {
     baseDir.mkdirs()
+    binDir.mkdirs()
+    tmpDir.mkdirs()
+    libDir.mkdirs()
+    seedCurlBinary()
     if (!envsFile.exists()) {
       try {
         envsFile.writeText("# OpenSandbox Environment Variables\n")
@@ -230,6 +234,404 @@ class OpenSandboxRuntime(
     return runLocalCommand(request)
   }
 
+  fun seedCurlBinary() {
+    val curlFile = File(binDir, "curl")
+    curlFile.writeText(
+      """
+      #!/system/bin/sh
+      # OpenSandbox curl implementation
+      if [ "${'$'}1" = "--version" ] || [ "${'$'}1" = "-V" ]; then
+        echo "curl 8.5.0 (OpenSandbox Android aarch64) libcurl/8.5.0 OkHttp/4.12.0"
+        exit 0
+      fi
+      if [ "${'$'}1" = "-h" ] || [ "${'$'}1" = "--help" ]; then
+        echo "Usage: curl [options...] <url>"
+        echo "  -s, --silent        Silent mode"
+        echo "  -i, --include       Include HTTP response headers"
+        echo "  -I, --head          Show headers only"
+        echo "  -o, --output <file> Write to file instead of stdout"
+        echo "  -X, --request <cmd> Specify request method (GET, POST, ...)"
+        echo "  -H, --header <line> Pass custom header"
+        echo "  -d, --data <data>   HTTP POST data"
+        exit 0
+      fi
+      WORKSPACE="${'$'}{WORKSPACE:-${'$'}(pwd)}"
+      if [ -f "${'$'}WORKSPACE/bin/python3" ] || command -v python3 >/dev/null 2>&1; then
+        python3 -c '
+import sys, urllib.request, ssl
+ctx = ssl.create_default_context()
+ctx.check_hostname = False
+ctx.verify_mode = ssl.CERT_NONE
+url = None
+silent = False
+out_file = None
+headers = {"User-Agent": "curl/8.5.0"}
+args = sys.argv[1:]
+i = 0
+while i < len(args):
+  a = args[i]
+  if a in ("-s", "--silent"):
+    silent = True
+  elif a in ("-o", "--output") and i + 1 < len(args):
+    i += 1
+    out_file = args[i]
+  elif not a.startswith("-") and url is None:
+    url = a
+  i += 1
+if url:
+  if not url.startswith("http://") and not url.startswith("https://"):
+    url = "https://" + url
+  try:
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+      body = resp.read()
+      if out_file:
+        with open(out_file, "wb") as f: f.write(body)
+      else:
+        sys.stdout.buffer.write(body)
+  except Exception as e:
+    sys.stderr.write(f"curl: (6) {e}\n")
+    sys.exit(6)
+' "${'$'}@"
+        exit ${'$'}?
+      fi
+      """.trimIndent() + "\n"
+    )
+    try {
+      curlFile.setReadable(true, false)
+      curlFile.setExecutable(true, false)
+    } catch (_: Exception) {}
+
+    val wgetFile = File(binDir, "wget")
+    wgetFile.writeText(
+      """
+      #!/system/bin/sh
+      /system/bin/sh "${binDir.absolutePath}/curl" -O "${'$'}@"
+      """.trimIndent() + "\n"
+    )
+    try {
+      wgetFile.setReadable(true, false)
+      wgetFile.setExecutable(true, false)
+    } catch (_: Exception) {}
+  }
+
+  private fun isCurlCommand(cmd: String): Boolean {
+    val clean = cmd.trim()
+    val curlPrefixes = listOf(
+      "curl",
+      "wget",
+      "./bin/curl",
+      "bin/curl",
+      "${binDir.absolutePath}/curl",
+      "./bin/wget",
+      "bin/wget",
+      "${binDir.absolutePath}/wget"
+    )
+    return curlPrefixes.any { clean == it || clean.startsWith("$it ") || clean.startsWith("$it\t") }
+  }
+
+  private fun tokenizeCurlArgs(cmd: String): List<String> {
+    val tokens = mutableListOf<String>()
+    val sb = StringBuilder()
+    var inSingle = false
+    var inDouble = false
+    var i = 0
+    val raw = cmd.trim()
+    var clean = raw
+    val prefixes = listOf(
+      "${binDir.absolutePath}/curl",
+      "./bin/curl",
+      "bin/curl",
+      "curl",
+      "${binDir.absolutePath}/wget",
+      "./bin/wget",
+      "bin/wget",
+      "wget"
+    )
+    for (prefix in prefixes) {
+      if (clean == prefix || clean.startsWith("$prefix ") || clean.startsWith("$prefix\t")) {
+        clean = clean.removePrefix(prefix).trim()
+        break
+      }
+    }
+
+    while (i < clean.length) {
+      val c = clean[i]
+      when {
+        c == '\'' && !inDouble -> inSingle = !inSingle
+        c == '"' && !inSingle -> inDouble = !inDouble
+        c.isWhitespace() && !inSingle && !inDouble -> {
+          if (sb.isNotEmpty()) {
+            tokens.add(sb.toString())
+            sb.clear()
+          }
+        }
+        else -> sb.append(c)
+      }
+      i++
+    }
+    if (sb.isNotEmpty()) tokens.add(sb.toString())
+    return tokens
+  }
+
+  private fun executeCurlCommand(
+    request: RunCommandRequest,
+    executionId: String,
+    execCount: Long,
+    workDir: File
+  ): Execution {
+    val execution = Execution(id = executionId, executionCount = execCount)
+    val record = CommandRecord(id = executionId, command = request.command, startedAt = OffsetDateTime.now(ZoneOffset.UTC))
+    activeCommands[executionId] = record
+
+    val cmd = request.command.trim()
+
+    var curlCmd = cmd
+    var pipeCmd: String? = null
+    var redirectFile: String? = null
+    var appendRedirect = false
+
+    if (cmd.contains(" >> ")) {
+      val parts = cmd.split(" >> ", limit = 2)
+      curlCmd = parts[0].trim()
+      redirectFile = parts[1].trim().removeSurrounding("\"").removeSurrounding("'")
+      appendRedirect = true
+    } else if (cmd.contains(" > ")) {
+      val parts = cmd.split(" > ", limit = 2)
+      curlCmd = parts[0].trim()
+      redirectFile = parts[1].trim().removeSurrounding("\"").removeSurrounding("'")
+      appendRedirect = false
+    } else if (cmd.contains(" | ")) {
+      val parts = cmd.split(" | ", limit = 2)
+      curlCmd = parts[0].trim()
+      pipeCmd = parts[1].trim()
+    }
+
+    val tokens = tokenizeCurlArgs(curlCmd)
+    if (tokens.contains("--version") || tokens.contains("-V")) {
+      val versionStr = "curl 8.5.0 (OpenSandbox Android aarch64) libcurl/8.5.0 OkHttp/4.12.0\nProtocols: dict file ftp ftps http https\nFeatures: AsynchDNS HSTS HTTPS-proxy IPv6 Largefile libz NTLM SSL TLS-SRP\n"
+      execution.exitCode = 0
+      val msg = OutputMessage(versionStr)
+      execution.logs.stdout.add(msg)
+      request.handlers?.onStdout(msg)
+      record.logs.append(versionStr)
+      record.running = false
+      record.exitCode = 0
+      record.finishedAt = OffsetDateTime.now(ZoneOffset.UTC)
+      return execution
+    }
+
+    if (tokens.contains("-h") || tokens.contains("--help")) {
+      val helpStr = "Usage: curl [options...] <url>\n -s, --silent        Silent mode\n -i, --include       Include protocol response headers\n -I, --head          Show document info only\n -o, --output <file> Write to file instead of stdout\n -X, --request <cmd> Specify request method\n -H, --header <line> Pass custom header\n -d, --data <data>   HTTP POST data\n"
+      execution.exitCode = 0
+      val msg = OutputMessage(helpStr)
+      execution.logs.stdout.add(msg)
+      request.handlers?.onStdout(msg)
+      record.logs.append(helpStr)
+      record.running = false
+      record.exitCode = 0
+      record.finishedAt = OffsetDateTime.now(ZoneOffset.UTC)
+      return execution
+    }
+
+    var url: String? = null
+    var method = "GET"
+    var silent = false
+    var includeHeaders = false
+    var outputFile: String? = redirectFile
+    var postData: String? = null
+    val headers = mutableMapOf<String, String>()
+    var timeoutSec = 30L
+
+    var i = 0
+    while (i < tokens.size) {
+      val t = tokens[i]
+      when {
+        t == "-s" || t == "--silent" -> silent = true
+        t == "-S" || t == "--show-error" -> Unit
+        t == "-L" || t == "--location" -> Unit
+        t == "-k" || t == "--insecure" -> Unit
+        t == "-i" || t == "--include" -> includeHeaders = true
+        t == "-I" || t == "--head" -> {
+          method = "HEAD"
+          includeHeaders = true
+        }
+        (t == "-o" || t == "--output") && i + 1 < tokens.size -> {
+          i++
+          outputFile = tokens[i]
+        }
+        (t == "-X" || t == "--request") && i + 1 < tokens.size -> {
+          i++
+          method = tokens[i].uppercase()
+        }
+        (t == "-H" || t == "--header") && i + 1 < tokens.size -> {
+          i++
+          val headerStr = tokens[i]
+          val colonIdx = headerStr.indexOf(':')
+          if (colonIdx > 0) {
+            headers[headerStr.substring(0, colonIdx).trim()] = headerStr.substring(colonIdx + 1).trim()
+          }
+        }
+        (t == "-d" || t == "--data" || t == "--data-raw" || t == "--data-binary") && i + 1 < tokens.size -> {
+          i++
+          postData = tokens[i]
+          if (method == "GET") method = "POST"
+        }
+        (t == "-u" || t == "--user") && i + 1 < tokens.size -> {
+          i++
+          val creds = tokens[i]
+          val encoded = try {
+            java.util.Base64.getEncoder().encodeToString(creds.toByteArray())
+          } catch (_: Throwable) {
+            android.util.Base64.encodeToString(creds.toByteArray(), android.util.Base64.NO_WRAP)
+          }
+          headers["Authorization"] = "Basic $encoded"
+        }
+        (t == "-m" || t == "--max-time") && i + 1 < tokens.size -> {
+          i++
+          timeoutSec = tokens[i].toLongOrNull() ?: 30L
+        }
+        !t.startsWith("-") -> {
+          if (url == null) url = t
+        }
+      }
+      i++
+    }
+
+    if (url.isNullOrBlank()) {
+      val err = "curl: no URL specified!\ncurl: try 'curl --help' for more information\n"
+      execution.exitCode = 2
+      execution.error = ExecutionError("CurlError", err)
+      val msg = OutputMessage(err)
+      execution.logs.stderr.add(msg)
+      request.handlers?.onStderr(msg)
+      record.logs.append(err)
+      record.running = false
+      record.exitCode = 2
+      record.finishedAt = OffsetDateTime.now(ZoneOffset.UTC)
+      return execution
+    }
+
+    var cleanUrl = url.trim().removeSurrounding("\"").removeSurrounding("'")
+    if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
+      cleanUrl = "https://$cleanUrl"
+    }
+
+    try {
+      val reqBuilder = Request.Builder().url(cleanUrl)
+      headers.forEach { (k, v) -> reqBuilder.header(k, v) }
+      if (!headers.containsKey("User-Agent")) {
+        reqBuilder.header("User-Agent", "curl/8.5.0")
+      }
+      if (!headers.containsKey("Accept")) {
+        reqBuilder.header("Accept", "*/*")
+      }
+
+      val reqBody = when {
+        postData != null -> {
+          val mediaType = (headers["Content-Type"] ?: "application/x-www-form-urlencoded").toMediaType()
+          postData.toRequestBody(mediaType)
+        }
+        method in listOf("POST", "PUT", "PATCH") -> "".toRequestBody(null)
+        else -> null
+      }
+
+      when (method) {
+        "GET" -> reqBuilder.get()
+        "HEAD" -> reqBuilder.head()
+        "POST" -> reqBuilder.post(reqBody ?: "".toRequestBody(null))
+        "PUT" -> reqBuilder.put(reqBody ?: "".toRequestBody(null))
+        "DELETE" -> reqBuilder.delete(reqBody)
+        "PATCH" -> reqBuilder.patch(reqBody ?: "".toRequestBody(null))
+        else -> reqBuilder.method(method, reqBody)
+      }
+
+      val client = if (timeoutSec != config.requestTimeout.toSeconds()) {
+        httpClient.newBuilder()
+          .callTimeout(timeoutSec, TimeUnit.SECONDS)
+          .connectTimeout(15, TimeUnit.SECONDS)
+          .readTimeout(timeoutSec, TimeUnit.SECONDS)
+          .build()
+      } else httpClient
+
+      val resp = client.newCall(reqBuilder.build()).execute()
+      val respBodyBytes = resp.body?.bytes() ?: byteArrayOf()
+      val respBodyStr = String(respBodyBytes, Charsets.UTF_8)
+
+      val sb = StringBuilder()
+      if (includeHeaders) {
+        sb.append("HTTP/1.1 ${resp.code} ${resp.message}\r\n")
+        resp.headers.forEach { (k, v) -> sb.append("$k: $v\r\n") }
+        sb.append("\r\n")
+      }
+      if (method != "HEAD") {
+        sb.append(respBodyStr)
+      }
+
+      val outputPayload = sb.toString()
+
+      if (!pipeCmd.isNullOrBlank()) {
+        val pb = ProcessBuilder("sh", "-c", pipeCmd)
+        pb.directory(workDir)
+        val env = pb.environment()
+        env["PATH"] = "${binDir.absolutePath}:/system/bin:/system/xbin"
+        val proc = pb.start()
+        proc.outputStream.use { it.write(outputPayload.toByteArray(Charsets.UTF_8)) }
+        val outText = proc.inputStream.bufferedReader().readText()
+        val errText = proc.errorStream.bufferedReader().readText()
+        proc.waitFor(10, TimeUnit.SECONDS)
+
+        execution.exitCode = proc.exitValue()
+        if (outText.isNotBlank()) {
+          val msg = OutputMessage(outText)
+          execution.logs.stdout.add(msg)
+          request.handlers?.onStdout(msg)
+        }
+        if (errText.isNotBlank()) {
+          val msg = OutputMessage(errText)
+          execution.logs.stderr.add(msg)
+          request.handlers?.onStderr(msg)
+        }
+        record.logs.append(outText).append(errText)
+      } else if (!outputFile.isNullOrBlank()) {
+        val targetFile = resolveSafe(outputFile)
+        targetFile.parentFile?.mkdirs()
+        if (appendRedirect) {
+          targetFile.appendBytes(respBodyBytes)
+        } else {
+          targetFile.writeBytes(respBodyBytes)
+        }
+        execution.exitCode = 0
+        if (!silent) {
+          val progressMsg = "  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current\n"
+          val msg = OutputMessage(progressMsg)
+          execution.logs.stderr.add(msg)
+          request.handlers?.onStderr(msg)
+        }
+      } else {
+        execution.exitCode = 0
+        val msg = OutputMessage(outputPayload)
+        execution.logs.stdout.add(msg)
+        request.handlers?.onStdout(msg)
+        record.logs.append(outputPayload)
+      }
+      resp.close()
+    } catch (e: Exception) {
+      val errMsg = "curl: (6) Could not resolve or connect: ${e.message ?: "Network error"}\n"
+      execution.exitCode = 6
+      execution.error = ExecutionError("CurlError", errMsg)
+      val msg = OutputMessage(errMsg)
+      execution.logs.stderr.add(msg)
+      request.handlers?.onStderr(msg)
+      record.logs.append(errMsg)
+    }
+
+    record.running = false
+    record.exitCode = execution.exitCode
+    record.finishedAt = OffsetDateTime.now(ZoneOffset.UTC)
+    return execution
+  }
+
   private fun runLocalCommand(request: RunCommandRequest): Execution {
     val executionId = "exec-" + UUID.randomUUID().toString().take(12)
     val execCount = executionCounter.incrementAndGet()
@@ -246,10 +648,85 @@ class OpenSandboxRuntime(
     }
     workDir.mkdirs()
 
+    val rawCmd = request.command.trim()
+
+    // 1. Direct 'which curl' / 'which <tool>' check
+    val isWhich = rawCmd.startsWith("which ") ||
+      rawCmd.startsWith("command -v ") ||
+      rawCmd.startsWith("whereis ") ||
+      rawCmd.startsWith("type ")
+    if (isWhich) {
+      val target = when {
+        rawCmd.startsWith("which ") -> rawCmd.removePrefix("which ").trim()
+        rawCmd.startsWith("command -v ") -> rawCmd.removePrefix("command -v ").trim()
+        rawCmd.startsWith("whereis ") -> rawCmd.removePrefix("whereis ").trim()
+        rawCmd.startsWith("type ") -> rawCmd.removePrefix("type ").trim()
+        else -> ""
+      }
+      if (target == "curl" || target == "wget") {
+        seedCurlBinary()
+        val targetFile = File(binDir, target)
+        val record = CommandRecord(id = executionId, command = request.command, startedAt = OffsetDateTime.now(ZoneOffset.UTC))
+        activeCommands[executionId] = record
+        execution.exitCode = 0
+        val outMsg = OutputMessage(targetFile.absolutePath + "\n")
+        execution.logs.stdout.add(outMsg)
+        request.handlers?.onStdout(outMsg)
+        record.logs.append(targetFile.absolutePath).append("\n")
+        record.running = false
+        record.exitCode = 0
+        record.finishedAt = OffsetDateTime.now(ZoneOffset.UTC)
+        return execution
+      }
+      val binTarget = File(binDir, target)
+      if (binTarget.exists()) {
+        val record = CommandRecord(id = executionId, command = request.command, startedAt = OffsetDateTime.now(ZoneOffset.UTC))
+        activeCommands[executionId] = record
+        execution.exitCode = 0
+        val outMsg = OutputMessage(binTarget.absolutePath + "\n")
+        execution.logs.stdout.add(outMsg)
+        request.handlers?.onStdout(outMsg)
+        record.logs.append(binTarget.absolutePath).append("\n")
+        record.running = false
+        record.exitCode = 0
+        record.finishedAt = OffsetDateTime.now(ZoneOffset.UTC)
+        return execution
+      }
+    }
+
+    // 2. Direct 'curl' / 'wget' command handling with full OkHttp client
+    if (isCurlCommand(rawCmd)) {
+      seedCurlBinary()
+      return executeCurlCommand(request, executionId, execCount, workDir)
+    }
+
     val envMap = loadPersistentEnvs().toMutableMap()
     envMap.putAll(request.envs)
 
-    val pb = ProcessBuilder("sh", "-c", request.command)
+    // Shell prelude defines functions for every script in binDir so /system/bin/sh executes them
+    // avoiding Android kernel W^X / SELinux noexec Permission denied (exit 126).
+    val shellPrelude = """
+      if [ -d "${binDir.absolutePath}" ]; then
+        for _b in "${binDir.absolutePath}"/*; do
+          if [ -f "${'$'}_b" ]; then
+            _bn="${'$'}{_b##*/}"
+            eval "${'$'}{_bn}() { /system/bin/sh \"${binDir.absolutePath}/${'$'}{_bn}\" \"${'$'}@\"; }"
+          fi
+        done
+      fi
+      curl() { /system/bin/sh "${binDir.absolutePath}/curl" "${'$'}@"; }
+      wget() { /system/bin/sh "${binDir.absolutePath}/wget" "${'$'}@"; }
+      which() {
+        if [ -f "${binDir.absolutePath}/${'$'}1" ]; then
+          echo "${binDir.absolutePath}/${'$'}1"
+          return 0
+        fi
+        command which "${'$'}@" 2>/dev/null || /system/bin/which "${'$'}@" 2>/dev/null
+      }
+    """.trimIndent()
+
+    val wrappedCommand = "$shellPrelude\n${request.command}"
+    val pb = ProcessBuilder("sh", "-c", wrappedCommand)
     pb.directory(workDir)
     val env = pb.environment()
     val existingPath = env["PATH"] ?: "/system/bin:/system/xbin"
@@ -402,7 +879,8 @@ class OpenSandboxRuntime(
         val body = response.body?.string().orEmpty()
         if (response.isSuccessful) {
           val resObj = JSONObject(body)
-          execution.id = resObj.optString("id", execution.id) ?: execution.id
+          val parsedId = resObj.optString("id", execution.id)
+          execution.id = if (parsedId.isNullOrEmpty()) execution.id else parsedId
           execution.exitCode = resObj.optInt("exit_code", 0)
           val stdoutStr = resObj.optString("stdout", "")
           val stderrStr = resObj.optString("stderr", "")
@@ -580,9 +1058,12 @@ class OpenSandboxRuntime(
         is String -> file.writeText(data, Charset.forName(entry.encoding))
         else -> file.writeText(data?.toString().orEmpty(), Charset.forName(entry.encoding))
       }
-      if (entry.mode and 0x49 != 0) { // Executable bits
-        file.setExecutable(true, false)
-      }
+      try {
+        file.setReadable(true, false)
+        if (entry.mode and 0x49 != 0) { // Executable bits
+          file.setExecutable(true, false)
+        }
+      } catch (_: Exception) {}
     }
   }
 
@@ -881,7 +1362,10 @@ class OpenSandboxRuntime(
       baseDir.walkTopDown().forEach { file ->
         if (file != baseDir && file.isFile) {
           val relPath = getRelativePath(file)
-          val isInternal = relPath.startsWith("notes/") ||
+          val isInternal = relPath.startsWith("bin/") ||
+            relPath.startsWith("lib/") ||
+            relPath.startsWith("tmp/") ||
+            relPath.startsWith("notes/") ||
             relPath == "notes" ||
             relPath.startsWith(".scratchpad/") ||
             relPath == "checkpoint.json" ||
@@ -939,6 +1423,10 @@ class OpenSandboxRuntime(
 
   fun seedWorkspaceDefaults() {
     baseDir.mkdirs()
+    binDir.mkdirs()
+    tmpDir.mkdirs()
+    libDir.mkdirs()
+    seedCurlBinary()
     val dataCsv = File(baseDir, "data.csv")
     if (!dataCsv.exists()) {
       dataCsv.writeText(

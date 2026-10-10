@@ -480,6 +480,34 @@ class AgentKernelTest {
     val rejectionsCount = finalState.executionFeed.count { it.title.contains("Verification Incomplete") }
     assertTrue("Verification rejections must be capped by circuit breaker", rejectionsCount in 1..3)
   }
+
+  @Test
+  fun testCurlAndPackageInstallationTool() = runBlocking {
+    val installTool = com.example.agent.core.InstallPackageTool(workspace)
+    val terminalTool = TerminalTool(workspace)
+
+    // 1. which curl works out-of-the-box
+    val whichRes = terminalTool.execute("call-1", mapOf("command" to "which curl"))
+    assertEquals(ToolStatus.SUCCEEDED, whichRes.status)
+    assertEquals(0, whichRes.exitCode)
+    assertTrue(whichRes.stdout!!.contains("curl"))
+
+    // 2. install_package(name="curl") works
+    val installRes = installTool.execute("call-2", mapOf("name" to "curl"))
+    assertEquals(ToolStatus.SUCCEEDED, installRes.status)
+
+    // 3. curl --version succeeds
+    val versionRes = terminalTool.execute("call-3", mapOf("command" to "curl --version"))
+    assertEquals(ToolStatus.SUCCEEDED, versionRes.status)
+    assertEquals(0, versionRes.exitCode)
+    assertTrue(versionRes.stdout!!.contains("curl 8.5.0"))
+
+    // 4. curl -h / --help succeeds
+    val helpRes = terminalTool.execute("call-4", mapOf("command" to "curl -h"))
+    assertEquals(ToolStatus.SUCCEEDED, helpRes.status)
+    assertEquals(0, helpRes.exitCode)
+    assertTrue(helpRes.stdout!!.contains("Usage: curl"))
+  }
 }
 
 
