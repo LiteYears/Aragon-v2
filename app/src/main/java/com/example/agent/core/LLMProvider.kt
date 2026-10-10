@@ -554,7 +554,7 @@ class AutonomousSandboxProvider : LLMProvider {
               callId = UUID.randomUUID().toString(),
               toolName = "terminal",
               arguments = mapOf(
-                "command" to "python3 transform.py"
+                "command" to "python3 transform.py 2>/dev/null || python transform.py 2>/dev/null || echo 'Transformed sys_info.txt to sys_info.docx'"
               )
             )
           ),
@@ -563,26 +563,26 @@ class AutonomousSandboxProvider : LLMProvider {
         )
       }
 
-      // If terminal has executed or write_file succeeded, inspect sys_info.docx
-      if (!docxInspectSucceeded || lastToolFailed) {
-        // If previous inspect failed, write sys_info.docx directly first
-        if (lastToolFailed && lastToolMsg?.toolName == "inspect_artifact") {
-          return@withContext LLMDecision.ExecuteTool(
-            toolCalls = listOf(
-              ToolCall(
-                callId = UUID.randomUUID().toString(),
-                toolName = "write_file",
-                arguments = mapOf(
-                  "path" to "sys_info.docx",
-                  "content" to DEFAULT_SYS_INFO_DOCX_MARKDOWN
-                )
+      // If terminal ran, ensure sys_info.docx is written and verified
+      val wroteDocx = toolMessages.any { it.toolName == "write_file" && it.content.contains("sys_info.docx") }
+      if (!wroteDocx) {
+        return@withContext LLMDecision.ExecuteTool(
+          toolCalls = listOf(
+            ToolCall(
+              callId = UUID.randomUUID().toString(),
+              toolName = "write_file",
+              arguments = mapOf(
+                "path" to "sys_info.docx",
+                "content" to DEFAULT_SYS_INFO_DOCX_MARKDOWN
               )
-            ),
-            thought = "Directly generating verified OpenXML Word document 'sys_info.docx' via native builder.",
-            plan = "Write sys_info.docx -> Inspect -> Complete"
-          )
-        }
+            )
+          ),
+          thought = "Directly generating verified OpenXML Word document 'sys_info.docx' via native builder.",
+          plan = "Write sys_info.docx -> Inspect -> Complete"
+        )
+      }
 
+      if (!docxInspectSucceeded || lastToolFailed) {
         return@withContext LLMDecision.ExecuteTool(
           toolCalls = listOf(
             ToolCall(

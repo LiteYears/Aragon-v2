@@ -402,7 +402,7 @@ class OpenSandboxRuntime(
         val body = response.body?.string().orEmpty()
         if (response.isSuccessful) {
           val resObj = JSONObject(body)
-          execution.id = resObj.optString("id", execution.id)
+          execution.id = resObj.optString("id", execution.id) ?: execution.id
           execution.exitCode = resObj.optInt("exit_code", 0)
           val stdoutStr = resObj.optString("stdout", "")
           val stderrStr = resObj.optString("stderr", "")

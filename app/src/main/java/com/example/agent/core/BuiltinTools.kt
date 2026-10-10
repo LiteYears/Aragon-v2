@@ -238,7 +238,15 @@ class WriteFileTool(private val sandbox: Sandbox) : Tool {
       }
 
       try {
-        sandbox.filesystem().writeFile(path, content)
+        val isDocx = path.endsWith(".docx", ignoreCase = true) || path.endsWith(".doc", ignoreCase = true)
+        if (isDocx) {
+          val docxBytes = DocxBuilder.fromMarkdownOrText(content).buildByteArray()
+          val file = sandbox.resolveSafe(path)
+          file.parentFile?.mkdirs()
+          file.writeBytes(docxBytes)
+        } else {
+          sandbox.filesystem().writeFile(path, content)
+        }
         val artifacts = sandbox.listArtifacts()
         val writtenArtifact = artifacts.find { it.path == path }
 
@@ -372,6 +380,22 @@ class DeleteFileTool(private val sandbox: Sandbox) : Tool {
     withContext(Dispatchers.IO) {
       val startTime = System.currentTimeMillis()
       val path = arguments["path"]?.toString() ?: ""
+
+      val target = sandbox.resolveSafe(path)
+      if (!target.exists()) {
+        return@withContext ToolResult(
+          callId = callId,
+          toolName = name,
+          status = ToolStatus.FAILED,
+          arguments = arguments,
+          output = null,
+          error = "File or directory '$path' does not exist.",
+          duration = System.currentTimeMillis() - startTime,
+          stdout = null,
+          stderr = "File or directory '$path' does not exist.",
+          exitCode = 1
+        )
+      }
 
       try {
         sandbox.filesystem().deleteFiles(listOf(path))

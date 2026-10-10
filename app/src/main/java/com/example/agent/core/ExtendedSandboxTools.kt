@@ -153,14 +153,14 @@ class EditFileTool(private val sandbox: Sandbox) : Tool {
 class FileSearchTool(private val sandbox: Sandbox) : Tool {
   override val name: String = "file_search"
   override val description: String =
-    "Search for files or directory entries matching a pattern or regex in the OpenSandbox workspace."
+    "Search for files or directory entries matching a pattern or regex in the OpenSandbox workspace, or grep file contents."
 
   override val schema: ToolSchema = ToolSchema(
     listOf(
       ToolParameter(
-        name = "pattern",
+        name = "query",
         type = "string",
-        description = "File pattern or glob to search for (e.g. '*.py', '*.json', 'data*').",
+        description = "Text query or regex to grep across files or filenames (alias: pattern).",
         required = true
       ),
       ToolParameter(
@@ -175,24 +175,68 @@ class FileSearchTool(private val sandbox: Sandbox) : Tool {
   override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
     withContext(Dispatchers.IO) {
       val startTime = System.currentTimeMillis()
-      val pattern = arguments["pattern"]?.toString() ?: ""
+      val rawQuery = arguments["query"]?.toString() ?: ""
+      val rawPattern = arguments["pattern"]?.toString() ?: ""
+      val searchString = if (rawQuery.isNotBlank()) rawQuery else rawPattern
       val path = arguments["path"]?.toString()?.ifBlank { "." } ?: "."
 
+      if (searchString.isBlank()) {
+        return@withContext ToolResult(
+          callId = callId,
+          toolName = name,
+          status = ToolStatus.FAILED,
+          arguments = arguments,
+          output = null,
+          error = "Search query or pattern cannot be blank.",
+          duration = System.currentTimeMillis() - startTime,
+          stdout = null,
+          stderr = "Search query cannot be blank.",
+          exitCode = 1
+        )
+      }
+
       try {
+        val startDir = sandbox.resolveSafe(path)
+        val sb = StringBuilder()
+        val textMatches = mutableListOf<String>()
+
+        if (startDir.exists()) {
+          startDir.walkTopDown().forEach { file ->
+            if (file.isFile && file.length() < 2_000_000L) {
+              try {
+                file.useLines { lines ->
+                  lines.forEachIndexed { idx, line ->
+                    if (line.contains(searchString, ignoreCase = false) || line.contains(searchString, ignoreCase = true)) {
+                      val rel = sandbox.getRelativePath(file)
+                      textMatches.add("$rel:${idx + 1}: $line")
+                    }
+                  }
+                }
+              } catch (_: Exception) {}
+            }
+          }
+        }
+
         val entry = SearchEntry.builder()
           .path(path)
-          .pattern(pattern)
+          .pattern(searchString)
           .build()
+        val filenameMatches = try { sandbox.filesystem().search(entry) } catch (_: Exception) { emptyList() }
 
-        val matches = sandbox.filesystem().search(entry)
-        val sb = StringBuilder()
-        sb.appendLine("OpenSandbox Search Results for pattern '$pattern' in '$path':")
-        if (matches.isEmpty()) {
+        sb.appendLine("OpenSandbox Search Results for '$searchString' in '$path':")
+        if (textMatches.isEmpty() && filenameMatches.isEmpty()) {
           sb.appendLine("  (no matches found)")
         } else {
-          matches.forEach { info ->
-            val type = if (info.isDirectory) "[DIR]" else "[FILE]"
-            sb.appendLine("  $type ${info.path} (${info.size} bytes)")
+          if (textMatches.isNotEmpty()) {
+            sb.appendLine("Content Matches:")
+            textMatches.take(50).forEach { sb.appendLine("  $it") }
+          }
+          if (filenameMatches.isNotEmpty()) {
+            sb.appendLine("File Name Matches:")
+            filenameMatches.forEach { info ->
+              val type = if (info.isDirectory) "[DIR]" else "[FILE]"
+              sb.appendLine("  $type ${info.path} (${info.size} bytes)")
+            }
           }
         }
 
@@ -356,14 +400,14 @@ class JsonProcessorTool(private val sandbox: Sandbox) : Tool {
       val startTime = System.currentTimeMillis()
       val action = arguments["action"]?.toString()?.lowercase() ?: "validate"
       val path = arguments["path"]?.toString()
-      val jsonString = arguments["jsonString"]?.toString()
-      val queryPath = arguments["queryPath"]?.toString()
+      val jsonString = arguments["input"]?.toString() ?: arguments["jsonString"]?.toString()
+      val queryPath = arguments["query"]?.toString() ?: arguments["queryPath"]?.toString()
 
       try {
         val rawJson = when {
           !path.isNullOrBlank() -> sandbox.filesystem().readFile(path)
           !jsonString.isNullOrBlank() -> jsonString
-          else -> throw IllegalArgumentException("Either 'path' or 'jsonString' must be specified.")
+          else -> throw IllegalArgumentException("Either 'path' or 'jsonString'/'input' must be specified.")
         }
 
         val resultStr = when (action) {
@@ -374,10 +418,10 @@ class JsonProcessorTool(private val sandbox: Sandbox) : Tool {
           "validate" -> {
             if (rawJson.trim().startsWith("[")) {
               val arr = JSONArray(rawJson)
-              "Valid JSON Array containing ${arr.length()} items."
+              "Valid JSON syntax (Array containing ${arr.length()} items)."
             } else {
               val obj = JSONObject(rawJson)
-              "Valid JSON Object containing ${obj.length()} top-level keys: ${obj.keys().asSequence().toList().joinToString(", ")}"
+              "Valid JSON syntax (Object containing ${obj.length()} top-level keys: ${obj.keys().asSequence().toList().joinToString(", ")})."
             }
           }
           "keys" -> {
@@ -385,7 +429,7 @@ class JsonProcessorTool(private val sandbox: Sandbox) : Tool {
             "Keys: " + obj.keys().asSequence().toList().joinToString(", ")
           }
           "query" -> {
-            val obj = JSONObject(rawJson)
+            val obj = if (rawJson.trim().startsWith("[")) JSONArray(rawJson) else JSONObject(rawJson)
             val parts = queryPath?.split(".") ?: emptyList()
             var current: Any = obj
             for (p in parts) {
@@ -456,8 +500,8 @@ class CopyFileTool(private val sandbox: Sandbox) : Tool {
   override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
     withContext(Dispatchers.IO) {
       val startTime = System.currentTimeMillis()
-      val src = arguments["sourcePath"]?.toString() ?: ""
-      val dst = arguments["destinationPath"]?.toString() ?: ""
+      val src = arguments["source"]?.toString() ?: arguments["sourcePath"]?.toString() ?: ""
+      val dst = arguments["destination"]?.toString() ?: arguments["destinationPath"]?.toString() ?: ""
 
       try {
         val bytes = sandbox.filesystem().readByteArray(src)
@@ -522,8 +566,8 @@ class MoveFileTool(private val sandbox: Sandbox) : Tool {
   override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
     withContext(Dispatchers.IO) {
       val startTime = System.currentTimeMillis()
-      val src = arguments["sourcePath"]?.toString() ?: ""
-      val dst = arguments["destinationPath"]?.toString() ?: ""
+      val src = arguments["source"]?.toString() ?: arguments["sourcePath"]?.toString() ?: ""
+      val dst = arguments["destination"]?.toString() ?: arguments["destinationPath"]?.toString() ?: ""
 
       try {
         val entry = MoveEntry.builder().sourcePath(src).destinationPath(dst).build()
@@ -669,15 +713,28 @@ class CsvProcessorTool(private val sandbox: Sandbox) : Tool {
         val lines = text.lines().filter { it.isNotBlank() }
         val header = lines.firstOrNull() ?: ""
         val rowCount = (lines.size - 1).coerceAtLeast(0)
+        val cols = header.split(",").map { it.trim() }.joinToString(", ")
 
         val out = when (action) {
           "head" -> lines.take(10).joinToString("\n")
           "count_rows" -> "Total rows: $rowCount (excluding header)"
+          "markdown" -> {
+            val rows = lines.map { line -> line.split(",").map { it.trim() } }
+            val sb = StringBuilder()
+            if (rows.isNotEmpty()) {
+              sb.appendLine("| " + rows[0].joinToString(" | ") + " |")
+              sb.appendLine("| " + rows[0].map { "---" }.joinToString(" | ") + " |")
+              for (i in 1 until rows.size) {
+                sb.appendLine("| " + rows[i].joinToString(" | ") + " |")
+              }
+            }
+            sb.toString().trim()
+          }
           else -> {
             """
             CSV Summary for '$path':
-            - Total Data Rows: $rowCount
-            - Columns: $header
+            - Total Rows: $rowCount
+            - Columns: $cols
             - First 3 rows:
             ${lines.take(4).joinToString("\n")}
             """.trimIndent()
