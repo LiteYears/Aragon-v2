@@ -119,4 +119,46 @@ class McpSubsystemTest {
     val sanitized = McpBridgedTool.sanitizeToolName("my-server/tool_name.v1")
     assertTrue(sanitized.matches(Regex("^[a-zA-Z_][a-zA-Z0-9_]*$")))
   }
+
+  @Test
+  fun testInternalMcpPlaywrightServerTools() = runBlocking {
+    val workspace = tempFolder.newFolder("ws_playwright")
+    val config = McpServerConfig(
+      id = "playwright",
+      name = "Playwright Browser MCP",
+      transport = McpTransportType.INTERNAL,
+      url = "internal://playwright"
+    )
+
+    val client = McpClient(config = config, workspaceDir = workspace)
+    val connectRes = client.connect()
+    assertTrue("Playwright client should connect", connectRes.isSuccess)
+
+    val tools = client.tools.value
+    assertTrue("Should discover browser_navigate", tools.any { it.name == "browser_navigate" })
+    assertTrue("Should discover browser_extract_content", tools.any { it.name == "browser_extract_content" })
+
+    client.disconnect()
+  }
+
+  @Test
+  fun testInternalMcpMathAndTimeServer() = runBlocking {
+    val workspace = tempFolder.newFolder("ws_math")
+    val mathConfig = McpServerConfig(
+      id = "math",
+      name = "Math & Calculator MCP",
+      transport = McpTransportType.INTERNAL,
+      url = "internal://math"
+    )
+
+    val client = McpClient(config = mathConfig, workspaceDir = workspace)
+    client.connect()
+
+    val evalRes = client.callTool("calculate_expression", mapOf("expression" to "2 * 3 + 10"))
+    assertTrue("Math evaluation should succeed", evalRes.isSuccess)
+    val evalOut = evalRes.getOrThrow()
+    assertTrue(evalOut.rawText.contains("16"))
+
+    client.disconnect()
+  }
 }

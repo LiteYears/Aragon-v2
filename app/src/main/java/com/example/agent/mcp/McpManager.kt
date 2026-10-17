@@ -121,6 +121,14 @@ class McpManager(
     if (configs.isEmpty()) {
       configs.addAll(getStarterTemplates())
       saveConfigurationInternal(configs)
+    } else {
+      // Ensure newly added free zero-config internal templates are present
+      val existingIds = configs.map { it.id }.toSet()
+      val missingDefaults = getStarterTemplates().filter { it.transport == McpTransportType.INTERNAL && it.id !in existingIds }
+      if (missingDefaults.isNotEmpty()) {
+        configs.addAll(missingDefaults)
+        saveConfigurationInternal(configs)
+      }
     }
 
     _servers.value = configs
@@ -788,6 +796,54 @@ class McpManager(
    * Built-in starter templates for popular MCP servers.
    */
   private fun getStarterTemplates(): List<McpServerConfig> = listOf(
+    McpServerConfig(
+      id = "playwright",
+      name = "Playwright Browser MCP",
+      description = "Playwright-grade web browser automation, interactive links, forms submission, DOM extraction, and visual wireframing",
+      transport = McpTransportType.INTERNAL,
+      url = "internal://playwright",
+      enabled = true
+    ),
+    McpServerConfig(
+      id = "duckduckgo",
+      name = "DuckDuckGo Free Search MCP",
+      description = "Free real-time web search and news headlines without requiring any API keys or authentication",
+      transport = McpTransportType.INTERNAL,
+      url = "internal://duckduckgo",
+      enabled = true
+    ),
+    McpServerConfig(
+      id = "wikipedia",
+      name = "Wikipedia Knowledge MCP",
+      description = "Free Wikipedia encyclopedia search, summary extraction, and entity facts without API key",
+      transport = McpTransportType.INTERNAL,
+      url = "internal://wikipedia",
+      enabled = true
+    ),
+    McpServerConfig(
+      id = "arxiv",
+      name = "ArXiv Research Papers MCP",
+      description = "Scientific preprints, machine learning papers, and technical research paper search",
+      transport = McpTransportType.INTERNAL,
+      url = "internal://arxiv",
+      enabled = true
+    ),
+    McpServerConfig(
+      id = "math",
+      name = "Math & Calculator MCP",
+      description = "Offline high-precision mathematical expression evaluator, statistics, and unit converter",
+      transport = McpTransportType.INTERNAL,
+      url = "internal://math",
+      enabled = true
+    ),
+    McpServerConfig(
+      id = "time",
+      name = "World Clock & Timezone MCP",
+      description = "Real-time clock timestamps, timezone conversions, and elapsed time calculator",
+      transport = McpTransportType.INTERNAL,
+      url = "internal://time",
+      enabled = true
+    ),
     McpServerConfig(
       id = "sqlite",
       name = "Workspace SQLite MCP",

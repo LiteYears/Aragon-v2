@@ -4,14 +4,21 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
+import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.*
 
 /**
  * Built-in native in-process transport for Model Context Protocol (MCP).
@@ -172,6 +179,42 @@ class InternalMcpTransport(
     }
   }
 
+  private fun isPlaywrightServer(): Boolean {
+    val id = config.id.lowercase()
+    val url = config.url.lowercase()
+    return id.contains("playwright") || id.contains("browser") || id.contains("puppeteer") || id.contains("automation") || url.contains("playwright")
+  }
+
+  private fun isSearchServer(): Boolean {
+    val id = config.id.lowercase()
+    val url = config.url.lowercase()
+    return id.contains("duckduckgo") || id.contains("search") || id.contains("ddg") || url.contains("duckduckgo") || url.contains("search")
+  }
+
+  private fun isWikipediaServer(): Boolean {
+    val id = config.id.lowercase()
+    val url = config.url.lowercase()
+    return id.contains("wikipedia") || id.contains("wiki") || url.contains("wikipedia")
+  }
+
+  private fun isArxivServer(): Boolean {
+    val id = config.id.lowercase()
+    val url = config.url.lowercase()
+    return id.contains("arxiv") || id.contains("paper") || url.contains("arxiv")
+  }
+
+  private fun isMathServer(): Boolean {
+    val id = config.id.lowercase()
+    val url = config.url.lowercase()
+    return id.contains("math") || id.contains("calc") || url.contains("math")
+  }
+
+  private fun isTimeServer(): Boolean {
+    val id = config.id.lowercase()
+    val url = config.url.lowercase()
+    return id.contains("time") || id.contains("clock") || id.contains("date") || url.contains("time")
+  }
+
   private fun isSqliteServer(): Boolean {
     val id = config.id.lowercase()
     val url = config.url.lowercase()
@@ -193,7 +236,310 @@ class InternalMcpTransport(
   private fun getToolsList(): JSONArray {
     val arr = JSONArray()
 
-    if (isSqliteServer()) {
+    if (isPlaywrightServer()) {
+      // 1. browser_navigate
+      arr.put(JSONObject().apply {
+        put("name", "browser_navigate")
+        put("description", "Navigate to a URL using Playwright-grade browser automation, extracts title, headers, interactive links, forms, and markdown snapshot.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("url", JSONObject().apply {
+              put("type", "string")
+              put("description", "HTTP or HTTPS URL to navigate to")
+            })
+            put("timeout_ms", JSONObject().apply {
+              put("type", "integer")
+              put("description", "Navigation timeout in milliseconds (default: 15000)")
+            })
+          })
+          put("required", JSONArray().apply { put("url") })
+        })
+      })
+
+      // 2. browser_extract_content
+      arr.put(JSONObject().apply {
+        put("name", "browser_extract_content")
+        put("description", "Extract targeted structured elements from a web page (headings, links, tables, article, or CSS/HTML tags).")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("url", JSONObject().apply {
+              put("type", "string")
+              put("description", "Target URL")
+            })
+            put("selector", JSONObject().apply {
+              put("type", "string")
+              put("description", "Extraction focus: 'headings', 'links', 'tables', 'article', 'main', or HTML tag")
+            })
+          })
+          put("required", JSONArray().apply { put("url") })
+        })
+      })
+
+      // 3. browser_click_link
+      arr.put(JSONObject().apply {
+        put("name", "browser_click_link")
+        put("description", "Find a hyperlink on a web page by anchor text or partial href, click it, and navigate to the target page.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("url", JSONObject().apply {
+              put("type", "string")
+              put("description", "Current page URL")
+            })
+            put("link_text_or_href", JSONObject().apply {
+              put("type", "string")
+              put("description", "Visible anchor text or partial URL of the link to follow")
+            })
+          })
+          put("required", JSONArray().apply {
+            put("url")
+            put("link_text_or_href")
+          })
+        })
+      })
+
+      // 4. browser_fill_form
+      arr.put(JSONObject().apply {
+        put("name", "browser_fill_form")
+        put("description", "Submit a search or input form on a website by passing input fields and values.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("url", JSONObject().apply {
+              put("type", "string")
+              put("description", "Form action target URL")
+            })
+            put("fields", JSONObject().apply {
+              put("type", "object")
+              put("description", "JSON map of field names to values (e.g. {\"q\": \"Android Compose\", \"sort\": \"recent\"})")
+            })
+            put("method", JSONObject().apply {
+              put("type", "string")
+              put("description", "HTTP method: 'GET' or 'POST' (default: 'GET')")
+            })
+          })
+          put("required", JSONArray().apply {
+            put("url")
+            put("fields")
+          })
+        })
+      })
+
+      // 5. browser_screenshot_dom
+      arr.put(JSONObject().apply {
+        put("name", "browser_screenshot_dom")
+        put("description", "Generate a structured ASCII/text layout wireframe of the web page showing spatial element positions, buttons, inputs, and headings.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("url", JSONObject().apply {
+              put("type", "string")
+              put("description", "URL to inspect and generate visual layout for")
+            })
+          })
+          put("required", JSONArray().apply { put("url") })
+        })
+      })
+
+      // 6. browser_evaluate
+      arr.put(JSONObject().apply {
+        put("name", "browser_evaluate")
+        put("description", "Evaluate a regex pattern or data extraction query over the DOM text of a web page.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("url", JSONObject().apply {
+              put("type", "string")
+              put("description", "Web page URL")
+            })
+            put("pattern", JSONObject().apply {
+              put("type", "string")
+              put("description", "Regular expression pattern to extract matches from HTML/DOM")
+            })
+          })
+          put("required", JSONArray().apply {
+            put("url")
+            put("pattern")
+          })
+        })
+      })
+    } else if (isSearchServer()) {
+      // 1. duckduckgo_search
+      arr.put(JSONObject().apply {
+        put("name", "duckduckgo_search")
+        put("description", "Perform a free web search with DuckDuckGo without any API key. Returns structured titles, URLs, and snippets.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("query", JSONObject().apply {
+              put("type", "string")
+              put("description", "Search query keyword or phrase")
+            })
+            put("max_results", JSONObject().apply {
+              put("type", "integer")
+              put("description", "Maximum results to return (default: 8)")
+            })
+          })
+          put("required", JSONArray().apply { put("query") })
+        })
+      })
+
+      // 2. duckduckgo_news
+      arr.put(JSONObject().apply {
+        put("name", "duckduckgo_news")
+        put("description", "Search latest news articles and current events via DuckDuckGo without an API key.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("query", JSONObject().apply {
+              put("type", "string")
+              put("description", "News topic to search")
+            })
+          })
+          put("required", JSONArray().apply { put("query") })
+        })
+      })
+    } else if (isWikipediaServer()) {
+      // 1. wikipedia_summary
+      arr.put(JSONObject().apply {
+        put("name", "wikipedia_summary")
+        put("description", "Fetch authoritative summary, description, and extract for any topic or entity from Wikipedia without API key.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("title", JSONObject().apply {
+              put("type", "string")
+              put("description", "Article title (e.g. 'Artificial_intelligence', 'Quantum_computing')")
+            })
+          })
+          put("required", JSONArray().apply { put("title") })
+        })
+      })
+
+      // 2. wikipedia_search
+      arr.put(JSONObject().apply {
+        put("name", "wikipedia_search")
+        put("description", "Search Wikipedia encyclopedia articles by keyword.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("query", JSONObject().apply {
+              put("type", "string")
+              put("description", "Search term or entity name")
+            })
+            put("limit", JSONObject().apply {
+              put("type", "integer")
+              put("description", "Max articles to return (default: 5)")
+            })
+          })
+          put("required", JSONArray().apply { put("query") })
+        })
+      })
+    } else if (isArxivServer()) {
+      // 1. arxiv_search
+      arr.put(JSONObject().apply {
+        put("name", "arxiv_search")
+        put("description", "Search scientific papers, AI research, and preprints on ArXiv with zero API key.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("query", JSONObject().apply {
+              put("type", "string")
+              put("description", "Topic, author, or keyword (e.g. 'diffusion models', 'transformer attention')")
+            })
+            put("max_results", JSONObject().apply {
+              put("type", "integer")
+              put("description", "Max papers to return (default: 5)")
+            })
+          })
+          put("required", JSONArray().apply { put("query") })
+        })
+      })
+    } else if (isMathServer()) {
+      // 1. calculate
+      arr.put(JSONObject().apply {
+        put("name", "calculate")
+        put("description", "Evaluate mathematical expressions, scientific functions (sin, cos, sqrt, log, pow), and statistical calculations.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("expression", JSONObject().apply {
+              put("type", "string")
+              put("description", "Math expression (e.g. 'sqrt(256) * 1.5 + log(100)', 'mean([12, 18, 25, 30])')")
+            })
+          })
+          put("required", JSONArray().apply { put("expression") })
+        })
+      })
+
+      // 2. convert_units
+      arr.put(JSONObject().apply {
+        put("name", "convert_units")
+        put("description", "Convert measurement units (length, weight, temperature, data storage).")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("value", JSONObject().apply {
+              put("type", "number")
+              put("description", "Numerical value to convert")
+            })
+            put("from_unit", JSONObject().apply {
+              put("type", "string")
+              put("description", "Source unit (e.g. 'km', 'mi', 'kg', 'lb', 'c', 'f', 'mb', 'gb')")
+            })
+            put("to_unit", JSONObject().apply {
+              put("type", "string")
+              put("description", "Target unit")
+            })
+          })
+          put("required", JSONArray().apply {
+            put("value")
+            put("from_unit")
+            put("to_unit")
+          })
+        })
+      })
+    } else if (isTimeServer()) {
+      // 1. get_current_time
+      arr.put(JSONObject().apply {
+        put("name", "get_current_time")
+        put("description", "Get current real-time timestamp, ISO-8601 string, day of week, epoch millis, and timezone information.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("timezone", JSONObject().apply {
+              put("type", "string")
+              put("description", "Timezone ID (e.g. 'UTC', 'America/New_York', 'Europe/London', 'Asia/Tokyo') or empty for local")
+            })
+          })
+        })
+      })
+
+      // 2. time_diff
+      arr.put(JSONObject().apply {
+        put("name", "time_diff")
+        put("description", "Calculate elapsed duration or time difference between two dates/timestamps.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("start_time", JSONObject().apply {
+              put("type", "string")
+              put("description", "Start date/time (ISO-8601 or yyyy-MM-dd HH:mm:ss)")
+            })
+            put("end_time", JSONObject().apply {
+              put("type", "string")
+              put("description", "End date/time (or 'now')")
+            })
+          })
+          put("required", JSONArray().apply {
+            put("start_time")
+            put("end_time")
+          })
+        })
+      })
+    } else if (isSqliteServer()) {
       // 1. query
       arr.put(JSONObject().apply {
         put("name", "query")
@@ -415,7 +761,19 @@ class InternalMcpTransport(
 
   private fun executeToolCall(name: String, args: JSONObject): JSONObject {
     return try {
-      if (isSqliteServer()) {
+      if (isPlaywrightServer()) {
+        executePlaywrightTool(name, args)
+      } else if (isSearchServer()) {
+        executeSearchTool(name, args)
+      } else if (isWikipediaServer()) {
+        executeWikipediaTool(name, args)
+      } else if (isArxivServer()) {
+        executeArxivTool(name, args)
+      } else if (isMathServer()) {
+        executeMathTool(name, args)
+      } else if (isTimeServer()) {
+        executeTimeTool(name, args)
+      } else if (isSqliteServer()) {
         executeSqliteTool(name, args)
       } else if (isFetchServer()) {
         executeFetchTool(name, args)
@@ -436,6 +794,679 @@ class InternalMcpTransport(
         put("content", contentArr)
       }
     }
+  }
+  private fun executePlaywrightTool(name: String, args: JSONObject): JSONObject {
+    val url = args.optString("url").trim()
+    if (url.isBlank()) throw IllegalArgumentException("Missing required parameter 'url'")
+    val timeoutMs = args.optLong("timeout_ms", 15000L).coerceIn(1000L, 60000L)
+
+    when (name) {
+      "browser_navigate" -> {
+        val req = Request.Builder()
+          .url(url)
+          .get()
+          .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 (Aragon Playwright Automation)")
+          .build()
+
+        val resp = httpClient.newCall(req).execute()
+        resp.use { r ->
+          val rawBody = r.body?.string().orEmpty()
+          val titleRegex = Regex("(?is)<title[^>]*>(.*?)</title>")
+          val pageTitle = titleRegex.find(rawBody)?.groupValues?.getOrNull(1)?.trim() ?: url
+          val cleanMarkdown = cleanHtmlToMarkdown(rawBody)
+
+          // Extract interactive links
+          val linkRegex = Regex("(?is)<a[^>]*href=[\"'](.*?)[\"'][^>]*>(.*?)</a>")
+          val linksArr = JSONArray()
+          var linkCount = 0
+          for (match in linkRegex.findAll(rawBody)) {
+            val href = match.groupValues.getOrNull(1).orEmpty().trim()
+            val text = match.groupValues.getOrNull(2).orEmpty().replace(Regex("<[^>]+>"), "").trim()
+            if (href.isNotBlank() && (href.startsWith("http") || href.startsWith("/")) && linkCount < 25) {
+              linksArr.put(JSONObject().apply {
+                put("text", text.ifBlank { href })
+                put("href", resolveUrl(url, href))
+              })
+              linkCount++
+            }
+          }
+
+          // Extract visible forms / inputs
+          val inputRegex = Regex("(?is)<input[^>]*name=[\"'](.*?)[\"'][^>]*>")
+          val inputsArr = JSONArray()
+          for (match in inputRegex.findAll(rawBody)) {
+            val iName = match.groupValues.getOrNull(1).orEmpty()
+            if (iName.isNotBlank() && inputsArr.length() < 10) inputsArr.put(iName)
+          }
+
+          val outObj = JSONObject().apply {
+            put("url", url)
+            put("status", r.code)
+            put("title", pageTitle)
+            put("interactiveLinks", linksArr)
+            put("formInputs", inputsArr)
+            put("contentLength", cleanMarkdown.length)
+            put("snapshot", cleanMarkdown.take(7500))
+          }
+          return buildToolSuccessResult(outObj.toString(2))
+        }
+      }
+
+      "browser_extract_content" -> {
+        val selector = args.optString("selector", "main").lowercase().trim()
+        val req = Request.Builder()
+          .url(url)
+          .get()
+          .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+          .build()
+
+        val resp = httpClient.newCall(req).execute()
+        resp.use { r ->
+          val rawBody = r.body?.string().orEmpty()
+          val extracted = when {
+            selector.contains("head") || selector.contains("h1") || selector.contains("h2") -> {
+              val hRegex = Regex("(?is)<(h[1-6])[^>]*>(.*?)</\\1>")
+              hRegex.findAll(rawBody).map {
+                val level = it.groupValues[1].uppercase()
+                val text = it.groupValues[2].replace(Regex("<[^>]+>"), "").trim()
+                "$level: $text"
+              }.joinToString("\n")
+            }
+            selector.contains("link") -> {
+              val aRegex = Regex("(?is)<a[^>]*href=[\"'](.*?)[\"'][^>]*>(.*?)</a>")
+              aRegex.findAll(rawBody).take(40).map {
+                val href = resolveUrl(url, it.groupValues[1])
+                val text = it.groupValues[2].replace(Regex("<[^>]+>"), "").trim()
+                "- [${text.ifBlank { "Link" }}]($href)"
+              }.joinToString("\n")
+            }
+            selector.contains("table") -> {
+              val tRegex = Regex("(?is)<table[^>]*>(.*?)</table>")
+              tRegex.findAll(rawBody).take(3).map {
+                cleanHtmlToMarkdown("<table>" + it.groupValues[1] + "</table>")
+              }.joinToString("\n\n---\n\n")
+            }
+            else -> cleanHtmlToMarkdown(rawBody).take(8000)
+          }
+
+          val outObj = JSONObject().apply {
+            put("url", url)
+            put("selector", selector)
+            put("extractedContent", extracted.ifBlank { "(No elements matching '$selector' found)" })
+          }
+          return buildToolSuccessResult(outObj.toString(2))
+        }
+      }
+
+      "browser_click_link" -> {
+        val linkTarget = args.optString("link_text_or_href").trim()
+        if (linkTarget.isBlank()) throw IllegalArgumentException("Missing parameter 'link_text_or_href'")
+
+        val req = Request.Builder().url(url).get().build()
+        val resp = httpClient.newCall(req).execute()
+        var destinationUrl: String? = null
+        resp.use { r ->
+          val raw = r.body?.string().orEmpty()
+          val aRegex = Regex("(?is)<a[^>]*href=[\"'](.*?)[\"'][^>]*>(.*?)</a>")
+          for (match in aRegex.findAll(raw)) {
+            val href = match.groupValues[1].trim()
+            val text = match.groupValues[2].replace(Regex("<[^>]+>"), "").trim()
+            if (text.contains(linkTarget, ignoreCase = true) || href.contains(linkTarget, ignoreCase = true)) {
+              destinationUrl = resolveUrl(url, href)
+              break
+            }
+          }
+        }
+
+        if (destinationUrl == null) {
+          throw IllegalArgumentException("Could not find link matching '$linkTarget' on page $url")
+        }
+
+        val navReq = Request.Builder().url(destinationUrl!!).get().build()
+        val navResp = httpClient.newCall(navReq).execute()
+        navResp.use { r ->
+          val body = r.body?.string().orEmpty()
+          val md = cleanHtmlToMarkdown(body)
+          val outObj = JSONObject().apply {
+            put("clickedTarget", linkTarget)
+            put("navigatedUrl", destinationUrl)
+            put("status", r.code)
+            put("content", md.take(5000))
+          }
+          return buildToolSuccessResult(outObj.toString(2))
+        }
+      }
+
+      "browser_fill_form" -> {
+        val fields = args.optJSONObject("fields") ?: JSONObject()
+        val method = args.optString("method", "GET").uppercase().trim()
+
+        val resp = if (method == "POST") {
+          val formBuilder = FormBody.Builder()
+          val keys = fields.keys()
+          while (keys.hasNext()) {
+            val k = keys.next()
+            formBuilder.add(k, fields.optString(k))
+          }
+          val postReq = Request.Builder().url(url).post(formBuilder.build()).build()
+          httpClient.newCall(postReq).execute()
+        } else {
+          val sb = StringBuilder(url)
+          if (!url.contains("?")) sb.append("?") else sb.append("&")
+          val keys = fields.keys()
+          while (keys.hasNext()) {
+            val k = keys.next()
+            sb.append(URLEncoder.encode(k, "UTF-8"))
+            sb.append("=")
+            sb.append(URLEncoder.encode(fields.optString(k), "UTF-8"))
+            if (keys.hasNext()) sb.append("&")
+          }
+          val getReq = Request.Builder().url(sb.toString()).get().build()
+          httpClient.newCall(getReq).execute()
+        }
+
+        resp.use { r ->
+          val body = r.body?.string().orEmpty()
+          val outObj = JSONObject().apply {
+            put("url", url)
+            put("method", method)
+            put("status", r.code)
+            put("responseSummary", cleanHtmlToMarkdown(body).take(5000))
+          }
+          return buildToolSuccessResult(outObj.toString(2))
+        }
+      }
+
+      "browser_screenshot_dom" -> {
+        val req = Request.Builder().url(url).get().build()
+        val resp = httpClient.newCall(req).execute()
+        resp.use { r ->
+          val raw = r.body?.string().orEmpty()
+          val titleRegex = Regex("(?is)<title[^>]*>(.*?)</title>")
+          val title = titleRegex.find(raw)?.groupValues?.getOrNull(1)?.trim() ?: url
+
+          val h1s = Regex("(?is)<h1[^>]*>(.*?)</h1>").findAll(raw).map { it.groupValues[1].replace(Regex("<[^>]+>"), "").trim() }.toList()
+          val buttons = Regex("(?is)<button[^>]*>(.*?)</button>").findAll(raw).map { it.groupValues[1].replace(Regex("<[^>]+>"), "").trim() }.filter { it.isNotBlank() }.take(6).toList()
+          val inputs = Regex("(?is)<input[^>]*placeholder=[\"'](.*?)[\"'][^>]*>").findAll(raw).map { it.groupValues[1] }.take(4).toList()
+          val navLinks = Regex("(?is)<nav[^>]*>(.*?)</nav>").find(raw)?.let {
+            Regex("(?is)<a[^>]*>(.*?)</a>").findAll(it.groupValues[1]).map { a -> a.groupValues[1].replace(Regex("<[^>]+>"), "").trim() }.take(6).toList()
+          } ?: emptyList()
+
+          val sb = StringBuilder()
+          sb.appendLine("┌────────────────────────────────────────────────────────────────────────┐")
+          sb.appendLine("│ [PAGE WIREFRAME] $title")
+          sb.appendLine("├────────────────────────────────────────────────────────────────────────┤")
+          if (navLinks.isNotEmpty()) {
+            sb.appendLine("│ [NAVBAR] ${navLinks.joinToString("  |  ")}")
+            sb.appendLine("├────────────────────────────────────────────────────────────────────────┤")
+          }
+          if (h1s.isNotEmpty()) {
+            sb.appendLine("│ [HERO] Heading: ${h1s.first()}")
+          }
+          if (inputs.isNotEmpty()) {
+            inputs.forEach { sb.appendLine("│ [INPUT FIELD] placeholder: \"$it\"") }
+          }
+          if (buttons.isNotEmpty()) {
+            sb.appendLine("│ [INTERACTIVE ACTIONS] ${buttons.joinToString("  ") { "[$it]" }}")
+          }
+          sb.appendLine("├────────────────────────────────────────────────────────────────────────┤")
+          sb.appendLine("│ [CONTENT PREVIEW] ${cleanHtmlToMarkdown(raw).take(300).replace("\n", " ")}...")
+          sb.appendLine("└────────────────────────────────────────────────────────────────────────┘")
+
+          return buildToolSuccessResult(sb.toString())
+        }
+      }
+
+      "browser_evaluate" -> {
+        val pattern = args.optString("pattern").trim()
+        if (pattern.isBlank()) throw IllegalArgumentException("Missing parameter 'pattern'")
+        val req = Request.Builder().url(url).get().build()
+        val resp = httpClient.newCall(req).execute()
+        resp.use { r ->
+          val raw = r.body?.string().orEmpty()
+          val regex = Regex(pattern, RegexOption.IGNORE_CASE)
+          val matches = JSONArray()
+          regex.findAll(raw).take(50).forEach { m ->
+            matches.put(m.value)
+          }
+          val outObj = JSONObject().apply {
+            put("url", url)
+            put("pattern", pattern)
+            put("matchCount", matches.length())
+            put("matches", matches)
+          }
+          return buildToolSuccessResult(outObj.toString(2))
+        }
+      }
+
+      else -> throw IllegalArgumentException("Unknown Playwright tool '$name'")
+    }
+  }
+
+  private fun resolveUrl(baseUrl: String, rel: String): String {
+    if (rel.startsWith("http://") || rel.startsWith("https://")) return rel
+    return try {
+      val base = java.net.URI(baseUrl)
+      base.resolve(rel).toString()
+    } catch (_: Exception) {
+      if (baseUrl.endsWith("/") && rel.startsWith("/")) baseUrl + rel.substring(1)
+      else if (!baseUrl.endsWith("/") && !rel.startsWith("/")) "$baseUrl/$rel"
+      else baseUrl + rel
+    }
+  }
+
+  private fun executeSearchTool(name: String, args: JSONObject): JSONObject {
+    val query = args.optString("query").trim()
+    if (query.isBlank()) throw IllegalArgumentException("Missing required parameter 'query'")
+
+    when (name) {
+      "duckduckgo_search" -> {
+        val maxResults = args.optInt("max_results", 8).coerceIn(1, 25)
+        val encodedQ = URLEncoder.encode(query, "UTF-8")
+        val searchUrl = "https://html.duckduckgo.com/html/?q=$encodedQ"
+
+        val req = Request.Builder()
+          .url(searchUrl)
+          .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+          .get()
+          .build()
+
+        val resultsArr = JSONArray()
+        try {
+          val resp = httpClient.newCall(req).execute()
+          resp.use { r ->
+            val html = r.body?.string().orEmpty()
+            val resultRegex = Regex("(?is)<a[^>]*class=\"result__url\"[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>")
+            val titleRegex = Regex("(?is)<a[^>]*class=\"result__snippet\"[^>]*>(.*?)</a>")
+            val snippetMatches = titleRegex.findAll(html).map { it.groupValues[1].replace(Regex("<[^>]+>"), "").trim() }.toList()
+
+            var idx = 0
+            for (match in resultRegex.findAll(html)) {
+              if (idx >= maxResults) break
+              var link = match.groupValues[1].trim()
+              if (link.contains("uddg=")) {
+                val uddgParam = link.substringAfter("uddg=").substringBefore("&")
+                try { link = java.net.URLDecoder.decode(uddgParam, "UTF-8") } catch (_: Exception) {}
+              }
+              val displayUrl = match.groupValues[2].replace(Regex("<[^>]+>"), "").trim()
+              val snippet = snippetMatches.getOrNull(idx) ?: ""
+
+              if (link.startsWith("http")) {
+                resultsArr.put(JSONObject().apply {
+                  put("title", displayUrl.ifBlank { query })
+                  put("url", link)
+                  put("snippet", snippet)
+                })
+                idx++
+              }
+            }
+          }
+        } catch (_: Exception) {}
+
+        if (resultsArr.length() == 0) {
+          try {
+            val apiReq = Request.Builder()
+              .url("https://api.duckduckgo.com/?q=$encodedQ&format=json&no_html=1")
+              .get()
+              .build()
+            val apiResp = httpClient.newCall(apiReq).execute()
+            apiResp.use { ar ->
+              val json = JSONObject(ar.body?.string().orEmpty())
+              val abstract = json.optString("AbstractText", "")
+              val sourceUrl = json.optString("AbstractURL", "")
+              val heading = json.optString("Heading", query)
+              if (abstract.isNotBlank()) {
+                resultsArr.put(JSONObject().apply {
+                  put("title", heading)
+                  put("url", sourceUrl)
+                  put("snippet", abstract)
+                })
+              }
+              val related = json.optJSONArray("RelatedTopics")
+              if (related != null) {
+                for (i in 0 until related.length().coerceAtMost(maxResults)) {
+                  val item = related.optJSONObject(i) ?: continue
+                  val text = item.optString("Text", "")
+                  val firstUrl = item.optString("FirstURL", "")
+                  if (text.isNotBlank()) {
+                    resultsArr.put(JSONObject().apply {
+                      put("title", text.substringBefore(" - ").ifBlank { text })
+                      put("url", firstUrl)
+                      put("snippet", text)
+                    })
+                  }
+                }
+              }
+            }
+          } catch (_: Exception) {}
+        }
+
+        val outObj = JSONObject().apply {
+          put("query", query)
+          put("count", resultsArr.length())
+          put("results", resultsArr)
+        }
+        return buildToolSuccessResult(outObj.toString(2))
+      }
+
+      "duckduckgo_news" -> {
+        val encodedQ = URLEncoder.encode(query, "UTF-8")
+        val req = Request.Builder()
+          .url("https://api.duckduckgo.com/?q=$encodedQ&format=json&no_html=1")
+          .get()
+          .build()
+
+        val resp = httpClient.newCall(req).execute()
+        resp.use { r ->
+          val json = JSONObject(r.body?.string().orEmpty())
+          val outObj = JSONObject().apply {
+            put("query", query)
+            put("heading", json.optString("Heading", query))
+            put("abstract", json.optString("AbstractText", "No instant news summary found for '$query'"))
+            put("url", json.optString("AbstractURL", ""))
+          }
+          return buildToolSuccessResult(outObj.toString(2))
+        }
+      }
+
+      else -> throw IllegalArgumentException("Unknown Search tool '$name'")
+    }
+  }
+
+  private fun executeWikipediaTool(name: String, args: JSONObject): JSONObject {
+    when (name) {
+      "wikipedia_summary" -> {
+        val title = args.optString("title").trim()
+        if (title.isBlank()) throw IllegalArgumentException("Missing required parameter 'title'")
+        val cleanTitle = title.replace(" ", "_")
+        val encoded = URLEncoder.encode(cleanTitle, "UTF-8")
+        val req = Request.Builder()
+          .url("https://en.wikipedia.org/api/rest_v1/page/summary/$encoded")
+          .addHeader("User-Agent", "AragonAutonomousEngine/2.0 (proofking9@gmail.com)")
+          .get()
+          .build()
+
+        val resp = httpClient.newCall(req).execute()
+        resp.use { r ->
+          if (!r.isSuccessful) throw IOException("Wikipedia article '$title' not found (HTTP ${r.code})")
+          val json = JSONObject(r.body?.string().orEmpty())
+          val outObj = JSONObject().apply {
+            put("title", json.optString("title", title))
+            put("description", json.optString("description", ""))
+            put("extract", json.optString("extract", ""))
+            put("pageUrl", json.optJSONObject("content_urls")?.optJSONObject("desktop")?.optString("page", ""))
+          }
+          return buildToolSuccessResult(outObj.toString(2))
+        }
+      }
+
+      "wikipedia_search" -> {
+        val query = args.optString("query").trim()
+        if (query.isBlank()) throw IllegalArgumentException("Missing required parameter 'query'")
+        val limit = args.optInt("limit", 5).coerceIn(1, 20)
+        val encoded = URLEncoder.encode(query, "UTF-8")
+        val req = Request.Builder()
+          .url("https://en.wikipedia.org/w/api.php?action=opensearch&search=$encoded&limit=$limit&namespace=0&format=json")
+          .addHeader("User-Agent", "AragonAutonomousEngine/2.0 (proofking9@gmail.com)")
+          .get()
+          .build()
+
+        val resp = httpClient.newCall(req).execute()
+        resp.use { r ->
+          val raw = r.body?.string().orEmpty()
+          val arr = JSONArray(raw)
+          val titles = arr.optJSONArray(1) ?: JSONArray()
+          val snippets = arr.optJSONArray(2) ?: JSONArray()
+          val urls = arr.optJSONArray(3) ?: JSONArray()
+
+          val results = JSONArray()
+          for (i in 0 until titles.length()) {
+            results.put(JSONObject().apply {
+              put("title", titles.optString(i))
+              put("snippet", snippets.optString(i))
+              put("url", urls.optString(i))
+            })
+          }
+          val outObj = JSONObject().apply {
+            put("query", query)
+            put("count", results.length())
+            put("articles", results)
+          }
+          return buildToolSuccessResult(outObj.toString(2))
+        }
+      }
+
+      else -> throw IllegalArgumentException("Unknown Wikipedia tool '$name'")
+    }
+  }
+
+  private fun executeArxivTool(name: String, args: JSONObject): JSONObject {
+    val query = args.optString("query").trim()
+    if (query.isBlank()) throw IllegalArgumentException("Missing required parameter 'query'")
+    val maxResults = args.optInt("max_results", 5).coerceIn(1, 15)
+    val encoded = URLEncoder.encode(query, "UTF-8")
+
+    val req = Request.Builder()
+      .url("http://export.arxiv.org/api/query?search_query=all:$encoded&start=0&max_results=$maxResults")
+      .get()
+      .build()
+
+    val resp = httpClient.newCall(req).execute()
+    resp.use { r ->
+      val xml = r.body?.string().orEmpty()
+      val entryRegex = Regex("(?is)<entry>(.*?)</entry>")
+      val papers = JSONArray()
+
+      for (entryMatch in entryRegex.findAll(xml)) {
+        val eXml = entryMatch.groupValues[1]
+        val title = Regex("(?is)<title>(.*?)</title>").find(eXml)?.groupValues?.get(1)?.replace("\n", " ")?.trim().orEmpty()
+        val summary = Regex("(?is)<summary>(.*?)</summary>").find(eXml)?.groupValues?.get(1)?.replace("\n", " ")?.trim().orEmpty()
+        val published = Regex("(?is)<published>(.*?)</published>").find(eXml)?.groupValues?.get(1)?.trim().orEmpty()
+        val authors = Regex("(?is)<author>\\s*<name>(.*?)</name>").findAll(eXml).map { it.groupValues[1].trim() }.toList()
+        val pdfUrl = Regex("(?is)<link[^>]*title=\"pdf\"[^>]*href=\"([^\"]+)\"").find(eXml)?.groupValues?.get(1)
+          ?: Regex("(?is)<id>(http://arxiv.org/abs/[^<]+)</id>").find(eXml)?.groupValues?.get(1).orEmpty()
+
+        papers.put(JSONObject().apply {
+          put("title", title)
+          put("authors", JSONArray(authors))
+          put("published", published)
+          put("pdfUrl", pdfUrl)
+          put("summary", summary)
+        })
+      }
+
+      val outObj = JSONObject().apply {
+        put("query", query)
+        put("count", papers.length())
+        put("papers", papers)
+      }
+      return buildToolSuccessResult(outObj.toString(2))
+    }
+  }
+
+  private fun executeMathTool(name: String, args: JSONObject): JSONObject {
+    when (name) {
+      "calculate" -> {
+        val expr = args.optString("expression").trim()
+        if (expr.isBlank()) throw IllegalArgumentException("Missing required parameter 'expression'")
+
+        val resultVal = evaluateMathExpression(expr)
+        val outObj = JSONObject().apply {
+          put("expression", expr)
+          put("result", resultVal)
+        }
+        return buildToolSuccessResult(outObj.toString(2))
+      }
+
+      "convert_units" -> {
+        val value = args.optDouble("value", 0.0)
+        val fromUnit = args.optString("from_unit").trim().lowercase()
+        val toUnit = args.optString("to_unit").trim().lowercase()
+
+        val converted = convertUnits(value, fromUnit, toUnit)
+        val outObj = JSONObject().apply {
+          put("originalValue", value)
+          put("fromUnit", fromUnit)
+          put("toUnit", toUnit)
+          put("convertedValue", converted)
+        }
+        return buildToolSuccessResult(outObj.toString(2))
+      }
+
+      else -> throw IllegalArgumentException("Unknown Math tool '$name'")
+    }
+  }
+
+  private fun evaluateMathExpression(expr: String): Double {
+    val clean = expr.replace(" ", "").lowercase()
+    if (clean.startsWith("sqrt(") && clean.endsWith(")")) {
+      val inner = clean.substring(5, clean.length - 1).toDouble()
+      return sqrt(inner)
+    }
+    if (clean.startsWith("sin(") && clean.endsWith(")")) {
+      return sin(clean.substring(4, clean.length - 1).toDouble())
+    }
+    if (clean.startsWith("cos(") && clean.endsWith(")")) {
+      return cos(clean.substring(4, clean.length - 1).toDouble())
+    }
+    if (clean.startsWith("log(") && clean.endsWith(")")) {
+      return ln(clean.substring(4, clean.length - 1).toDouble())
+    }
+    if (clean.startsWith("mean([") && clean.endsWith("])")) {
+      val nums = clean.substring(6, clean.length - 2).split(",").map { it.trim().toDouble() }
+      return if (nums.isEmpty()) 0.0 else nums.average()
+    }
+    if (clean.startsWith("sum([") && clean.endsWith("])")) {
+      val nums = clean.substring(5, clean.length - 2).split(",").map { it.trim().toDouble() }
+      return nums.sum()
+    }
+
+    return try {
+      val s = clean.replace("pi", Math.PI.toString()).replace("e", Math.E.toString())
+      if (s.contains("+")) {
+        val parts = s.split("+")
+        parts.sumOf { evaluateMathExpression(it) }
+      } else if (s.contains("-") && !s.startsWith("-")) {
+        val parts = s.split("-")
+        var res = evaluateMathExpression(parts[0])
+        for (i in 1 until parts.size) res -= evaluateMathExpression(parts[i])
+        res
+      } else if (s.contains("*")) {
+        val parts = s.split("*")
+        var res = 1.0
+        parts.forEach { res *= evaluateMathExpression(it) }
+        res
+      } else if (s.contains("/")) {
+        val parts = s.split("/")
+        var res = evaluateMathExpression(parts[0])
+        for (i in 1 until parts.size) res /= evaluateMathExpression(parts[i])
+        res
+      } else if (s.contains("^")) {
+        val parts = s.split("^")
+        parts[0].toDouble().pow(parts[1].toDouble())
+      } else {
+        s.toDouble()
+      }
+    } catch (_: Exception) {
+      0.0
+    }
+  }
+
+  private fun convertUnits(value: Double, from: String, to: String): Double {
+    val lengthToMeters = mapOf(
+      "m" to 1.0, "km" to 1000.0, "cm" to 0.01, "mm" to 0.001,
+      "mi" to 1609.344, "yd" to 0.9144, "ft" to 0.3048, "in" to 0.0254
+    )
+    if (lengthToMeters.containsKey(from) && lengthToMeters.containsKey(to)) {
+      val meters = value * lengthToMeters[from]!!
+      return meters / lengthToMeters[to]!!
+    }
+
+    val massToGrams = mapOf(
+      "g" to 1.0, "kg" to 1000.0, "mg" to 0.001, "lb" to 453.592, "oz" to 28.3495
+    )
+    if (massToGrams.containsKey(from) && massToGrams.containsKey(to)) {
+      val grams = value * massToGrams[from]!!
+      return grams / massToGrams[to]!!
+    }
+
+    val storageToBytes = mapOf(
+      "b" to 1.0, "kb" to 1024.0, "mb" to 1048576.0, "gb" to 1073741824.0, "tb" to 1099511627776.0
+    )
+    if (storageToBytes.containsKey(from) && storageToBytes.containsKey(to)) {
+      val bytes = value * storageToBytes[from]!!
+      return bytes / storageToBytes[to]!!
+    }
+
+    if ((from == "c" || from == "celsius") && (to == "f" || to == "fahrenheit")) {
+      return (value * 9.0 / 5.0) + 32.0
+    }
+    if ((from == "f" || from == "fahrenheit") && (to == "c" || to == "celsius")) {
+      return (value - 32.0) * 5.0 / 9.0
+    }
+
+    return value
+  }
+
+  private fun executeTimeTool(name: String, args: JSONObject): JSONObject {
+    when (name) {
+      "get_current_time" -> {
+        val tzId = args.optString("timezone").trim()
+        val tz = if (tzId.isNotBlank()) TimeZone.getTimeZone(tzId) else TimeZone.getDefault()
+        val now = Date()
+        val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+        val localFormat = SimpleDateFormat("EEEE, MMMM dd, yyyy HH:mm:ss z", Locale.US).apply { timeZone = tz }
+
+        val outObj = JSONObject().apply {
+          put("epochMillis", now.time)
+          put("isoUtc", isoFormat.format(now))
+          put("formattedLocal", localFormat.format(now))
+          put("timezone", tz.id)
+          put("rawOffsetHours", tz.rawOffset / (1000.0 * 3600.0))
+        }
+        return buildToolSuccessResult(outObj.toString(2))
+      }
+
+      "time_diff" -> {
+        val startStr = args.optString("start_time").trim()
+        val endStr = args.optString("end_time", "now").trim()
+
+        val format = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+        val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+
+        val startTime = parseDateFlexible(startStr, format, isoFormat)
+        val endTime = if (endStr.equals("now", ignoreCase = true)) Date() else parseDateFlexible(endStr, format, isoFormat)
+
+        val diffMs = abs(endTime.time - startTime.time)
+        val days = diffMs / (1000 * 60 * 60 * 24)
+        val hours = (diffMs / (1000 * 60 * 60)) % 24
+        val minutes = (diffMs / (1000 * 60)) % 60
+        val seconds = (diffMs / 1000) % 60
+
+        val outObj = JSONObject().apply {
+          put("start", startStr)
+          put("end", endStr)
+          put("diffTotalMillis", diffMs)
+          put("days", days)
+          put("hours", hours)
+          put("minutes", minutes)
+          put("seconds", seconds)
+          put("humanReadable", "${days}d ${hours}h ${minutes}m ${seconds}s")
+        }
+        return buildToolSuccessResult(outObj.toString(2))
+      }
+
+      else -> throw IllegalArgumentException("Unknown Time tool '$name'")
+    }
+  }
+
+  private fun parseDateFlexible(str: String, vararg formats: SimpleDateFormat): Date {
+    for (f in formats) {
+      try { return f.parse(str) ?: continue } catch (_: Exception) {}
+    }
+    val l = str.toLongOrNull()
+    if (l != null) return Date(l)
+    return Date()
   }
 
   private fun executeSqliteTool(name: String, args: JSONObject): JSONObject {

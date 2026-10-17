@@ -329,20 +329,38 @@ fun AgentScreen(
     topBar = {
       val isHomeScreen = activeTab == UiTab.EXECUTION_FEED && state.executionFeed.isEmpty()
       val showFeedButtons = activeTab == UiTab.EXECUTION_FEED && state.executionFeed.isNotEmpty()
-      AgentTopHeader(
-        status = state.status,
-        currentAction = state.currentAction,
-        canCancel = state.canCancel,
-        isHomeScreen = isHomeScreen,
-        telemetry = if (showFeedButtons) runTelemetry else null,
-        activeFeedFilter = if (showFeedButtons) activeFeedFilter else null,
-        filterCount = if (showFeedButtons) filteredFeed.size else 0,
-        onOpenTelemetry = { showTelemetryDialog = true },
-        onOpenFilterDialog = { showFilterDialog = true },
-        onStop = { viewModel.stopExecution() },
-        onGoHome = { viewModel.selectTab(UiTab.EXECUTION_FEED) },
-        onOpenMenu = { showNavMenu = true }
-      )
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .background(AmoledSurface)
+      ) {
+        AgentTopHeader(
+          status = state.status,
+          currentAction = state.currentAction,
+          canCancel = state.canCancel,
+          isHomeScreen = isHomeScreen,
+          telemetry = if (showFeedButtons) runTelemetry else null,
+          activeFeedFilter = if (showFeedButtons) activeFeedFilter else null,
+          filterCount = if (showFeedButtons) filteredFeed.size else 0,
+          mcpCount = mcpServers.count { it.enabled },
+          docsCount = documents.size,
+          onOpenTelemetry = { showTelemetryDialog = true },
+          onOpenFilterDialog = { showFilterDialog = true },
+          onStop = { viewModel.stopExecution() },
+          onGoHome = { viewModel.selectTab(UiTab.EXECUTION_FEED) },
+          onOpenMcp = { showMcpDialog = true },
+          onOpenDocs = { showDocumentsDialog = true },
+          onOpenMenu = { showNavMenu = true }
+        )
+
+        PremiumTabBar(
+          selectedTab = activeTab,
+          feedCount = state.executionFeed.size,
+          artifactsCount = state.trackedDeliverables.size,
+          historyCount = state.taskHistory.size,
+          onSelectTab = { viewModel.selectTab(it) }
+        )
+      }
     },
     bottomBar = {
       val isInputActive = isInputFocused || inputText.isNotBlank()
@@ -863,77 +881,7 @@ fun AgentScreen(
         }
       }
 
-      // Contextual location strip (shown only on secondary tabs, NOT on execution feed)
-      val isSecondaryTab = activeTab != UiTab.EXECUTION_FEED
-      if (isSecondaryTab) {
-        Surface(
-          modifier = Modifier.fillMaxWidth(),
-          color = AmoledSurface,
-          border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle)
-        ) {
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .padding(horizontal = 14.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-          ) {
-            Row(
-              verticalAlignment = Alignment.CenterVertically,
-              modifier = Modifier
-                .clip(RoundedCornerShape(4.dp))
-                .clickable { viewModel.selectTab(UiTab.EXECUTION_FEED) }
-            ) {
-              Text(
-                text = "‹ HOME",
-                fontFamily = JetBrainsMonoFontFamily,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = AmoledActionPrimary
-              )
-              Spacer(modifier = Modifier.width(8.dp))
-              Text(
-                text = "•",
-                fontFamily = JetBrainsMonoFontFamily,
-                fontSize = 10.sp,
-                color = AmoledIconGreyDark
-              )
-              Spacer(modifier = Modifier.width(8.dp))
-              Text(
-                text = when (activeTab) {
-                  UiTab.EXECUTION_FEED -> "EXECUTION FEED (${state.executionFeed.size})"
-                  UiTab.ARTIFACTS -> "WORKSPACE FILES (${state.trackedDeliverables.size})"
-                  UiTab.TASK_HISTORY -> "MISSION HISTORY (${state.taskHistory.size})"
-                  UiTab.FIVE_STAGES -> "FIVE-STAGE PIPELINE"
-                  UiTab.ABOUT_ARAGON -> "SYSTEM SPECS"
-                },
-                fontFamily = JetBrainsMonoFontFamily,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = AmoledTextPrimary
-              )
-            }
 
-            Surface(
-              shape = RoundedCornerShape(5.dp),
-              color = Color(0xFF18181D),
-              border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
-              modifier = Modifier
-                .clip(RoundedCornerShape(5.dp))
-                .clickable { showNavMenu = true }
-            ) {
-              Text(
-                text = "SWITCH TAB ▾",
-                fontFamily = JetBrainsMonoFontFamily,
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Bold,
-                color = AmoledIconGreyLight,
-                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-              )
-            }
-          }
-        }
-      }
 
       // Tab Content Views with smooth, directional spring transitions
       AnimatedContent(
@@ -1477,6 +1425,7 @@ fun AgentScreen(
 fun PremiumTabBar(
   selectedTab: UiTab,
   feedCount: Int,
+  artifactsCount: Int = 0,
   historyCount: Int = 0,
   onSelectTab: (UiTab) -> Unit,
   modifier: Modifier = Modifier
@@ -1489,21 +1438,22 @@ fun PremiumTabBar(
     Row(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(horizontal = 8.dp, vertical = 5.dp),
-      horizontalArrangement = Arrangement.spacedBy(6.dp),
+        .padding(horizontal = 6.dp, vertical = 4.dp),
+      horizontalArrangement = Arrangement.spacedBy(4.dp),
       verticalAlignment = Alignment.CenterVertically
     ) {
-      UiTab.values().forEach { tab ->
+      UiTab.entries.forEach { tab ->
         val isSelected = selectedTab == tab
         val label = tab.label
         val badge = when (tab) {
           UiTab.EXECUTION_FEED -> if (feedCount > 0) "$feedCount" else null
+          UiTab.ARTIFACTS -> if (artifactsCount > 0) "$artifactsCount" else null
           UiTab.TASK_HISTORY -> if (historyCount > 0) "$historyCount" else null
           else -> null
         }
 
         val bgColor by animateColorAsState(
-          targetValue = if (isSelected) Color(0xFF222222) else Color.Transparent,
+          targetValue = if (isSelected) Color(0xFF202026) else Color.Transparent,
           animationSpec = tween(120),
           label = "tab_bg"
         )
@@ -1517,7 +1467,7 @@ fun PremiumTabBar(
         Surface(
           shape = RoundedCornerShape(6.dp),
           color = bgColor,
-          border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF444448)) else null,
+          border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF484852)) else null,
           modifier = Modifier
             .weight(1f)
             .tactilePress(interactionSource)
@@ -1538,7 +1488,7 @@ fun PremiumTabBar(
             contentAlignment = Alignment.Center
           ) {
             Row(
-              modifier = Modifier.padding(vertical = 7.dp, horizontal = 2.dp),
+              modifier = Modifier.padding(vertical = 6.dp, horizontal = 2.dp),
               horizontalArrangement = Arrangement.Center,
               verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1548,14 +1498,14 @@ fun PremiumTabBar(
                 fontFamily = JetBrainsMonoFontFamily,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                 color = contentColor,
-                fontSize = 11.sp,
+                fontSize = 10.5.sp,
                 maxLines = 1
               )
               if (badge != null) {
-                Spacer(modifier = Modifier.width(4.dp))
+                Spacer(modifier = Modifier.width(3.dp))
                 Surface(
                   shape = RoundedCornerShape(3.dp),
-                  color = if (isSelected) AmoledActionPrimary else Color(0xFF1E1E1E),
+                  color = if (isSelected) AmoledActionPrimary else Color(0xFF1E1E22),
                   modifier = Modifier.height(14.dp)
                 ) {
                   Box(
@@ -1566,7 +1516,7 @@ fun PremiumTabBar(
                       text = badge,
                       style = MaterialTheme.typography.labelSmall,
                       fontFamily = JetBrainsMonoFontFamily,
-                      fontSize = 8.sp,
+                      fontSize = 7.5.sp,
                       fontWeight = FontWeight.Bold,
                       color = if (isSelected) AmoledActionPrimaryOn else AmoledIconGreyLight
                     )
@@ -1596,10 +1546,14 @@ fun AgentTopHeader(
   telemetry: RunTelemetry? = null,
   activeFeedFilter: FeedFilter? = null,
   filterCount: Int = 0,
+  mcpCount: Int = 0,
+  docsCount: Int = 0,
   onOpenTelemetry: () -> Unit = {},
   onOpenFilterDialog: () -> Unit = {},
   onStop: () -> Unit,
   onGoHome: () -> Unit = {},
+  onOpenMcp: () -> Unit = {},
+  onOpenDocs: () -> Unit = {},
   onOpenMenu: () -> Unit
 ) {
   Surface(
@@ -1611,7 +1565,7 @@ fun AgentTopHeader(
       modifier = Modifier
         .fillMaxWidth()
         .statusBarsPadding()
-        .padding(horizontal = 14.dp, vertical = 8.dp)
+        .padding(horizontal = 12.dp, vertical = 7.dp)
     ) {
       Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1639,11 +1593,30 @@ fun AgentTopHeader(
           StatusPill(status = status)
         }
 
-        // RIGHT-ALIGNED ACTIONS: STATS & FILTERS, HOME, STOP, and MENU
+        // RIGHT-ALIGNED ACTIONS: MCP, DOCS, STATS, STOP, MENU
         Row(
           verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(6.dp)
+          horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
+          // Direct 1-tap MCP button with count badge!
+          AragonHeaderButton(
+            text = "MCP",
+            badge = if (mcpCount > 0) "$mcpCount" else null,
+            onClick = onOpenMcp,
+            variant = if (mcpCount > 0) AragonButtonVariant.PRIMARY else AragonButtonVariant.MUTED,
+            testTag = "header_mcp_btn"
+          )
+
+          if (docsCount > 0) {
+            AragonHeaderButton(
+              text = "DOCS",
+              badge = "$docsCount",
+              onClick = onOpenDocs,
+              variant = AragonButtonVariant.MUTED,
+              testTag = "header_docs_btn"
+            )
+          }
+
           if (telemetry != null) {
             val filterBadge = if (activeFeedFilter != null && activeFeedFilter != FeedFilter.ALL) {
               activeFeedFilter.label
@@ -1652,20 +1625,11 @@ fun AgentTopHeader(
             } else null
 
             AragonHeaderButton(
-              text = "STATS & FILTERS",
+              text = "STATS",
               onClick = onOpenTelemetry,
               variant = if (activeFeedFilter != null && activeFeedFilter != FeedFilter.ALL) AragonButtonVariant.PRIMARY else AragonButtonVariant.MUTED,
               badge = filterBadge,
               testTag = "header_telemetry_filters_btn"
-            )
-          }
-
-          if (!isHomeScreen) {
-            AragonHeaderButton(
-              text = "HOME",
-              onClick = onGoHome,
-              variant = AragonButtonVariant.MUTED,
-              testTag = "header_home_btn"
             )
           }
 

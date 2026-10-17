@@ -368,7 +368,7 @@ fun McpServersDialog(
 }
 
 /**
- * Clean 3-tier Server Cards with generous spacing and non-overlapping action buttons.
+ * Compact, High-Density Server Cards with filter chips and streamlined action buttons.
  */
 @Composable
 private fun ServersTabContent(
@@ -385,6 +385,16 @@ private fun ServersTabContent(
   val scope = rememberCoroutineScope()
   val pingResults = remember { mutableStateMapOf<String, String>() }
   val pingingMap = remember { mutableStateMapOf<String, Boolean>() }
+  var filterMode by remember { mutableIntStateOf(0) } // 0: ALL, 1: ENABLED, 2: INTERNAL/FREE, 3: EXTERNAL
+
+  val filteredServers = remember(servers, filterMode) {
+    when (filterMode) {
+      1 -> servers.filter { it.enabled }
+      2 -> servers.filter { it.transport == McpTransportType.INTERNAL }
+      3 -> servers.filter { it.transport != McpTransportType.INTERNAL }
+      else -> servers
+    }
+  }
 
   if (servers.isEmpty()) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -401,7 +411,7 @@ private fun ServersTabContent(
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-          text = "Extend Aragon with external stdio, SSE, HTTP, or native memory & SQLite tools.",
+          text = "Extend Aragon with Playwright browser automation, free search, Wikipedia, or SQLite.",
           style = MaterialTheme.typography.bodySmall,
           fontFamily = InterFontFamily,
           color = AmoledTextMuted,
@@ -429,348 +439,294 @@ private fun ServersTabContent(
     return
   }
 
-  LazyColumn(
-    modifier = Modifier.fillMaxSize(),
-    verticalArrangement = Arrangement.spacedBy(12.dp)
-  ) {
-    itemsIndexed(servers, key = { index, config -> "${config.id}_$index" }) { index, config ->
-      val client = getClientForServer(config.id)
-      val clientStatus = client?.status?.value ?: (if (config.enabled) McpServerStatus.DISCONNECTED else McpServerStatus.DISABLED)
-      val toolCount = client?.tools?.value?.size ?: 0
-      val resourceCount = client?.resources?.value?.size ?: 0
-      val promptCount = client?.prompts?.value?.size ?: 0
-      val lastErr = client?.lastError?.value
-      val pingText = pingResults[config.id]
-      val isPinging = pingingMap[config.id] == true
-
-      Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = Color(0xFF0F0F13),
-        border = BorderStroke(1.dp, AmoledBorderSubtle),
-        modifier = Modifier.fillMaxWidth()
-      ) {
-        Column(
+  Column(modifier = Modifier.fillMaxSize()) {
+    // Quick Filter Chips Row (Compact & Fast)
+    val filterScrollState = rememberScrollState()
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(bottom = 8.dp)
+        .horizontalScroll(filterScrollState),
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      val filterOptions = listOf(
+        "ALL (${servers.size})",
+        "ACTIVE (${servers.count { it.enabled }})",
+        "FREE BUILT-IN (${servers.count { it.transport == McpTransportType.INTERNAL }})",
+        "EXTERNAL (${servers.count { it.transport != McpTransportType.INTERNAL }})"
+      )
+      filterOptions.forEachIndexed { idx, label ->
+        val isSelected = filterMode == idx
+        Surface(
+          shape = RoundedCornerShape(4.dp),
+          color = if (isSelected) AmoledActionPrimary else Color(0xFF121216),
+          border = BorderStroke(1.dp, if (isSelected) AmoledActionPrimary else AmoledBorderSubtle),
           modifier = Modifier
-            .fillMaxWidth()
-            .padding(14.dp)
+            .clickable { filterMode = idx }
+            .testTag("mcp_filter_chip_$idx")
         ) {
-          // --- TIER 1: Header Row (Title, Badges, Switch) ---
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+          Text(
+            text = label,
+            fontFamily = JetBrainsMonoFontFamily,
+            fontSize = 8.5.sp,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+            color = if (isSelected) AmoledActionPrimaryOn else AmoledTextSecondary,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+          )
+        }
+      }
+    }
+
+    LazyColumn(
+      modifier = Modifier.fillMaxSize(),
+      verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+      itemsIndexed(filteredServers, key = { index, config -> "${config.id}_$index" }) { index, config ->
+        val client = getClientForServer(config.id)
+        val clientStatus = client?.status?.value ?: (if (config.enabled) McpServerStatus.DISCONNECTED else McpServerStatus.DISABLED)
+        val toolCount = client?.tools?.value?.size ?: 0
+        val resourceCount = client?.resources?.value?.size ?: 0
+        val lastErr = client?.lastError?.value
+        val pingText = pingResults[config.id]
+        val isPinging = pingingMap[config.id] == true
+
+        Surface(
+          shape = RoundedCornerShape(8.dp),
+          color = Color(0xFF0C0C10),
+          border = BorderStroke(1.dp, AmoledBorderSubtle),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          Column(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 10.dp, vertical = 7.dp)
           ) {
+            // --- TIER 1: Status Dot + Name + Transport + Tools Badge + Toggle Switch ---
             Row(
-              modifier = Modifier.weight(1f),
-              verticalAlignment = Alignment.CenterVertically
-            ) {
-              Text(
-                text = config.name,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                fontFamily = InterFontFamily,
-                color = AmoledTextPrimary,
-                fontSize = 13.5.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-              )
-
-              Spacer(modifier = Modifier.width(8.dp))
-
-              // Transport Badge
-              Surface(
-                shape = RoundedCornerShape(4.dp),
-                color = Color(0xFF16161D),
-                border = BorderStroke(1.dp, AmoledBorderSubtle)
-              ) {
-                Text(
-                  text = config.transport.name,
-                  style = MaterialTheme.typography.labelSmall,
-                  fontFamily = JetBrainsMonoFontFamily,
-                  fontSize = 8.5.sp,
-                  fontWeight = FontWeight.SemiBold,
-                  color = AmoledActionPrimary,
-                  modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                )
-              }
-
-              Spacer(modifier = Modifier.width(6.dp))
-
-              // Status Chip
-              val (statusColor, statusText) = when (clientStatus) {
-                McpServerStatus.CONNECTED -> AmoledStatusSuccess to "CONNECTED"
-                McpServerStatus.CONNECTING, McpServerStatus.INITIALIZING -> AmoledStatusWarning to "CONNECTING"
-                McpServerStatus.ERROR -> AmoledStatusError to "ERROR"
-                McpServerStatus.DISABLED -> AmoledTextMuted to "DISABLED"
-                McpServerStatus.DISCONNECTED -> AmoledTextMuted to "OFFLINE"
-              }
-
-              Surface(
-                shape = RoundedCornerShape(4.dp),
-                color = statusColor.copy(alpha = 0.12f),
-                border = BorderStroke(1.dp, statusColor.copy(alpha = 0.45f))
-              ) {
-                Text(
-                  text = statusText,
-                  style = MaterialTheme.typography.labelSmall,
-                  fontFamily = JetBrainsMonoFontFamily,
-                  fontSize = 8.5.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = statusColor,
-                  modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                )
-              }
-            }
-
-            // Right: Toggle Switch
-            Switch(
-              checked = config.enabled,
-              onCheckedChange = { onToggleServer(config.id, it) },
-              colors = SwitchDefaults.colors(
-                checkedThumbColor = AmoledActionPrimary,
-                checkedTrackColor = AmoledSurfaceElevated,
-                uncheckedThumbColor = AmoledIconGreyDark,
-                uncheckedTrackColor = Color(0xFF18181E)
-              ),
-              modifier = Modifier.testTag("mcp_toggle_switch_${config.id}")
-            )
-          }
-
-          // --- TIER 2: Description & Endpoint Monospace Strip ---
-          if (config.description.isNotBlank()) {
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-              text = config.description,
-              style = MaterialTheme.typography.bodySmall,
-              fontFamily = InterFontFamily,
-              color = AmoledTextSecondary,
-              fontSize = 11.sp,
-              maxLines = 2,
-              overflow = TextOverflow.Ellipsis
-            )
-          }
-
-          Spacer(modifier = Modifier.height(6.dp))
-
-          // Endpoint pill
-          Surface(
-            shape = RoundedCornerShape(6.dp),
-            color = Color(0xFF09090C),
-            border = BorderStroke(1.dp, AmoledBorderSubtle),
-            modifier = Modifier.fillMaxWidth()
-          ) {
-            Text(
-              text = if (config.transport == McpTransportType.STDIO) {
-                "cmd: ${config.command} ${config.args.joinToString(" ")}"
-              } else {
-                "url: ${config.url.ifBlank { "internal://${config.id}" }}"
-              },
-              fontFamily = JetBrainsMonoFontFamily,
-              color = AmoledIconGreyLight,
-              fontSize = 10.sp,
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
-              modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
-            )
-          }
-
-          Spacer(modifier = Modifier.height(6.dp))
-
-          // Capabilities & Namespace interactive stats
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-          ) {
-            // Tools chip
-            Surface(
-              shape = RoundedCornerShape(4.dp),
-              color = Color(0xFF141419),
-              border = BorderStroke(1.dp, AmoledBorderSubtle),
-              modifier = Modifier
-                .clickable { onSelectTab(1) }
-                .testTag("mcp_card_tools_${config.id}")
-            ) {
-              Text(
-                text = "$toolCount tools",
-                fontFamily = JetBrainsMonoFontFamily,
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Medium,
-                color = AmoledActionPrimary,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-              )
-            }
-
-            // Resources chip
-            Surface(
-              shape = RoundedCornerShape(4.dp),
-              color = Color(0xFF141419),
-              border = BorderStroke(1.dp, if (resourceCount > 0) AmoledStatusSuccess.copy(alpha = 0.4f) else AmoledBorderSubtle),
-              modifier = Modifier
-                .clickable { onSelectTab(2) }
-                .testTag("mcp_card_resources_${config.id}")
-            ) {
-              Text(
-                text = "$resourceCount resources",
-                fontFamily = JetBrainsMonoFontFamily,
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Medium,
-                color = if (resourceCount > 0) AmoledStatusSuccess else AmoledTextMuted,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-              )
-            }
-
-            // Prompts chip
-            Surface(
-              shape = RoundedCornerShape(4.dp),
-              color = Color(0xFF141419),
-              border = BorderStroke(1.dp, AmoledBorderSubtle),
-              modifier = Modifier
-                .clickable { onSelectTab(3) }
-                .testTag("mcp_card_prompts_${config.id}")
-            ) {
-              Text(
-                text = "$promptCount prompts",
-                fontFamily = JetBrainsMonoFontFamily,
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Medium,
-                color = AmoledIconGreyLight,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-              )
-            }
-
-            // Namespace label
-            Text(
-              text = "ns: '${config.effectiveNamespace}'",
-              fontFamily = JetBrainsMonoFontFamily,
-              fontSize = 8.5.sp,
-              color = AmoledTextMuted,
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis
-            )
-          }
-
-          // Error Callout (if any)
-          if (!lastErr.isNullOrBlank() && clientStatus == McpServerStatus.ERROR) {
-            Spacer(modifier = Modifier.height(6.dp))
-            Surface(
-              shape = RoundedCornerShape(6.dp),
-              color = AmoledStatusError.copy(alpha = 0.1f),
-              border = BorderStroke(1.dp, AmoledStatusError.copy(alpha = 0.35f)),
-              modifier = Modifier.fillMaxWidth()
-            ) {
-              Text(
-                text = "ERROR: $lastErr",
-                fontFamily = JetBrainsMonoFontFamily,
-                color = AmoledStatusError,
-                fontSize = 9.sp,
-                modifier = Modifier.padding(8.dp)
-              )
-            }
-          }
-
-          Spacer(modifier = Modifier.height(10.dp))
-
-          // --- TIER 3: Non-Overlapping Actions Footer Bar ---
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-          ) {
-            // Left Action Cluster: Ping & Reconnect
-            Row(
+              modifier = Modifier.fillMaxWidth(),
               verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(6.dp)
+              horizontalArrangement = Arrangement.SpaceBetween
             ) {
-              if (config.enabled) {
-                // Ping Button
-                OutlinedButton(
-                  onClick = {
-                    scope.launch {
-                      pingingMap[config.id] = true
-                      val res = onPingServer(config.id)
-                      pingingMap[config.id] = false
-                      if (res.isSuccess) {
-                        pingResults[config.id] = "⚡ ${res.getOrThrow()}ms"
-                      } else {
-                        pingResults[config.id] = "FAIL"
-                      }
-                    }
-                  },
-                  enabled = !isPinging,
-                  shape = RoundedCornerShape(6.dp),
-                  border = BorderStroke(1.dp, AmoledBorderSubtle),
-                  colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledTextPrimary),
-                  contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                  modifier = Modifier
-                    .height(28.dp)
-                    .testTag("mcp_ping_btn_${config.id}")
-                ) {
-                  if (isPinging) {
-                    CircularProgressIndicator(
-                      modifier = Modifier.size(12.dp),
-                      strokeWidth = 1.5.dp,
-                      color = AmoledActionPrimary
-                    )
-                  } else {
-                    Text(
-                      text = "PING",
-                      fontFamily = JetBrainsMonoFontFamily,
-                      fontWeight = FontWeight.Bold,
-                      fontSize = 8.5.sp
-                    )
-                  }
+              Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                val statusColor = when (clientStatus) {
+                  McpServerStatus.CONNECTED -> AmoledStatusSuccess
+                  McpServerStatus.CONNECTING, McpServerStatus.INITIALIZING -> AmoledStatusWarning
+                  McpServerStatus.ERROR -> AmoledStatusError
+                  McpServerStatus.DISABLED -> AmoledIconGreyDark
+                  McpServerStatus.DISCONNECTED -> AmoledTextMuted
                 }
 
-                // Latency Badge (if pinged)
+                Box(
+                  modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(statusColor)
+                )
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                Text(
+                  text = config.name,
+                  style = MaterialTheme.typography.titleSmall,
+                  fontWeight = FontWeight.Bold,
+                  fontFamily = InterFontFamily,
+                  color = AmoledTextPrimary,
+                  fontSize = 12.sp,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis
+                )
+
+                Spacer(modifier = Modifier.width(5.dp))
+
+                // Transport Badge
+                Surface(
+                  shape = RoundedCornerShape(3.dp),
+                  color = Color(0xFF14141A),
+                  border = BorderStroke(1.dp, AmoledBorderSubtle)
+                ) {
+                  Text(
+                    text = config.transport.name,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontSize = 7.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AmoledActionPrimary,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                  )
+                }
+
+                Spacer(modifier = Modifier.width(4.dp))
+
+                // Tool count chip
+                Surface(
+                  shape = RoundedCornerShape(3.dp),
+                  color = Color(0xFF141419),
+                  border = BorderStroke(1.dp, AmoledBorderSubtle),
+                  modifier = Modifier
+                    .clickable { onSelectTab(1) }
+                    .testTag("mcp_card_tools_${config.id}")
+                ) {
+                  Text(
+                    text = "$toolCount tools",
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (toolCount > 0) AmoledActionPrimary else AmoledTextMuted,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                  )
+                }
+              }
+
+              // Right: Latency indicator (if any) + Compact Switch
+              Row(verticalAlignment = Alignment.CenterVertically) {
                 if (!pingText.isNullOrBlank()) {
                   val isPingFail = pingText == "FAIL"
                   Surface(
-                    shape = RoundedCornerShape(4.dp),
+                    shape = RoundedCornerShape(3.dp),
                     color = if (isPingFail) Color(0xFF200F0F) else Color(0xFF0F1E14),
-                    border = BorderStroke(
-                      1.dp,
-                      if (isPingFail) AmoledStatusError.copy(alpha = 0.5f) else AmoledStatusSuccess.copy(alpha = 0.5f)
-                    )
+                    border = BorderStroke(1.dp, if (isPingFail) AmoledStatusError.copy(alpha = 0.5f) else AmoledStatusSuccess.copy(alpha = 0.5f)),
+                    modifier = Modifier.padding(end = 6.dp)
                   ) {
                     Text(
                       text = pingText,
                       fontFamily = JetBrainsMonoFontFamily,
-                      fontSize = 8.5.sp,
+                      fontSize = 7.5.sp,
                       fontWeight = FontWeight.Bold,
                       color = if (isPingFail) AmoledStatusError else AmoledStatusSuccess,
-                      modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                      modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                     )
                   }
                 }
 
-                // Reconnect Action Button (No icon)
-                AragonHeaderButton(
-                  text = "RECONNECT",
-                  onClick = { onReconnectServer(config.id) },
-                  variant = AragonButtonVariant.MUTED,
-                  testTag = "mcp_reconnect_btn_${config.id}"
+                Switch(
+                  checked = config.enabled,
+                  onCheckedChange = { onToggleServer(config.id, it) },
+                  colors = SwitchDefaults.colors(
+                    checkedThumbColor = AmoledActionPrimary,
+                    checkedTrackColor = AmoledSurfaceElevated,
+                    uncheckedThumbColor = AmoledIconGreyDark,
+                    uncheckedTrackColor = Color(0xFF18181E)
+                  ),
+                  modifier = Modifier
+                    .height(24.dp)
+                    .testTag("mcp_toggle_switch_${config.id}")
                 )
               }
             }
 
-            // Right Action Cluster: EDIT and DELETE (Pure typography, zero icons)
+            Spacer(modifier = Modifier.height(3.dp))
+
+            // --- TIER 2: Monospace URI (Left) + Compact Micro Action Buttons (Right) ---
             Row(
+              modifier = Modifier.fillMaxWidth(),
               verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(6.dp)
+              horizontalArrangement = Arrangement.SpaceBetween
             ) {
-              AragonHeaderButton(
-                text = "EDIT",
-                onClick = { onEditServer(config) },
-                variant = AragonButtonVariant.MUTED,
-                testTag = "mcp_edit_btn_${config.id}"
+              Text(
+                text = if (config.transport == McpTransportType.STDIO) {
+                  "cmd: ${config.command} ${config.args.joinToString(" ")}"
+                } else {
+                  config.url.ifBlank { "internal://${config.id}" }
+                },
+                fontFamily = JetBrainsMonoFontFamily,
+                color = AmoledTextMuted,
+                fontSize = 9.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                  .weight(1f)
+                  .padding(end = 6.dp)
               )
 
-              AragonHeaderButton(
-                text = "DELETE",
-                onClick = { onRemoveServer(config.id) },
-                variant = AragonButtonVariant.DANGER,
-                testTag = "mcp_delete_btn_${config.id}"
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
+              ) {
+                if (config.enabled) {
+                  // Ping button
+                  OutlinedButton(
+                    onClick = {
+                      scope.launch {
+                        pingingMap[config.id] = true
+                        val res = onPingServer(config.id)
+                        pingingMap[config.id] = false
+                        pingResults[config.id] = if (res.isSuccess) "${res.getOrThrow()}ms" else "FAIL"
+                      }
+                    },
+                    enabled = !isPinging,
+                    shape = RoundedCornerShape(4.dp),
+                    border = BorderStroke(1.dp, AmoledBorderSubtle),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledTextPrimary),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 1.dp),
+                    modifier = Modifier
+                      .height(22.dp)
+                      .testTag("mcp_ping_btn_${config.id}")
+                  ) {
+                    if (isPinging) {
+                      CircularProgressIndicator(modifier = Modifier.size(9.dp), strokeWidth = 1.dp, color = AmoledActionPrimary)
+                    } else {
+                      Text("PING", fontFamily = JetBrainsMonoFontFamily, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)
+                    }
+                  }
+
+                  // Sync / Reconnect button
+                  OutlinedButton(
+                    onClick = { onReconnectServer(config.id) },
+                    shape = RoundedCornerShape(4.dp),
+                    border = BorderStroke(1.dp, AmoledBorderSubtle),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledTextSecondary),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 1.dp),
+                    modifier = Modifier
+                      .height(22.dp)
+                      .testTag("mcp_reconnect_btn_${config.id}")
+                  ) {
+                    Text("SYNC", fontFamily = JetBrainsMonoFontFamily, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)
+                  }
+                }
+
+                // Edit button
+                OutlinedButton(
+                  onClick = { onEditServer(config) },
+                  shape = RoundedCornerShape(4.dp),
+                  border = BorderStroke(1.dp, AmoledBorderSubtle),
+                  colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledTextPrimary),
+                  contentPadding = PaddingValues(horizontal = 6.dp, vertical = 1.dp),
+                  modifier = Modifier
+                    .height(22.dp)
+                    .testTag("mcp_edit_btn_${config.id}")
+                ) {
+                  Text("EDIT", fontFamily = JetBrainsMonoFontFamily, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)
+                }
+
+                // Delete button
+                OutlinedButton(
+                  onClick = { onRemoveServer(config.id) },
+                  shape = RoundedCornerShape(4.dp),
+                  border = BorderStroke(1.dp, AmoledStatusError.copy(alpha = 0.4f)),
+                  colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledStatusError),
+                  contentPadding = PaddingValues(horizontal = 6.dp, vertical = 1.dp),
+                  modifier = Modifier
+                    .height(22.dp)
+                    .testTag("mcp_delete_btn_${config.id}")
+                ) {
+                  Text("DEL", fontFamily = JetBrainsMonoFontFamily, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)
+                }
+              }
+            }
+
+            if (!lastErr.isNullOrBlank() && clientStatus == McpServerStatus.ERROR) {
+              Spacer(modifier = Modifier.height(3.dp))
+              Text(
+                text = "ERR: $lastErr",
+                fontFamily = JetBrainsMonoFontFamily,
+                color = AmoledStatusError,
+                fontSize = 8.5.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
               )
             }
           }
@@ -1521,6 +1477,12 @@ private fun McpServerEditDialog(
     val initUrl = initialConfig?.url.orEmpty().lowercase()
     val initId = initialConfig?.id.orEmpty().lowercase()
     val st = when {
+      initUrl.contains("playwright") || initId.contains("playwright") || initUrl.contains("browser") -> "playwright"
+      initUrl.contains("duckduckgo") || initId.contains("duckduckgo") || initUrl.contains("search") -> "duckduckgo"
+      initUrl.contains("wikipedia") || initId.contains("wikipedia") || initUrl.contains("wiki") -> "wikipedia"
+      initUrl.contains("arxiv") || initId.contains("arxiv") -> "arxiv"
+      initUrl.contains("math") || initId.contains("math") || initUrl.contains("calculator") -> "math"
+      initUrl.contains("time") || initId.contains("time") || initUrl.contains("clock") -> "time"
       initUrl.contains("sqlite") || initId.contains("sqlite") -> "sqlite"
       initUrl.contains("fetch") || initId.contains("fetch") -> "fetch"
       initUrl.contains("memory") || initId.contains("memory") -> "memory"
@@ -1540,41 +1502,48 @@ private fun McpServerEditDialog(
     properties = DialogProperties(usePlatformDefaultWidth = false)
   ) {
     Surface(
-      shape = RoundedCornerShape(16.dp),
+      shape = RoundedCornerShape(14.dp),
       color = AmoledBackground,
       border = BorderStroke(1.dp, AmoledBorder),
       modifier = Modifier
-        .fillMaxWidth(0.92f)
-        .fillMaxHeight(0.88f)
+        .fillMaxWidth(0.95f)
+        .fillMaxHeight(0.86f)
     ) {
       Column(
         modifier = Modifier
           .fillMaxSize()
-          .padding(16.dp)
+          .padding(14.dp)
       ) {
         Text(
           text = if (initialConfig == null) "ADD MCP SERVER" else "EDIT MCP SERVER",
           style = MaterialTheme.typography.titleMedium,
           fontFamily = JetBrainsMonoFontFamily,
           fontWeight = FontWeight.Bold,
-          color = AmoledTextPrimary
+          color = AmoledTextPrimary,
+          fontSize = 13.sp
         )
 
         // Template Quick Fill Row (New Server Only)
         if (initialConfig == null) {
-          Spacer(modifier = Modifier.height(8.dp))
+          Spacer(modifier = Modifier.height(6.dp))
           val templatesScrollState = rememberScrollState()
           Row(
             modifier = Modifier
               .fillMaxWidth()
               .horizontalScroll(templatesScrollState),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
           ) {
             val quickTemplates = listOf(
+              Triple("playwright", "Playwright Browser", "internal://playwright"),
+              Triple("duckduckgo", "DuckDuckGo Search", "internal://duckduckgo"),
+              Triple("wikipedia", "Wikipedia Knowledge", "internal://wikipedia"),
+              Triple("arxiv", "ArXiv Papers", "internal://arxiv"),
+              Triple("math", "Math & Calculator", "internal://math"),
+              Triple("time", "World Clock & Time", "internal://time"),
               Triple("sqlite", "Workspace SQLite", "internal://sqlite"),
               Triple("fetch", "Web Fetch MCP", "internal://fetch"),
               Triple("filesystem", "Workspace Filesystem", "internal://filesystem"),
-              Triple("memory", "Knowledge Graph Memory", "internal://memory"),
+              Triple("memory", "Knowledge Memory", "internal://memory"),
               Triple("github", "GitHub MCP API", "https://api.github.com/mcp")
             )
             quickTemplates.forEach { (tId, tName, tUrl) ->
@@ -1599,7 +1568,8 @@ private fun McpServerEditDialog(
                   fontFamily = JetBrainsMonoFontFamily,
                   fontSize = 8.sp,
                   color = AmoledActionPrimary,
-                  modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                  fontWeight = FontWeight.SemiBold,
+                  modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                 )
               }
             }
@@ -1694,11 +1664,25 @@ private fun McpServerEditDialog(
                   color = AmoledTextSecondary
                 )
                 Spacer(modifier = Modifier.height(4.dp))
+                val internalTypes = listOf(
+                  "playwright",
+                  "duckduckgo",
+                  "wikipedia",
+                  "arxiv",
+                  "math",
+                  "time",
+                  "sqlite",
+                  "fetch",
+                  "filesystem",
+                  "memory"
+                )
+                val internalScrollState = rememberScrollState()
                 Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.spacedBy(6.dp)
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(internalScrollState),
+                  horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                  val internalTypes = listOf("sqlite", "fetch", "filesystem", "memory")
                   internalTypes.forEach { st ->
                     val selected = internalServiceType == st
                     OutlinedButton(
@@ -1710,16 +1694,16 @@ private fun McpServerEditDialog(
                           name = "${st.replaceFirstChar(Char::uppercase)} MCP"
                         }
                       },
-                      modifier = Modifier.weight(1f),
-                      shape = RoundedCornerShape(6.dp),
+                      shape = RoundedCornerShape(4.dp),
                       colors = ButtonDefaults.outlinedButtonColors(
                         containerColor = if (selected) AmoledActionPrimary else AmoledSurface,
                         contentColor = if (selected) AmoledActionPrimaryOn else AmoledTextPrimary
                       ),
-                      contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
-                      border = BorderStroke(1.dp, if (selected) AmoledActionPrimary else AmoledBorder)
+                      contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp),
+                      border = BorderStroke(1.dp, if (selected) AmoledActionPrimary else AmoledBorder),
+                      modifier = Modifier.height(26.dp)
                     ) {
-                      Text(st.uppercase(), fontSize = 8.sp, fontFamily = JetBrainsMonoFontFamily)
+                      Text(st.uppercase(), fontSize = 8.sp, fontFamily = JetBrainsMonoFontFamily, fontWeight = FontWeight.Bold)
                     }
                   }
                 }
