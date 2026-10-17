@@ -877,6 +877,38 @@ class McpManager(
       enabled = true
     ),
     McpServerConfig(
+      id = "office",
+      name = "Office & Word/Excel Documents MCP",
+      description = "Zero-key authentic Microsoft Word (.docx) and Excel (.xlsx) document generation, styled tables, formulas, and office metadata",
+      transport = McpTransportType.INTERNAL,
+      url = "internal://office",
+      enabled = true
+    ),
+    McpServerConfig(
+      id = "data_tools",
+      name = "Data & Format Converter MCP",
+      description = "Free CSV-to-JSON, JSON-to-CSV, Base64 encoder/decoder, and JSON formatting without auth",
+      transport = McpTransportType.INTERNAL,
+      url = "internal://data_tools",
+      enabled = true
+    ),
+    McpServerConfig(
+      id = "markdown",
+      name = "Markdown & Content Engine MCP",
+      description = "Markdown-to-HTML compilation, ASCII markdown table generator, and reading statistics",
+      transport = McpTransportType.INTERNAL,
+      url = "internal://markdown",
+      enabled = true
+    ),
+    McpServerConfig(
+      id = "system",
+      name = "System & Diagnostics MCP",
+      description = "On-device JVM memory statistics, available CPU cores, Android SDK telemetry, and workspace storage inspection",
+      transport = McpTransportType.INTERNAL,
+      url = "internal://system",
+      enabled = true
+    ),
+    McpServerConfig(
       id = "github",
       name = "GitHub MCP",
       description = "GitHub repository, issues, pull requests, and code search MCP server",

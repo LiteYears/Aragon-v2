@@ -2,6 +2,10 @@ package com.example.agent.mcp
 
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
+import android.os.Build
+import android.util.Base64
+import com.example.agent.core.DocxBuilder
+import com.example.agent.core.XlsxBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
@@ -231,6 +235,30 @@ class InternalMcpTransport(
     val id = config.id.lowercase()
     val url = config.url.lowercase()
     return id.contains("memory") || id.contains("kg") || id.contains("knowledge") || url.contains("memory")
+  }
+
+  private fun isOfficeServer(): Boolean {
+    val id = config.id.lowercase()
+    val url = config.url.lowercase()
+    return id.contains("office") || id.contains("document") || id.contains("docx") || id.contains("xlsx") || id.contains("word") || id.contains("excel") || id.contains("sheet") || url.contains("office") || url.contains("document")
+  }
+
+  private fun isDataToolsServer(): Boolean {
+    val id = config.id.lowercase()
+    val url = config.url.lowercase()
+    return id.contains("data") || id.contains("transform") || id.contains("converter") || id.contains("csv") || id.contains("json") || url.contains("data")
+  }
+
+  private fun isMarkdownServer(): Boolean {
+    val id = config.id.lowercase()
+    val url = config.url.lowercase()
+    return id.contains("markdown") || id.contains("md") || id.contains("content") || url.contains("markdown")
+  }
+
+  private fun isSystemServer(): Boolean {
+    val id = config.id.lowercase()
+    val url = config.url.lowercase()
+    return id.contains("system") || id.contains("device") || id.contains("diagnostics") || url.contains("system")
   }
 
   private fun getToolsList(): JSONArray {
@@ -702,6 +730,238 @@ class InternalMcpTransport(
           put("required", JSONArray().apply { put("key") })
         })
       })
+    } else if (isOfficeServer()) {
+      // 1. create_word_document
+      arr.put(JSONObject().apply {
+        put("name", "create_word_document")
+        put("description", "Generate a verified native Microsoft Word (.docx) document with OpenXML typography, tables, and sections.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("path", JSONObject().apply {
+              put("type", "string")
+              put("description", "Output path ending in .docx (e.g. 'reports/summary.docx')")
+            })
+            put("title", JSONObject().apply {
+              put("type", "string")
+              put("description", "Document title")
+            })
+            put("markdown", JSONObject().apply {
+              put("type", "string")
+              put("description", "Markdown content to convert to Word document")
+            })
+            put("author", JSONObject().apply {
+              put("type", "string")
+              put("description", "Author name (default: 'Aragon Agent')")
+            })
+          })
+          put("required", JSONArray().apply { put("path") })
+        })
+      })
+
+      // 2. create_excel_spreadsheet
+      arr.put(JSONObject().apply {
+        put("name", "create_excel_spreadsheet")
+        put("description", "Generate a verified native Microsoft Excel (.xlsx) workbook with multi-sheets, formulas, and auto-filters.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("path", JSONObject().apply {
+              put("type", "string")
+              put("description", "Output path ending in .xlsx (e.g. 'data/records.xlsx')")
+            })
+            put("sheet_name", JSONObject().apply {
+              put("type", "string")
+              put("description", "Sheet title (default: 'Sheet1')")
+            })
+            put("headers", JSONObject().apply {
+              put("type", "array")
+              put("description", "Array of column header strings, e.g. [\"Item\", \"Price\"]")
+            })
+            put("rows", JSONObject().apply {
+              put("type", "array")
+              put("description", "Array of row value arrays, e.g. [[\"Server\", 120.0]]")
+            })
+            put("csv", JSONObject().apply {
+              put("type", "string")
+              put("description", "Optional CSV string to convert to spreadsheet table")
+            })
+          })
+          put("required", JSONArray().apply { put("path") })
+        })
+      })
+
+      // 3. inspect_office_document
+      arr.put(JSONObject().apply {
+        put("name", "inspect_office_document")
+        put("description", "Inspect metadata, size, and validity of an existing Word (.docx) or Excel (.xlsx) file in the workspace.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("path", JSONObject().apply {
+              put("type", "string")
+              put("description", "Path to file inside workspace")
+            })
+          })
+          put("required", JSONArray().apply { put("path") })
+        })
+      })
+    } else if (isDataToolsServer()) {
+      // 1. csv_to_json
+      arr.put(JSONObject().apply {
+        put("name", "csv_to_json")
+        put("description", "Convert raw CSV text to a JSON array of objects.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("csv", JSONObject().apply {
+              put("type", "string")
+              put("description", "Raw CSV text with headers")
+            })
+          })
+          put("required", JSONArray().apply { put("csv") })
+        })
+      })
+
+      // 2. json_to_csv
+      arr.put(JSONObject().apply {
+        put("name", "json_to_csv")
+        put("description", "Convert a JSON array of objects into standard CSV text.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("json", JSONObject().apply {
+              put("type", "string")
+              put("description", "JSON array string of row objects")
+            })
+          })
+          put("required", JSONArray().apply { put("json") })
+        })
+      })
+
+      // 3. base64_encode
+      arr.put(JSONObject().apply {
+        put("name", "base64_encode")
+        put("description", "Encode plain text to Base64 format.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("text", JSONObject().apply {
+              put("type", "string")
+              put("description", "Text to encode")
+            })
+          })
+          put("required", JSONArray().apply { put("text") })
+        })
+      })
+
+      // 4. base64_decode
+      arr.put(JSONObject().apply {
+        put("name", "base64_decode")
+        put("description", "Decode a Base64 string into plain UTF-8 text.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("base64", JSONObject().apply {
+              put("type", "string")
+              put("description", "Base64 string to decode")
+            })
+          })
+          put("required", JSONArray().apply { put("base64") })
+        })
+      })
+
+      // 5. format_json
+      arr.put(JSONObject().apply {
+        put("name", "format_json")
+        put("description", "Validate and prettify or compact a JSON string.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("json", JSONObject().apply {
+              put("type", "string")
+              put("description", "JSON string to format")
+            })
+            put("indent", JSONObject().apply {
+              put("type", "integer")
+              put("description", "Indentation spaces (default: 2)")
+            })
+          })
+          put("required", JSONArray().apply { put("json") })
+        })
+      })
+    } else if (isMarkdownServer()) {
+      // 1. markdown_to_html
+      arr.put(JSONObject().apply {
+        put("name", "markdown_to_html")
+        put("description", "Convert Markdown text to clean semantic HTML.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("markdown", JSONObject().apply {
+              put("type", "string")
+              put("description", "Markdown string to convert")
+            })
+          })
+          put("required", JSONArray().apply { put("markdown") })
+        })
+      })
+
+      // 2. generate_markdown_table
+      arr.put(JSONObject().apply {
+        put("name", "generate_markdown_table")
+        put("description", "Generate a formatted ASCII/Markdown table from column headers and rows.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("headers", JSONObject().apply {
+              put("type", "array")
+              put("description", "Array of column header names")
+            })
+            put("rows", JSONObject().apply {
+              put("type", "array")
+              put("description", "Array of row arrays with cell values")
+            })
+          })
+          put("required", JSONArray().apply { put("headers"); put("rows") })
+        })
+      })
+
+      // 3. text_statistics
+      arr.put(JSONObject().apply {
+        put("name", "text_statistics")
+        put("description", "Compute reading stats, word count, character count, and reading time for text.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("text", JSONObject().apply {
+              put("type", "string")
+              put("description", "Text to analyze")
+            })
+          })
+          put("required", JSONArray().apply { put("text") })
+        })
+      })
+    } else if (isSystemServer()) {
+      // 1. get_system_info
+      arr.put(JSONObject().apply {
+        put("name", "get_system_info")
+        put("description", "Get device platform specs, Android SDK version, JVM memory metrics, and CPU cores.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject())
+        })
+      })
+
+      // 2. get_workspace_summary
+      arr.put(JSONObject().apply {
+        put("name", "get_workspace_summary")
+        put("description", "Get workspace disk summary, file count, directory breakdown, and total size.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject())
+        })
+      })
     } else {
       // Filesystem / General MCP tools
       arr.put(JSONObject().apply {
@@ -773,6 +1033,14 @@ class InternalMcpTransport(
         executeMathTool(name, args)
       } else if (isTimeServer()) {
         executeTimeTool(name, args)
+      } else if (isOfficeServer()) {
+        executeOfficeTool(name, args)
+      } else if (isDataToolsServer()) {
+        executeDataTools(name, args)
+      } else if (isMarkdownServer()) {
+        executeMarkdownTool(name, args)
+      } else if (isSystemServer()) {
+        executeSystemTool(name, args)
       } else if (isSqliteServer()) {
         executeSqliteTool(name, args)
       } else if (isFetchServer()) {
@@ -2012,6 +2280,232 @@ class InternalMcpTransport(
     return JSONObject().apply {
       put("contents", resArr)
     }
+  }
+
+  private fun executeOfficeTool(name: String, args: JSONObject): JSONObject {
+    when (name) {
+      "create_word_document" -> {
+        val path = args.optString("path", "document.docx").trim()
+        val title = args.optString("title", "Document").trim()
+        val markdown = args.optString("markdown", "# $title\n\nGenerated by Aragon Office MCP.").trim()
+        val cleanPath = if (path.endsWith(".docx", ignoreCase = true)) path else "$path.docx"
+        val targetFile = File(workspaceDir, cleanPath)
+        targetFile.parentFile?.mkdirs()
+        val builder = DocxBuilder.fromMarkdownOrText(markdown)
+        builder.save(targetFile)
+        return buildToolSuccessResult("Word document successfully created: '$cleanPath' (${targetFile.length()} bytes)")
+      }
+      "create_excel_spreadsheet" -> {
+        val path = args.optString("path", "spreadsheet.xlsx").trim()
+        val sheetName = args.optString("sheet_name", "Sheet1").trim()
+        val headersJson = args.optJSONArray("headers")
+        val rowsJson = args.optJSONArray("rows")
+        val csvContent = args.optString("csv", "").trim()
+        val cleanPath = if (path.endsWith(".xlsx", ignoreCase = true)) path else "$path.xlsx"
+        val targetFile = File(workspaceDir, cleanPath)
+        targetFile.parentFile?.mkdirs()
+        val builder = XlsxBuilder(sheetName)
+        builder.freezeTopRow()
+        if (csvContent.isNotBlank()) {
+          builder.addCsv(csvContent)
+        } else {
+          if (headersJson != null) {
+            val hList = (0 until headersJson.length()).map { headersJson.optString(it) }
+            builder.addHeader(hList)
+          }
+          if (rowsJson != null) {
+            for (i in 0 until rowsJson.length()) {
+              val rowArr = rowsJson.optJSONArray(i)
+              if (rowArr != null) {
+                val rList = (0 until rowArr.length()).map { rowArr.optString(it) }
+                builder.addRow(rList)
+              }
+            }
+          }
+        }
+        builder.save(targetFile)
+        return buildToolSuccessResult("Excel workbook successfully created: '$cleanPath' (${targetFile.length()} bytes)")
+      }
+      "inspect_office_document" -> {
+        val path = args.optString("path").trim()
+        val targetFile = File(workspaceDir, path)
+        if (!targetFile.exists()) throw IllegalArgumentException("Document not found at '$path'")
+        val info = JSONObject().apply {
+          put("file", path)
+          put("exists", true)
+          put("size_bytes", targetFile.length())
+          put("last_modified", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(targetFile.lastModified())))
+          put("is_docx", path.endsWith(".docx", ignoreCase = true))
+          put("is_xlsx", path.endsWith(".xlsx", ignoreCase = true))
+        }
+        return buildToolSuccessResult(info.toString(2))
+      }
+      else -> throw IllegalArgumentException("Unknown office tool '$name'")
+    }
+  }
+
+  private fun executeDataTools(name: String, args: JSONObject): JSONObject {
+    when (name) {
+      "csv_to_json" -> {
+        val csv = args.optString("csv").trim()
+        val lines = csv.lines().filter { it.isNotBlank() }
+        if (lines.isEmpty()) return buildToolSuccessResult("[]")
+        val delimiter = if (lines.first().contains("\t")) "\t" else ","
+        val headers = lines.first().split(delimiter).map { it.trim().removeSurrounding("\"") }
+        val result = JSONArray()
+        for (i in 1 until lines.size) {
+          val parts = lines[i].split(delimiter).map { it.trim().removeSurrounding("\"") }
+          val rowObj = JSONObject()
+          for (hIdx in headers.indices) {
+            val h = headers[hIdx]
+            val v = parts.getOrNull(hIdx) ?: ""
+            rowObj.put(h, v)
+          }
+          result.put(rowObj)
+        }
+        return buildToolSuccessResult(result.toString(2))
+      }
+      "json_to_csv" -> {
+        val jsonStr = args.optString("json").trim()
+        val arr = JSONArray(jsonStr)
+        if (arr.length() == 0) return buildToolSuccessResult("")
+        val headers = mutableListOf<String>()
+        val first = arr.optJSONObject(0)
+        first?.keys()?.forEach { headers.add(it) }
+        val sb = StringBuilder()
+        sb.appendLine(headers.joinToString(","))
+        for (i in 0 until arr.length()) {
+          val obj = arr.optJSONObject(i) ?: continue
+          val row = headers.map { h ->
+            val v = obj.optString(h, "")
+            if (v.contains(",") || v.contains("\"") || v.contains("\n")) "\"${v.replace("\"", "\"\"")}\"" else v
+          }
+          sb.appendLine(row.joinToString(","))
+        }
+        return buildToolSuccessResult(sb.toString().trimEnd())
+      }
+      "base64_encode" -> {
+        val text = args.optString("text")
+        val encoded = Base64.encodeToString(text.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+        return buildToolSuccessResult(encoded)
+      }
+      "base64_decode" -> {
+        val base64 = args.optString("base64").trim()
+        val decoded = String(Base64.decode(base64, Base64.DEFAULT), Charsets.UTF_8)
+        return buildToolSuccessResult(decoded)
+      }
+      "format_json" -> {
+        val jsonStr = args.optString("json").trim()
+        val indent = args.optInt("indent", 2)
+        val formatted = if (jsonStr.startsWith("[")) {
+          JSONArray(jsonStr).toString(indent)
+        } else {
+          JSONObject(jsonStr).toString(indent)
+        }
+        return buildToolSuccessResult(formatted)
+      }
+      else -> throw IllegalArgumentException("Unknown data tool '$name'")
+    }
+  }
+
+  private fun executeMarkdownTool(name: String, args: JSONObject): JSONObject {
+    when (name) {
+      "markdown_to_html" -> {
+        val md = args.optString("markdown")
+        val html = cleanMarkdownToHtml(md)
+        return buildToolSuccessResult(html)
+      }
+      "generate_markdown_table" -> {
+        val headersArr = args.optJSONArray("headers") ?: JSONArray()
+        val rowsArr = args.optJSONArray("rows") ?: JSONArray()
+        val headers = (0 until headersArr.length()).map { headersArr.optString(it) }
+        val sb = StringBuilder()
+        sb.append("| ").append(headers.joinToString(" | ")).append(" |\n")
+        sb.append("| ").append(headers.joinToString(" | ") { "---" }).append(" |\n")
+        for (i in 0 until rowsArr.length()) {
+          val row = rowsArr.optJSONArray(i)
+          if (row != null) {
+            val cells = (0 until headers.size).map { cIdx -> row.optString(cIdx, "") }
+            sb.append("| ").append(cells.joinToString(" | ")).append(" |\n")
+          }
+        }
+        return buildToolSuccessResult(sb.toString().trimEnd())
+      }
+      "text_statistics" -> {
+        val text = args.optString("text")
+        val words = text.split("\\s+".toRegex()).filter { it.isNotBlank() }
+        val sentences = text.split("[.!?]+".toRegex()).filter { it.isNotBlank() }
+        val charCount = text.length
+        val readingTimeMin = ceil(words.size / 200.0).toInt().coerceAtLeast(1)
+        val stats = JSONObject().apply {
+          put("word_count", words.size)
+          put("character_count", charCount)
+          put("sentence_count", sentences.size)
+          put("estimated_reading_time_minutes", readingTimeMin)
+        }
+        return buildToolSuccessResult(stats.toString(2))
+      }
+      else -> throw IllegalArgumentException("Unknown markdown tool '$name'")
+    }
+  }
+
+  private fun executeSystemTool(name: String, args: JSONObject): JSONObject {
+    when (name) {
+      "get_system_info" -> {
+        val runtime = Runtime.getRuntime()
+        val info = JSONObject().apply {
+          put("os_version", "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+          put("device_model", "${Build.MANUFACTURER} ${Build.MODEL}")
+          put("cpu_cores", runtime.availableProcessors())
+          put("jvm_free_memory_mb", runtime.freeMemory() / (1024 * 1024))
+          put("jvm_total_memory_mb", runtime.totalMemory() / (1024 * 1024))
+          put("jvm_max_memory_mb", runtime.maxMemory() / (1024 * 1024))
+          put("active_threads", Thread.activeCount())
+        }
+        return buildToolSuccessResult(info.toString(2))
+      }
+      "get_workspace_summary" -> {
+        var fileCount = 0
+        var dirCount = 0
+        var totalBytes = 0L
+        workspaceDir.walkTopDown().forEach { f ->
+          if (f.isFile) {
+            fileCount++
+            totalBytes += f.length()
+          } else if (f.isDirectory && f != workspaceDir) {
+            dirCount++
+          }
+        }
+        val summary = JSONObject().apply {
+          put("workspace_path", workspaceDir.absolutePath)
+          put("total_files", fileCount)
+          put("total_directories", dirCount)
+          put("total_size_bytes", totalBytes)
+          put("total_size_kb", totalBytes / 1024)
+          put("total_size_mb", String.format(Locale.US, "%.2f", totalBytes / (1024.0 * 1024.0)))
+        }
+        return buildToolSuccessResult(summary.toString(2))
+      }
+      else -> throw IllegalArgumentException("Unknown system tool '$name'")
+    }
+  }
+
+  private fun cleanMarkdownToHtml(markdown: String): String {
+    val sb = StringBuilder()
+    sb.append("<div class=\"markdown-body\">\n")
+    for (line in markdown.lines()) {
+      val trimmed = line.trim()
+      when {
+        trimmed.startsWith("### ") -> sb.append("<h3>").append(trimmed.removePrefix("### ")).append("</h3>\n")
+        trimmed.startsWith("## ") -> sb.append("<h2>").append(trimmed.removePrefix("## ")).append("</h2>\n")
+        trimmed.startsWith("# ") -> sb.append("<h1>").append(trimmed.removePrefix("# ")).append("</h1>\n")
+        trimmed.startsWith("- ") || trimmed.startsWith("* ") -> sb.append("<li>").append(trimmed.substring(2)).append("</li>\n")
+        trimmed.isBlank() -> sb.append("<br/>\n")
+        else -> sb.append("<p>").append(trimmed).append("</p>\n")
+      }
+    }
+    sb.append("</div>")
+    return sb.toString()
   }
 
   private fun getOrOpenDatabase(): SQLiteDatabase {
