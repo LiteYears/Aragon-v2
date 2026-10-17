@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -1118,7 +1119,10 @@ private fun ToolsTabContent(
  * Resources Tab with neat cards.
  */
 @Composable
-private fun ResourcesTabContent(resources: List<McpResourceDefinition>) {
+private fun ResourcesTabContent(
+  resources: List<McpResourceDefinition>,
+  onReadResource: (suspend (serverId: String, uri: String) -> Result<McpResourceContent>)? = null
+) {
   if (resources.isEmpty()) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
       Text(
