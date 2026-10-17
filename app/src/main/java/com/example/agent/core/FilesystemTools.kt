@@ -534,6 +534,7 @@ class WriteFileTool(
           false
         }
         if (!pushed) {
+          artifactManager?.unregisterArtifact(pathStr)
           return@withContext ToolResult(
             callId = callId,
             toolName = name,

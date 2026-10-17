@@ -53,7 +53,7 @@ class AgentEngine(
   val workspace: Sandbox get() = sandbox
   val scratchpad = ScratchpadMemoryManager(workspaceDir)
 
-  // Ground-truth subsystems (E2B Cloud Firecracker MicroVM environment)
+  val capabilityManager = EnvironmentCapabilityManager { sandboxProvider }
   val artifactManager = ArtifactManager(workspaceDir)
   val deliverableTracker = DeliverableTracker(workspaceDir)
   val approvalManager = ApprovalManager()
@@ -86,6 +86,30 @@ class AgentEngine(
     registry.register(E2BWriteFileTool(initialE2BProvider, artifactManager, sessionIdProvider = { _state.value.sessionId }))
     registry.register(E2BReadFileTool(initialE2BProvider, artifactManager, sessionIdProvider = { _state.value.sessionId }))
     registry.register(E2BListDirectoryTool(initialE2BProvider, artifactManager, sessionIdProvider = { _state.value.sessionId }))
+
+    // Code Interpreter & Diagnostics & Capabilities
+    val codeInterpreterTool = CodeInterpreterTool(
+      sandboxProvider = sandboxProvider,
+      artifactManager = artifactManager,
+      sessionIdProvider = { _state.value.sessionId },
+      taskIdProvider = { _state.value.task?.id }
+    )
+    registry.register(codeInterpreterTool)
+
+    val sandboxDiagnosticsTool = SandboxDiagnosticsTool(
+      sandboxProvider = sandboxProvider,
+      sessionIdProvider = { _state.value.sessionId },
+      taskIdProvider = { _state.value.task?.id },
+      capabilityManager = capabilityManager
+    )
+    registry.register(sandboxDiagnosticsTool)
+
+    val capabilityTool = EnvironmentCapabilityTool(
+      capabilityManager = capabilityManager,
+      sandboxProvider = sandboxProvider,
+      sessionIdProvider = { _state.value.sessionId }
+    )
+    registry.register(capabilityTool)
 
     // Cross-Environment Artifact Transfer & E2B Cloud MicroVM Filesystem Tools
     terminalTool.sessionIdProvider = { _state.value.sessionId }
@@ -138,7 +162,8 @@ class AgentEngine(
       InstallPackageTool(
         artifactManager = artifactManager,
         sandboxProvider = sandboxProvider,
-        sessionIdProvider = { _state.value.sessionId }
+        sessionIdProvider = { _state.value.sessionId },
+        capabilityManager = capabilityManager
       )
     )
 
@@ -176,6 +201,9 @@ class AgentEngine(
     sandboxManager.updateConfig(config)
     val active = sandboxManager.activeProvider
     (registry.getTool("terminal") as? TerminalTool)?.sandboxProvider = active
+    (registry.getTool("code_interpreter") as? CodeInterpreterTool)?.sandboxProvider = active
+    (registry.getTool("sandbox_diagnostics") as? SandboxDiagnosticsTool)?.sandboxProvider = active
+    (registry.getTool("environment_capability") as? EnvironmentCapabilityTool)?.sandboxProvider = active
     (registry.getTool("check_tools") as? CheckToolsTool)?.sandboxProvider = active
     (registry.getTool("transfer_artifact_to_sandbox") as? TransferArtifactToSandboxTool)?.sandboxProvider = active
     (registry.getTool("download_artifact_from_sandbox") as? DownloadArtifactFromSandboxTool)?.sandboxProvider = active

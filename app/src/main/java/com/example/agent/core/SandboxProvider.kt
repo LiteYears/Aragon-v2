@@ -1012,7 +1012,7 @@ class E2BSandboxProvider(
     val lang = request.context.language.lowercase()
     val base64Code = java.util.Base64.getEncoder().encodeToString(request.code.toByteArray(Charsets.UTF_8))
     val scriptCmd = when (lang) {
-      "python", "py", "python3" -> "python3 -u -c \"import base64; exec(base64.b64decode('$base64Code').decode('utf-8'))\""
+      "python", "py", "python3" -> "([ -x /home/user/venv/bin/python3 ] && PY=/home/user/venv/bin/python3 || PY=python3); \$PY -u -c \"import base64; exec(base64.b64decode('$base64Code').decode('utf-8'))\""
       "javascript", "js", "node" -> "node -e \"eval(Buffer.from('$base64Code', 'base64').toString('utf-8'))\""
       else -> "bash -c \"echo '$base64Code' | base64 -d | bash\""
     }
@@ -1020,6 +1020,7 @@ class E2BSandboxProvider(
     val cmdReq = RunCommandRequest.builder()
       .command(scriptCmd)
       .timeout(java.time.Duration.ofSeconds(60))
+      .envs(TerminalTool.REMOTE_COMMAND_ENVS)
       .build()
 
     return executeCommand(sessionId, cmdReq)
@@ -1030,7 +1031,7 @@ class E2BSandboxProvider(
    */
   override suspend fun pushFileToRemote(sessionId: String, relPath: String, file: File): Boolean {
     if (!file.exists() || !file.isFile) return false
-    val cleanRelPath = relPath.trim().removePrefix("./").removePrefix("/")
+    val cleanRelPath = relPath.trim().removePrefix("./")
     return try {
       val fileBytes = file.readBytes()
       val chunkSize = 40 * 1024 // 40KB chunk -> ~54KB base64, comfortably below Linux ARG_MAX
@@ -1041,7 +1042,7 @@ class E2BSandboxProvider(
         val chunk = fileBytes.copyOfRange(start, end)
         val base64Content = java.util.Base64.getEncoder().encodeToString(chunk)
         val mode = if (i == 0) "wb" else "ab"
-        val pushCmd = "python3 -c \"import os, base64; p = '$cleanRelPath'; d = os.path.dirname(p); d and os.makedirs(d, exist_ok=True); f = open(p, '$mode'); f.write(base64.b64decode('$base64Content')); f.close()\""
+        val pushCmd = "python3 -c \"import os, base64; p = '$cleanRelPath'; target = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('/')); d = os.path.dirname(target); d and os.makedirs(d, exist_ok=True); f = open(target, '$mode'); f.write(base64.b64decode('$base64Content')); f.close()\""
         val req = RunCommandRequest.builder()
           .command(pushCmd)
           .timeout(java.time.Duration.ofSeconds(30))
@@ -1050,7 +1051,7 @@ class E2BSandboxProvider(
         if (exec.exitCode != 0) return false
       }
       // Also ensure symlinked or copied into /home/user/workspace/ so paths in both /home/user and workspace resolve immediately
-      val linkCmd = "python3 -c \"import os; os.makedirs('/home/user/workspace', exist_ok=True); p = os.path.abspath('$cleanRelPath'); dst = os.path.join('/home/user/workspace', '$cleanRelPath'); os.makedirs(os.path.dirname(dst), exist_ok=True); (os.path.exists(dst) or os.symlink(p, dst)) if p != dst else None\""
+      val linkCmd = "python3 -c \"import os; os.makedirs('/home/user/workspace', exist_ok=True); p = '$cleanRelPath'; src = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('/')); rel = os.path.relpath(src, '/home/user') if src.startswith('/home/user/') else os.path.basename(src); dst = os.path.join('/home/user/workspace', rel); os.makedirs(os.path.dirname(dst), exist_ok=True); (os.path.exists(dst) or os.symlink(src, dst)) if src != dst and not os.path.exists(dst) else None\""
       executeCommand(sessionId, RunCommandRequest.builder().command(linkCmd).timeout(java.time.Duration.ofSeconds(10)).build())
       true
     } catch (_: Exception) {
@@ -1059,9 +1060,10 @@ class E2BSandboxProvider(
   }
 
   override suspend fun pullFileFromRemote(sessionId: String, remotePath: String, destFile: File): Boolean {
-    val cleanPath = remotePath.trim().removePrefix("./").removePrefix("/")
+    val cleanPath = remotePath.trim()
+    if (cleanPath.isBlank()) return false
     return try {
-      val pullCmd = "python3 -c \"import os, base64; p = '$cleanPath'; print(base64.b64encode(open(p, 'rb').read()).decode('ascii') if os.path.exists(p) else 'FILE_NOT_FOUND')\""
+      val pullCmd = "python3 -c \"import os, base64; p = '$cleanPath'; target = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('./').removeprefix('/')); (not os.path.exists(target) and os.path.exists(os.path.join('/home/user/workspace', p.removeprefix('./').removeprefix('/')))) and (target := os.path.join('/home/user/workspace', p.removeprefix('./').removeprefix('/'))); print(base64.b64encode(open(target, 'rb').read()).decode('ascii') if os.path.exists(target) and os.path.isfile(target) else 'FILE_NOT_FOUND')\""
       val req = RunCommandRequest.builder()
         .command(pullCmd)
         .timeout(java.time.Duration.ofSeconds(15))
@@ -1082,9 +1084,10 @@ class E2BSandboxProvider(
   }
 
   override suspend fun fileExistsInRemote(sessionId: String, remotePath: String): Boolean {
-    val cleanPath = remotePath.trim().removePrefix("./").removePrefix("/")
+    val cleanPath = remotePath.trim()
+    if (cleanPath.isBlank()) return false
     return try {
-      val checkCmd = "python3 -c \"import os, sys; sys.exit(0 if os.path.exists('$cleanPath') else 1)\""
+      val checkCmd = "python3 -c \"import os, sys; p = '$cleanPath'; target = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('./').removeprefix('/')); (not os.path.exists(target) and os.path.exists(os.path.join('/home/user/workspace', p.removeprefix('./').removeprefix('/')))) and (target := os.path.join('/home/user/workspace', p.removeprefix('./').removeprefix('/'))); sys.exit(0 if os.path.exists(target) else 1)\""
       val req = RunCommandRequest.builder()
         .command(checkCmd)
         .timeout(java.time.Duration.ofSeconds(10))
@@ -1114,13 +1117,14 @@ class E2BSandboxProvider(
           val discoveryCmd = """
 python3 -c "import os, json, base64
 res = {}
-for root, _, files in os.walk('.'):
+for root, _, files in os.walk('/home/user'):
     for f in files:
-        if not f.startswith('.') and not any(p in root for p in ['/bin', '/lib', '/tmp', '/.', '__pycache__', 'node_modules']):
-            p = os.path.relpath(os.path.join(root, f), '.')
+        if not f.startswith('.') and not any(p in root for p in ['/bin', '/lib', '/tmp', '/.', '__pycache__', 'node_modules', 'venv', '.venv']):
+            full = os.path.join(root, f)
+            p = os.path.relpath(full, '/home/user')
             try:
-                if os.path.getsize(p) < 10000000:
-                    with open(p, 'rb') as fp:
+                if os.path.isfile(full) and os.path.getsize(full) < 10000000:
+                    with open(full, 'rb') as fp:
                         res[p] = base64.b64encode(fp.read()).decode('ascii')
             except Exception: pass
 print('___ARAGON_SYNC_START___' + json.dumps(res) + '___ARAGON_SYNC_END___')

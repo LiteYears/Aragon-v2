@@ -97,12 +97,32 @@ class CheckToolsTool(
         }
 
         try {
+          // 1. Check CLI binary in PATH
           val req = RunCommandRequest.builder()
             .command("command -v $sanitized")
             .timeout(java.time.Duration.ofSeconds(5))
             .build()
           val exec = provider.executeCommand(sessionId, req)
-          resultMap[sanitized] = (exec.exitCode == 0 && exec.stdoutText().isNotBlank())
+          var isAvailable = (exec.exitCode == 0 && exec.stdoutText().isNotBlank())
+
+          // 2. If not a binary, check capability or Python module
+          if (!isAvailable) {
+            val pyPkg = when (sanitized.lowercase()) {
+              "docx" -> "docx"
+              "xlsx" -> "openpyxl"
+              "excel" -> "openpyxl"
+              "bs4", "beautifulsoup", "beautifulsoup4" -> "bs4"
+              "pil", "pillow" -> "PIL"
+              else -> sanitized
+            }
+            val pyCheck = "([ -x /home/user/venv/bin/python3 ] && /home/user/venv/bin/python3 -c 'import $pyPkg' 2>/dev/null) || python3 -c 'import $pyPkg' 2>/dev/null"
+            val pyExec = provider.executeCommand(sessionId, RunCommandRequest.builder().command(pyCheck).timeout(java.time.Duration.ofSeconds(6)).build())
+            if (pyExec.exitCode == 0) {
+              isAvailable = true
+            }
+          }
+
+          resultMap[sanitized] = isAvailable
         } catch (_: Exception) {
           resultMap[sanitized] = false
         }

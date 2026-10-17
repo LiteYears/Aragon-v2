@@ -339,20 +339,35 @@ class E2BWriteFileTool(
         )
       }
 
-      val mode = if (append) "ab" else "wb"
-      val b64 = java.util.Base64.getEncoder().encodeToString(content.toByteArray(Charsets.UTF_8))
       val cleanPath = pathStr.removePrefix("./")
-      val cmd = "python3 -c \"import os, base64; p = '$cleanPath'; os.makedirs(os.path.dirname(p) or '.', exist_ok=True); open(p, '$mode').write(base64.b64decode('$b64'))\""
+      val bytes = content.toByteArray(Charsets.UTF_8)
+      val chunkSize = 40 * 1024
+      val totalChunks = (bytes.size + chunkSize - 1) / chunkSize
+      var lastExecError: String? = null
+      var isSuccess = true
 
-      val req = com.alibaba.opensandbox.sandbox.domain.models.execd.executions.RunCommandRequest.builder()
-        .command(cmd)
-        .timeout(java.time.Duration.ofSeconds(15))
-        .build()
+      for (i in 0 until maxOf(1, totalChunks)) {
+        val start = i * chunkSize
+        val end = minOf(start + chunkSize, bytes.size)
+        val chunk = if (bytes.isEmpty()) ByteArray(0) else bytes.copyOfRange(start, end)
+        val b64 = java.util.Base64.getEncoder().encodeToString(chunk)
+        val chunkMode = if (i == 0 && !append) "wb" else "ab"
+        val cmd = "python3 -c \"import os, base64; p = '$cleanPath'; target = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('/')); os.makedirs(os.path.dirname(target) or '.', exist_ok=True); open(target, '$chunkMode').write(base64.b64decode('$b64'))\""
 
-      val exec = e2bProvider.executeCommand(sessionId, req)
+        val req = com.alibaba.opensandbox.sandbox.domain.models.execd.executions.RunCommandRequest.builder()
+          .command(cmd)
+          .timeout(java.time.Duration.ofSeconds(25))
+          .build()
+
+        val exec = e2bProvider.executeCommand(sessionId, req)
+        if ((exec.exitCode ?: 0) != 0 || exec.error != null) {
+          isSuccess = false
+          lastExecError = exec.stderrText().ifBlank { exec.error?.value ?: "Failed to write chunk in E2B microVM" }
+          break
+        }
+      }
+
       val duration = System.currentTimeMillis() - startTime
-      val isSuccess = (exec.exitCode ?: 0) == 0 && exec.error == null
-
       if (!isSuccess) {
         return@withContext ToolResult(
           callId = callId,
@@ -360,10 +375,10 @@ class E2BWriteFileTool(
           status = ToolStatus.FAILED,
           arguments = arguments,
           output = null,
-          error = exec.stderrText().ifBlank { exec.error?.value ?: "Failed to write file in E2B microVM" },
+          error = lastExecError ?: "Failed to write file in E2B microVM",
           errorType = ToolErrorCode.SANDBOX_ERROR,
           duration = duration,
-          exitCode = exec.exitCode ?: 1
+          exitCode = 1
         )
       }
 

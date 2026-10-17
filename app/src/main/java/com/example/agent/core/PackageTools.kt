@@ -19,7 +19,8 @@ import com.alibaba.opensandbox.sandbox.domain.models.execd.executions.RunCommand
 class InstallPackageTool(
   private val artifactManager: ArtifactManager,
   var sandboxProvider: SandboxProvider? = null,
-  var sessionIdProvider: () -> String = { "default" }
+  var sessionIdProvider: () -> String = { "default" },
+  var capabilityManager: EnvironmentCapabilityManager? = null
 ) : Tool {
 
   override val name: String = "install_package"
@@ -87,10 +88,31 @@ class InstallPackageTool(
             ToolErrorCode.SANDBOX_INFRA_ERROR
           )
 
+        val currentSession = sessionIdProvider()
+        if (sourceUrl.isNullOrBlank() && capabilityManager != null) {
+          val capResult = capabilityManager!!.installPackageGeneric(currentSession, nameInput)
+          val duration = System.currentTimeMillis() - startTime
+          val resultJson = capResult.toJsonObject().toString(2)
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = if (capResult.success) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
+            arguments = arguments,
+            output = if (capResult.success) resultJson else null,
+            error = if (capResult.success) null else capResult.message,
+            errorType = if (capResult.success) null else ToolErrorCode.SANDBOX_ERROR,
+            duration = duration,
+            stdout = capResult.stdout.ifBlank { resultJson },
+            stderr = capResult.stderr,
+            exitCode = if (capResult.success) 0 else 1,
+            artifacts = artifactManager.getArtifacts()
+          )
+        }
+
         val outcome: InstallOutcome = if (!sourceUrl.isNullOrBlank()) {
-          installFromUrlRemote(provider, sessionIdProvider(), nameInput, sourceUrl)
+          installFromUrlRemote(provider, currentSession, nameInput, sourceUrl)
         } else {
-          installFromRegistryRemote(provider, sessionIdProvider(), nameInput)
+          installFromRegistryRemote(provider, currentSession, nameInput)
         }
 
         val duration = System.currentTimeMillis() - startTime
@@ -159,10 +181,13 @@ class InstallPackageTool(
 
     val cmd =
       "(sudo -n true 2>/dev/null && SUDO=\"sudo\") || SUDO=\"\"; " +
-        "if python3 -m pip install --no-cache-dir --disable-pip-version-check --quiet '$packageName'; then " +
-        "V=\$(python3 -c \"import importlib.metadata as m; print(m.version('$packageName'))\" 2>/dev/null || true); " +
+        "if ([ -x /home/user/venv/bin/python3 ] && /home/user/venv/bin/python3 -c \"import $packageName\" 2>/dev/null) || python3 -c \"import $packageName\" 2>/dev/null; then " +
+        "V=\$(([ -x /home/user/venv/bin/python3 ] && /home/user/venv/bin/python3 -c \"import importlib.metadata as m; print(m.version('$packageName'))\" 2>/dev/null) || python3 -c \"import importlib.metadata as m; print(m.version('$packageName'))\" 2>/dev/null || true); " +
         "echo \"__ARAGON_PKG_OK__ pip \$V\"; " +
-        "elif \$SUDO apt-get update -qq && \$SUDO apt-get install -y -qq '$packageName'; then " +
+        "elif ([ -x /home/user/venv/bin/pip ] && /home/user/venv/bin/pip install --no-cache-dir --disable-pip-version-check --quiet '$packageName') || python3 -m pip install --break-system-packages --no-cache-dir --disable-pip-version-check --quiet '$packageName'; then " +
+        "V=\$(([ -x /home/user/venv/bin/python3 ] && /home/user/venv/bin/python3 -c \"import importlib.metadata as m; print(m.version('$packageName'))\" 2>/dev/null) || python3 -c \"import importlib.metadata as m; print(m.version('$packageName'))\" 2>/dev/null || true); " +
+        "echo \"__ARAGON_PKG_OK__ pip \$V\"; " +
+        "elif \$SUDO apt-get install -y -qq --no-install-recommends '$packageName' 2>/dev/null || (\$SUDO apt-get update -qq && \$SUDO apt-get install -y -qq --no-install-recommends '$packageName'); then " +
         "V=\$(dpkg -s '$packageName' 2>/dev/null | awk '/^Version:/{print \$2}'); " +
         "echo \"__ARAGON_PKG_OK__ apt \$V\"; " +
         "else echo \"__ARAGON_PKG_FAIL__ pip and apt installation both failed for '$packageName'\"; fi"

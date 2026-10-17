@@ -189,7 +189,8 @@ class CodeInterpreterTool(
 class SandboxDiagnosticsTool(
   var sandboxProvider: SandboxProvider,
   var sessionIdProvider: () -> String = { "default" },
-  var taskIdProvider: () -> String? = { null }
+  var taskIdProvider: () -> String? = { null },
+  var capabilityManager: EnvironmentCapabilityManager? = null
 ) : Tool {
 
   override val name: String = "sandbox_diagnostics"
@@ -227,7 +228,16 @@ class SandboxDiagnosticsTool(
             taskId = currentTaskId,
             toolCallId = callId
           )
-          val auditText = report.toFormattedAuditText()
+          var auditText = report.toFormattedAuditText()
+          if (report.isAuthenticE2B && capabilityManager != null) {
+            try {
+              val capReport = capabilityManager?.diagnoseEnvironment(currentSession)
+              val capSummary = capReport?.let { capabilityManager?.formatDiagnosticSummary(it) }
+              if (!capSummary.isNullOrBlank()) {
+                auditText = "$auditText\n\n$capSummary"
+              }
+            } catch (_: Exception) {}
+          }
           return@withContext ToolResult(
             callId = callId,
             toolName = name,
