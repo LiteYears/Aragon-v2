@@ -1,0 +1,135 @@
+package com.example.agent.docs
+
+import java.io.File
+import java.util.zip.ZipFile
+
+data class DetectionResult(
+  val type: DocumentType,
+  val mime: String,
+  val detail: String
+)
+
+object DocumentDetector {
+
+  private const val MIME_PDF = "application/pdf"
+  private const val MIME_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  private const val MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  private const val MIME_IMAGE = "image/*"
+
+  fun sniff(file: File, mimeHint: String?, nameHint: String?): DetectionResult {
+    val header = ByteArray(16)
+    val read = file.inputStream().use { it.read(header) }
+    if (read < 4) {
+      throw DocumentException("File is too small or unreadable")
+    }
+
+    if (startsWith(header, "%PDF".toByteArray(Charsets.US_ASCII))) {
+      return DetectionResult(DocumentType.PDF, MIME_PDF, "PDF signature")
+    }
+
+    if (header[0] == 0x50.toByte() && header[1] == 0x4B.toByte() &&
+      (header[2] == 0x03.toByte() || header[2] == 0x05.toByte() || header[2] == 0x07.toByte()) &&
+      (header[3] == 0x04.toByte() || header[3] == 0x06.toByte() || header[3] == 0x08.toByte())
+    ) {
+      return sniffOoxml(file)
+    }
+
+    if (header[0] == 0xD0.toByte() && header[1] == 0xCF.toByte() &&
+      header[2] == 0x11.toByte() && header[3] == 0xE0.toByte()
+    ) {
+      throw DocumentException("Legacy binary Office format (.doc/.xls) is not supported. Please re-save as .docx/.xlsx.")
+    }
+
+    if (isImageHeader(header, read)) {
+      return DetectionResult(DocumentType.IMAGE, MIME_IMAGE, "Image signature")
+    }
+
+    if (looksLikeText(file)) {
+      val name = (nameHint ?: file.name).lowercase()
+      val isCsv = name.endsWith(".csv") || (mimeHint?.contains("csv", ignoreCase = true) == true)
+      if (isCsv) {
+        return DetectionResult(DocumentType.CSV, "text/csv", "Delimited text")
+      }
+      return DetectionResult(DocumentType.TXT, "text/plain", "Plain text")
+    }
+
+    throw DocumentException("Unsupported file format. Supported: PDF, DOCX, XLSX, CSV, TXT, and images.")
+  }
+
+  private fun startsWith(source: ByteArray, prefix: ByteArray): Boolean {
+    if (source.size < prefix.size) return false
+    for (i in prefix.indices) {
+      if (source[i] != prefix[i]) return false
+    }
+    return true
+  }
+
+  private fun isImageHeader(header: ByteArray, read: Int): Boolean {
+    if (header[0] == 0xFF.toByte() && header[1] == 0xD8.toByte() && header[2] == 0xFF.toByte()) return true
+    if (header[0] == 0x89.toByte() && header[1] == 0x50.toByte() && header[2] == 0x4E.toByte() && header[3] == 0x47.toByte()) return true
+    if (header[0] == 0x47.toByte() && header[1] == 0x49.toByte() && header[2] == 0x46.toByte() && header[3] == 0x38.toByte()) return true
+    if (header[0] == 0x42.toByte() && header[1] == 0x4D.toByte()) return true
+    if (read >= 12) {
+      val riff = String(header, 0, 4, Charsets.US_ASCII)
+      val webp = String(header, 8, 4, Charsets.US_ASCII)
+      if (riff == "RIFF" && webp == "WEBP") return true
+      val ftyp = String(header, 4, 4, Charsets.US_ASCII)
+      if (ftyp == "ftyp") {
+        val brand = String(header, 8, 4, Charsets.US_ASCII)
+        if (brand.startsWith("heic") || brand.startsWith("heif") || brand.startsWith("mif1") || brand.startsWith("avif")) return true
+      }
+    }
+    return false
+  }
+
+  private fun looksLikeText(file: File): Boolean {
+    val sample = ByteArray(4096)
+    val read = file.inputStream().use { it.read(sample) }
+    if (read <= 0) return false
+    var nul = 0
+    var control = 0
+    for (i in 0 until read) {
+      val b = sample[i].toInt() and 0xFF
+      if (b == 0) nul++
+      else if (b < 9 || (b in 14..31)) control++
+    }
+    return nul == 0 && control < read / 20
+  }
+
+  private fun sniffOoxml(file: File): DetectionResult {
+    val zip = try {
+      ZipFile(file)
+    } catch (e: Exception) {
+      throw DocumentException("Damaged Office archive: ${e.message ?: "cannot open"}")
+    }
+    zip.use { archive ->
+      val names = archive.entries().asSequence().map { it.name }.toList()
+      if (names.size > DocumentLimits.MAX_ZIP_ENTRIES) {
+        throw DocumentException("Archive rejected: exceeds ${DocumentLimits.MAX_ZIP_ENTRIES} entries")
+      }
+      val contentTypes = archive.getEntry("[Content_Types].xml")
+        ?: throw DocumentException("Not a valid Office document (missing content types)")
+      val typesText = archive.getInputStream(contentTypes).use { it.readBytes().toString(Charsets.UTF_8) }
+      if (typesText.contains("macroEnabled", ignoreCase = true)) {
+        throw DocumentException("Macro-enabled documents are not supported for security reasons")
+      }
+      return when {
+        names.any { it == "word/document.xml" } ->
+          DetectionResult(DocumentType.DOCX, MIME_DOCX, "DOCX package")
+        names.any { it == "xl/workbook.xml" } ->
+          DetectionResult(DocumentType.XLSX, MIME_XLSX, "XLSX package")
+        else -> throw DocumentException("Unrecognized Office package structure")
+      }
+    }
+  }
+
+  fun extensionFor(type: DocumentType): String = when (type) {
+    DocumentType.PDF -> "pdf"
+    DocumentType.DOCX -> "docx"
+    DocumentType.XLSX -> "xlsx"
+    DocumentType.CSV -> "csv"
+    DocumentType.TXT -> "txt"
+    DocumentType.IMAGE -> "img"
+    DocumentType.UNSUPPORTED -> "bin"
+  }
+}

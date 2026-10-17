@@ -1,0 +1,7 @@
+{
+  "name": "Aragon",
+  "description": "Autonomous intelligence engine with deterministic tool execution, cognitive state inspection, and workspace artifact synthesis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

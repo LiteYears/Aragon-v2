@@ -1,0 +1,108 @@
+package com.example.agent.core
+
+data class ReasoningHistoryItem(
+  val cleanedText: String,
+  val timestampMs: Long,
+  val stepNumber: Int,
+  val observationFingerprint: String? = null
+)
+
+/**
+ * Deduplication and post-processing pipeline for LLM reasoning text.
+ * Prevents streaming-vs-buffering duplication, loops, and corrupted null tokens.
+ */
+class ReasoningDedupPipeline(
+  private val similarityThreshold: Double = 0.80,
+  private val timeWindowMs: Long = 30_000L
+) {
+
+  private val history = mutableListOf<ReasoningHistoryItem>()
+
+  fun process(
+    rawThought: String?,
+    currentStep: Int,
+    nowMs: Long = System.currentTimeMillis(),
+    observationFingerprint: String? = null
+  ): String {
+    if (rawThought.isNullOrBlank()) return ""
+
+    // 1. Strip null/undefined tokens & non-printable null bytes
+    val sanitized = rawThought
+      .replace("\u0000", "")
+      .replace(Regex("""\bnull\b"""), "")
+      .replace(Regex("""\bundefined\b"""), "")
+      .trim()
+
+    if (sanitized.isBlank()) return ""
+
+    // 2. Intra-thought sentence deduplication (adjacent duplicate sentences)
+    val dedupedWithinBlock = deduplicateAdjacentSentences(sanitized)
+
+    // 3. Sliding time-window similarity check
+    history.removeAll { nowMs - it.timestampMs > timeWindowMs }
+
+    for (previous in history) {
+      // Intra-turn streaming chunk or duplicate callback deduplication
+      if (currentStep == previous.stepNumber) {
+        if (dedupedWithinBlock.equals(previous.cleanedText, ignoreCase = true)) {
+          return "[REASONING_DEDUP_HIT: Duplicate callback in Turn $currentStep]"
+        }
+        if (dedupedWithinBlock.startsWith(previous.cleanedText) && dedupedWithinBlock.length > previous.cleanedText.length) {
+          // Accumulated streaming chunk; update the recorded item and return the complete text
+          val idx = history.indexOf(previous)
+          if (idx >= 0) {
+            history[idx] = previous.copy(cleanedText = dedupedWithinBlock, timestampMs = nowMs)
+          }
+          return dedupedWithinBlock
+        }
+      }
+
+      val similarity = calculateJaccardSimilarity(dedupedWithinBlock, previous.cleanedText)
+
+      // When a genuine new observation occurred between turns, do not suppress reasoning
+      // simply because it mentions similar entity or task names. Only collapse if exact text duplicate.
+      val hasNewObservation = observationFingerprint != null &&
+        previous.observationFingerprint != null &&
+        observationFingerprint != previous.observationFingerprint
+
+      val shouldCollapse = if (hasNewObservation) {
+        similarity >= 0.95 && dedupedWithinBlock.equals(previous.cleanedText, ignoreCase = true)
+      } else {
+        similarity >= similarityThreshold
+      }
+
+      if (shouldCollapse) {
+        val logMsg = "[REASONING_DEDUP_HIT: Collapsed repeated reasoning from Turn ${previous.stepNumber} (Similarity: ${(similarity * 100).toInt()}%)]"
+        return logMsg
+      }
+    }
+
+    history.add(ReasoningHistoryItem(dedupedWithinBlock, nowMs, currentStep, observationFingerprint))
+    return dedupedWithinBlock
+  }
+
+  fun clear() {
+    history.clear()
+  }
+
+  private fun deduplicateAdjacentSentences(text: String): String {
+    val sentences = text.split(Regex("""(?<=[.!?])\s+""")).filter { it.isNotBlank() }
+    val result = mutableListOf<String>()
+    for (s in sentences) {
+      if (result.isEmpty() || !result.last().trim().equals(s.trim(), ignoreCase = true)) {
+        result.add(s)
+      }
+    }
+    return result.joinToString(" ")
+  }
+
+  private fun calculateJaccardSimilarity(s1: String, s2: String): Double {
+    val set1 = s1.lowercase().split(Regex("""\s+""")).filter { it.length > 2 }.toSet()
+    val set2 = s2.lowercase().split(Regex("""\s+""")).filter { it.length > 2 }.toSet()
+    if (set1.isEmpty() && set2.isEmpty()) return 1.0
+    val intersection = set1.intersect(set2).size
+    val union = set1.union(set2).size
+    if (union == 0) return 1.0
+    return intersection.toDouble() / union.toDouble()
+  }
+}
