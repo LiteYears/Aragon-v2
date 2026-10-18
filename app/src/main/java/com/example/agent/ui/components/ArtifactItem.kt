@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.agent.core.Artifact
+import com.example.agent.core.ArtifactCreationStatus
 import com.example.agent.core.ArtifactDownloader
 import com.example.ui.theme.AmoledAccentAmber
 import com.example.ui.theme.AmoledActionPrimary
@@ -49,6 +50,7 @@ import com.example.ui.theme.AmoledActionPrimaryOn
 import com.example.ui.theme.AmoledBorder
 import com.example.ui.theme.AmoledBorderSubtle
 import com.example.ui.theme.AmoledIconGreyLight
+import com.example.ui.theme.AmoledStatusError
 import com.example.ui.theme.AmoledStatusSuccess
 import com.example.ui.theme.AmoledSurfaceElevated
 import com.example.ui.theme.AmoledSurfaceVariant
@@ -138,6 +140,30 @@ fun ArtifactItem(
             fontFamily = JetBrainsMonoFontFamily,
             fontSize = 9.sp,
             color = AmoledIconGreyLight
+          )
+          Text(text = "•", style = MaterialTheme.typography.labelSmall, color = AmoledTextMuted)
+          val statusBadgeText = when (artifact.creationStatus) {
+            ArtifactCreationStatus.VERIFIED -> "VERIFIED"
+            ArtifactCreationStatus.CORRUPTED -> "CORRUPT"
+            ArtifactCreationStatus.EMPTY -> "EMPTY"
+            ArtifactCreationStatus.IN_PROGRESS -> "WRITING"
+            ArtifactCreationStatus.MISSING -> "MISSING"
+            ArtifactCreationStatus.PENDING -> "PENDING"
+            ArtifactCreationStatus.DELETED -> "DELETED"
+          }
+          val statusBadgeColor = when (artifact.creationStatus) {
+            ArtifactCreationStatus.VERIFIED -> AmoledStatusSuccess
+            ArtifactCreationStatus.CORRUPTED, ArtifactCreationStatus.MISSING -> AmoledStatusError
+            ArtifactCreationStatus.EMPTY, ArtifactCreationStatus.IN_PROGRESS -> AmoledAccentAmber
+            else -> AmoledTextMuted
+          }
+          Text(
+            text = statusBadgeText,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = JetBrainsMonoFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 9.sp,
+            color = statusBadgeColor
           )
           Text(text = "•", style = MaterialTheme.typography.labelSmall, color = AmoledTextMuted)
           Text(

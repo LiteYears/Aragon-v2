@@ -1,5 +1,6 @@
 package com.example.agent.core
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -33,7 +34,8 @@ class CheckToolsTool(
         name = "tools",
         type = "array",
         description = "List of command names to check (e.g. ['nmap', 'curl', 'dig', 'python3', 'lsof']).",
-        required = true
+        required = true,
+        aliases = listOf("binaries", "commands", "tool_names")
       )
     )
   )
@@ -230,6 +232,7 @@ print('___CHECK_TOOLS_START___' + json.dumps(res) + '___CHECK_TOOLS_END___')
                   put("type", if (isPy) "python_module" else "missing")
                 }
               } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 return@withPermit toolName to JSONObject().apply {
                   put("available", false)
                   put("error", e.message ?: "check_failed")

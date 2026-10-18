@@ -14,6 +14,11 @@ import java.io.FileOutputStream
 object ArtifactDownloader {
 
   /**
+   * Global default workspace directory fallback initialized by the engine or view model.
+   */
+  var defaultWorkspaceDir: File? = null
+
+  /**
    * Resolves the actual physical file for an artifact using authoritative paths,
    * workspace directories, and recursive fallbacks.
    */
@@ -22,32 +27,34 @@ object ArtifactDownloader {
     artifact: Artifact,
     workspaceDir: File? = null
   ): File? {
-    val cleanPath = artifact.path.trim().removePrefix("./").removePrefix("/")
+    val effectiveWorkspace = workspaceDir ?: defaultWorkspaceDir
+    val cleanPath = PathSecurity.toCanonicalRelativePath(effectiveWorkspace, artifact.path)
     val fileName = artifact.name.ifBlank { File(cleanPath).name }
 
-    // 1. Check workspaceDir if explicitly passed
-    if (workspaceDir != null && workspaceDir.exists()) {
-      val directInWorkspace = File(workspaceDir, cleanPath)
+    // 1. Check explicit canonicalPath / absolutePath first
+    val explicitPath = artifact.canonicalPath.ifBlank { artifact.absolutePath }
+    if (explicitPath.isNotBlank()) {
+      val absFile = File(explicitPath)
+      if (absFile.exists() && absFile.isFile) return absFile
+    }
+
+    // 2. Check effective workspace directory
+    if (effectiveWorkspace != null && effectiveWorkspace.exists()) {
+      val directInWorkspace = File(effectiveWorkspace, cleanPath)
       if (directInWorkspace.exists() && directInWorkspace.isFile) {
         return directInWorkspace
       }
-      val byNameInWorkspace = File(workspaceDir, fileName)
+      val byNameInWorkspace = File(effectiveWorkspace, fileName)
       if (byNameInWorkspace.exists() && byNameInWorkspace.isFile) {
         return byNameInWorkspace
       }
       try {
-        val foundInWorkspace = workspaceDir.walkTopDown().maxDepth(5)
+        val foundInWorkspace = effectiveWorkspace.walkTopDown().maxDepth(5)
           .firstOrNull { it.isFile && (it.name == fileName || it.name == artifact.name) }
         if (foundInWorkspace != null && foundInWorkspace.exists()) {
           return foundInWorkspace
         }
       } catch (_: Throwable) {}
-    }
-
-    // 2. Check explicit absolutePath if populated
-    if (artifact.absolutePath.isNotBlank()) {
-      val absFile = File(artifact.absolutePath)
-      if (absFile.exists() && absFile.isFile) return absFile
     }
 
     // 3. Direct check on artifact.path if it exists
@@ -132,6 +139,10 @@ object ArtifactDownloader {
       val sourceFile = resolveArtifactFile(context, artifact, workspaceDir)
       if (sourceFile == null || !sourceFile.exists()) {
         showSafeToast(context, "File not found: ${artifact.name}", Toast.LENGTH_SHORT)
+        return false
+      }
+      if (sourceFile.length() == 0L) {
+        showSafeToast(context, "Artifact '${artifact.name}' is empty (0 bytes).", Toast.LENGTH_SHORT)
         return false
       }
 
@@ -335,6 +346,10 @@ object ArtifactDownloader {
       val sourceFile = resolveArtifactFile(context, artifact, workspaceDir)
       if (sourceFile == null || !sourceFile.exists()) {
         showSafeToast(context, "File not found: ${artifact.name}", Toast.LENGTH_SHORT)
+        return
+      }
+      if (sourceFile.length() == 0L) {
+        showSafeToast(context, "Artifact '${artifact.name}' is empty (0 bytes).", Toast.LENGTH_SHORT)
         return
       }
 

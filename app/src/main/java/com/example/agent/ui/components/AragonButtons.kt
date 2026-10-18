@@ -303,16 +303,29 @@ fun AragonStepBadge(
   type: StepType,
   toolStatus: String?,
   isActive: Boolean,
+  outcome: String? = null,
   modifier: Modifier = Modifier
 ) {
+  val isMiss = outcome == "CONDITION_NOT_FOUND"
+  val isTrunc = outcome == "TRUNCATED_OR_PARTIAL"
+  val isEmpty = outcome == "SUCCESS_EMPTY"
+  val isUnverified = outcome == "UNVERIFIED"
+
   val label = when {
     isActive -> "RUN"
     toolStatus == ToolStatus.FAILED.name || type == StepType.ERROR -> "ERR"
+    isMiss -> "MISS"
+    isTrunc -> "TRUNC"
+    isEmpty -> "EMPTY"
+    isUnverified -> "UNVRF"
     toolStatus == ToolStatus.SUCCEEDED.name -> "OK"
     type == StepType.TASK_INTENT -> "TASK"
     type == StepType.THINKING || type == StepType.PLAN -> "AI"
     type == StepType.CONCLUSION -> "END"
     type == StepType.VERIFICATION -> "VRF"
+    type == StepType.EVALUATION -> "EVAL"
+    type == StepType.RECOVERY -> "RCVR"
+    type == StepType.REPLANNING -> "PLAN"
     type == StepType.OBSERVATION -> "OBS"
     else -> "OK"
   }
@@ -320,6 +333,13 @@ fun AragonStepBadge(
   val textColor = when {
     isActive -> AmoledActionPrimary
     toolStatus == ToolStatus.FAILED.name || type == StepType.ERROR -> AmoledStatusError
+    isMiss -> Color(0xFFE5A93C)
+    isTrunc -> Color(0xFFD4A373)
+    isEmpty -> AmoledIconGreyLight
+    isUnverified -> Color(0xFFE57373)
+    type == StepType.EVALUATION -> Color(0xFF64B5F6)
+    type == StepType.RECOVERY -> Color(0xFFFFB74D)
+    type == StepType.REPLANNING -> Color(0xFFCE93D8)
     toolStatus == ToolStatus.SUCCEEDED.name || type == StepType.CONCLUSION -> AmoledStatusSuccess
     type == StepType.TASK_INTENT -> AmoledActionPrimary
     else -> AmoledIconGreyLight
@@ -328,6 +348,13 @@ fun AragonStepBadge(
   val bgColor = when {
     isActive -> Color(0xFF221A10)
     toolStatus == ToolStatus.FAILED.name || type == StepType.ERROR -> Color(0xFF221111)
+    isMiss -> Color(0xFF221A0C)
+    isTrunc -> Color(0xFF1E1A14)
+    isEmpty -> Color(0xFF141414)
+    isUnverified -> Color(0xFF241414)
+    type == StepType.EVALUATION -> Color(0xFF101C28)
+    type == StepType.RECOVERY -> Color(0xFF24180C)
+    type == StepType.REPLANNING -> Color(0xFF201224)
     toolStatus == ToolStatus.SUCCEEDED.name || type == StepType.CONCLUSION -> Color(0xFF102014)
     type == StepType.TASK_INTENT -> Color(0xFF1A1712)
     else -> Color(0xFF141414)
@@ -336,6 +363,13 @@ fun AragonStepBadge(
   val borderColor = when {
     isActive -> AmoledActionPrimary.copy(alpha = 0.6f)
     toolStatus == ToolStatus.FAILED.name || type == StepType.ERROR -> AmoledStatusError.copy(alpha = 0.45f)
+    isMiss -> Color(0xFFE5A93C).copy(alpha = 0.45f)
+    isTrunc -> Color(0xFFD4A373).copy(alpha = 0.45f)
+    isEmpty -> AmoledBorderSubtle
+    isUnverified -> Color(0xFFE57373).copy(alpha = 0.45f)
+    type == StepType.EVALUATION -> Color(0xFF64B5F6).copy(alpha = 0.45f)
+    type == StepType.RECOVERY -> Color(0xFFFFB74D).copy(alpha = 0.45f)
+    type == StepType.REPLANNING -> Color(0xFFCE93D8).copy(alpha = 0.45f)
     toolStatus == ToolStatus.SUCCEEDED.name || type == StepType.CONCLUSION -> AmoledStatusSuccess.copy(alpha = 0.45f)
     type == StepType.TASK_INTENT -> AmoledActionPrimary.copy(alpha = 0.45f)
     else -> AmoledBorderSubtle

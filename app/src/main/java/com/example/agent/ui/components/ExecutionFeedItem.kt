@@ -158,13 +158,15 @@ fun StepTextBadge(
   stepNumber: Int,
   type: StepType,
   toolStatus: String?,
-  isActive: Boolean
+  isActive: Boolean,
+  outcome: String? = null
 ) {
   AragonStepBadge(
     stepNumber = stepNumber,
     type = type,
     toolStatus = toolStatus,
-    isActive = isActive
+    isActive = isActive,
+    outcome = outcome
   )
 }
 
@@ -432,7 +434,8 @@ fun ToolCallBoxView(
               stepNumber = step.stepNumber,
               type = step.type,
               toolStatus = step.toolStatus,
-              isActive = false
+              isActive = false,
+              outcome = step.outcome
             )
           }
 
@@ -583,16 +586,31 @@ fun TaskObjectiveView(step: ExecutionStep) {
 fun ObservationStepView(step: ExecutionStep) {
   val isError = step.type == StepType.ERROR
   val isVerify = step.type == StepType.VERIFICATION
+  val isRecovery = step.type == StepType.RECOVERY
+  val isEvaluation = step.type == StepType.EVALUATION
   var isExpanded by remember { mutableStateOf(false) }
   val isLongContent = step.content.length > 180 || !step.stdout.isNullOrBlank() || !step.stderr.isNullOrBlank()
 
+  val cardBg = when {
+    isError -> Color(0xFF160A0A)
+    isRecovery -> Color(0xFF18120C)
+    isEvaluation -> Color(0xFF0C141C)
+    step.type == StepType.REPLANNING -> Color(0xFF160E18)
+    else -> Color(0xFF101010)
+  }
+
+  val cardBorder = when {
+    isError -> AmoledStatusError.copy(alpha = 0.5f)
+    isRecovery -> Color(0xFFFFB74D).copy(alpha = 0.45f)
+    isEvaluation -> Color(0xFF64B5F6).copy(alpha = 0.45f)
+    step.type == StepType.REPLANNING -> Color(0xFFCE93D8).copy(alpha = 0.45f)
+    else -> AmoledBorderSubtle
+  }
+
   Surface(
     shape = RoundedCornerShape(8.dp),
-    color = if (isError) Color(0xFF160A0A) else Color(0xFF101010),
-    border = androidx.compose.foundation.BorderStroke(
-      1.dp,
-      if (isError) AmoledStatusError.copy(alpha = 0.5f) else AmoledBorderSubtle
-    ),
+    color = cardBg,
+    border = androidx.compose.foundation.BorderStroke(1.dp, cardBorder),
     modifier = Modifier.fillMaxWidth()
   ) {
     Column(modifier = Modifier.padding(9.dp)) {
@@ -605,6 +623,9 @@ fun ObservationStepView(step: ExecutionStep) {
           text = when {
             isError -> "SYSTEM ERROR"
             isVerify -> "EMPIRICAL VERIFICATION"
+            isRecovery -> "RECOVERY INTERVENTION"
+            isEvaluation -> "EVALUATION"
+            step.type == StepType.REPLANNING -> "REPLANNING"
             else -> "OBSERVATION"
           },
           style = MaterialTheme.typography.labelSmall,
@@ -614,6 +635,9 @@ fun ObservationStepView(step: ExecutionStep) {
           color = when {
             isError -> AmoledStatusError
             isVerify -> AmoledStatusSuccess
+            isRecovery -> Color(0xFFFFB74D)
+            isEvaluation -> Color(0xFF64B5F6)
+            step.type == StepType.REPLANNING -> Color(0xFFCE93D8)
             else -> AmoledIconGreyLight
           }
         )
@@ -627,7 +651,8 @@ fun ObservationStepView(step: ExecutionStep) {
             stepNumber = step.stepNumber,
             type = step.type,
             toolStatus = step.toolStatus,
-            isActive = false
+            isActive = false,
+            outcome = step.outcome
           )
 
           if (isLongContent) {
@@ -652,6 +677,8 @@ fun ObservationStepView(step: ExecutionStep) {
 
       val textToShow = if (isLongContent && !isExpanded) {
         step.content.take(150) + "..."
+      } else if (step.content.length > 5000) {
+        step.content.take(5000) + "\n\n... [Content truncated for display (${step.content.length} chars). Use COPY button above for full content] ..."
       } else {
         step.content
       }
@@ -1215,13 +1242,21 @@ fun TerminalOutputBox(
 
     Spacer(modifier = Modifier.height(3.dp))
 
+    val displayText = remember(text) {
+      if (text.length > 5000) {
+        text.take(5000) + "\n\n... [Remaining text truncated in view (${text.length} total chars). Use COPY button above for full content] ..."
+      } else {
+        text
+      }
+    }
+
     Box(
       modifier = Modifier
         .fillMaxWidth()
         .horizontalScroll(scrollState)
     ) {
       Text(
-        text = text,
+        text = displayText,
         style = MaterialTheme.typography.bodySmall.copy(
           fontFamily = JetBrainsMonoFontFamily,
           fontSize = 11.sp,

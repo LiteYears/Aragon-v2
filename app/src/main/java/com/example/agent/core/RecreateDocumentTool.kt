@@ -10,6 +10,7 @@ import com.example.agent.docs.OcrRouter
 import com.example.agent.docs.PdfTextExtractor
 import com.example.agent.docs.TxtTextExtractor
 import com.example.agent.docs.XlsxTextExtractor
+import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 import java.io.File
 import java.time.LocalDate
@@ -50,20 +51,23 @@ class RecreateDocumentTool(
         name = "source",
         type = "string",
         description = "Input source path in workspace (e.g., 'screenshot.png', 'contract.docx', 'report.pdf') or document reference (e.g., 'D1').",
-        required = true
+        required = true,
+        aliases = listOf("sourcePath", "source_path", "file", "path")
       ),
       ToolParameter(
         name = "target_format",
         type = "string",
         description = "Target deliverable format: 'docx' (Word), 'xlsx' (Excel), or 'pdf' (PDF).",
         required = true,
-        enumValues = listOf("docx", "xlsx", "pdf")
+        enumValues = listOf("docx", "xlsx", "pdf"),
+        aliases = listOf("targetFormat", "format", "output_format")
       ),
       ToolParameter(
         name = "output_path",
         type = "string",
         description = "Workspace-relative output deliverable path (e.g., 'recreated_document.docx', 'output.pdf').",
-        required = true
+        required = true,
+        aliases = listOf("output", "dest", "destination")
       ),
       ToolParameter(
         name = "title",
@@ -528,6 +532,7 @@ class RecreateDocumentTool(
         artifacts = artifactManager.getArtifacts()
       )
     } catch (e: Exception) {
+      if (e is CancellationException) throw e
       return ToolResult(
         callId = callId,
         toolName = name,

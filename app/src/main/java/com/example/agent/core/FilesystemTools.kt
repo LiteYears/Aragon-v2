@@ -1,6 +1,7 @@
 package com.example.agent.core
 
 import com.alibaba.opensandbox.sandbox.domain.models.execd.executions.RunCommandRequest
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -83,6 +84,100 @@ object PathSecurity {
     return if (target == base) "." else target.path.removePrefix(base.path).removePrefix(File.separator)
   }
 
+  /**
+   * Authoritatively converts any input path (relative, absolute, /home/user/..., /workspace/..., ./)
+   * into a normalized canonical relative path relative to workspaceDir.
+   */
+  fun toCanonicalRelativePath(workspaceDir: File?, rawPath: String): String {
+    if (workspaceDir == null || rawPath.isBlank()) return ""
+    return try {
+      val resolved = resolveSafe(workspaceDir, rawPath)
+      getRelativePath(workspaceDir, resolved)
+    } catch (_: Exception) {
+      // Fallback robust string normalizer
+      var clean = rawPath.trim().replace('\\', '/')
+      while (clean.startsWith("./")) clean = clean.removePrefix("./").trim()
+      var changed = true
+      while (changed) {
+        val prev = clean
+        when {
+          clean == "/home/user" || clean == "home/user" || clean == "/workspace" || clean == "workspace" -> clean = ""
+          clean.startsWith("/home/user/") -> clean = clean.removePrefix("/home/user/")
+          clean.startsWith("home/user/") -> clean = clean.removePrefix("home/user/")
+          clean.startsWith("/workspace/") -> clean = clean.removePrefix("/workspace/")
+          clean.startsWith("workspace/") -> clean = clean.removePrefix("workspace/")
+          clean.startsWith("./") -> clean = clean.removePrefix("./")
+          clean.startsWith("/") -> clean = clean.removePrefix("/")
+        }
+        changed = (clean != prev)
+      }
+      clean
+    }
+  }
+
+  /**
+   * Safely writes text to file using an atomic temp-file replace pattern,
+   * preventing partial writes or corrupted zero-byte files if execution is interrupted.
+   */
+  fun atomicWriteText(file: File, text: String, charset: java.nio.charset.Charset = StandardCharsets.UTF_8): Boolean {
+    file.parentFile?.mkdirs()
+    val tmpFile = File(file.parentFile, ".tmp_write_${file.name}_${System.currentTimeMillis()}")
+    return try {
+      tmpFile.writeText(text, charset)
+      if (tmpFile.renameTo(file)) {
+        true
+      } else {
+        try {
+          java.nio.file.Files.move(
+            tmpFile.toPath(),
+            file.toPath(),
+            java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING
+          )
+          true
+        } catch (_: Throwable) {
+          file.writeText(text, charset)
+          tmpFile.delete()
+          true
+        }
+      }
+    } catch (e: Exception) {
+      try { tmpFile.delete() } catch (_: Exception) {}
+      throw e
+    }
+  }
+
+  /**
+   * Safely writes binary bytes to file using an atomic temp-file replace pattern.
+   */
+  fun atomicWriteBytes(file: File, bytes: ByteArray): Boolean {
+    file.parentFile?.mkdirs()
+    val tmpFile = File(file.parentFile, ".tmp_write_${file.name}_${System.currentTimeMillis()}")
+    return try {
+      tmpFile.writeBytes(bytes)
+      if (tmpFile.renameTo(file)) {
+        true
+      } else {
+        try {
+          java.nio.file.Files.move(
+            tmpFile.toPath(),
+            file.toPath(),
+            java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING
+          )
+          true
+        } catch (_: Throwable) {
+          file.writeBytes(bytes)
+          tmpFile.delete()
+          true
+        }
+      }
+    } catch (e: Exception) {
+      try { tmpFile.delete() } catch (_: Exception) {}
+      throw e
+    }
+  }
+
   fun isSymbolicLink(file: File): Boolean {
     return try {
       java.nio.file.Files.isSymbolicLink(file.toPath())
@@ -119,21 +214,24 @@ class ListDirectoryTool(
         type = "string",
         description = "Directory path inside the E2B microVM, relative to /home/user (default: '.').",
         required = false,
-        defaultValue = "."
+        defaultValue = ".",
+        aliases = listOf("dir", "directory", "folder", "filePath", "target")
       ),
       ToolParameter(
         name = "recursive",
         type = "boolean",
         description = "Whether to recursively list subdirectories (default: false).",
         required = false,
-        defaultValue = false
+        defaultValue = false,
+        aliases = listOf("recurse")
       ),
       ToolParameter(
         name = "maxEntries",
         type = "number",
         description = "Maximum number of entries to return (default: 100).",
         required = false,
-        defaultValue = 100
+        defaultValue = 100,
+        aliases = listOf("limit", "max_entries")
       )
     )
   )
@@ -205,49 +303,74 @@ else:
 print(json.dumps({'exists': True, 'path': target, 'entries': entries}))
 "
 """.trimIndent()
-      val req = RunCommandRequest.builder().command(cmd).timeout(java.time.Duration.ofSeconds(15)).build()
-      val exec = provider.executeCommand(sessionId, req)
-      val duration = System.currentTimeMillis() - startTime
-      val stdout = exec.stdoutText().trim()
-      if (exec.exitCode != 0 || stdout.isEmpty()) {
+      try {
+        val req = RunCommandRequest.builder().command(cmd).timeout(java.time.Duration.ofSeconds(15)).build()
+        val exec = provider.executeCommand(sessionId, req)
+        val duration = System.currentTimeMillis() - startTime
+        val stdout = exec.stdoutText().trim()
+        if (exec.exitCode != 0 || stdout.isEmpty()) {
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.FAILED,
+            arguments = arguments,
+            output = null,
+            error = exec.stderrText().ifBlank { "Failed to list directory in the E2B microVM" },
+            errorType = ToolErrorCode.SANDBOX_ERROR,
+            duration = duration,
+            exitCode = exec.exitCode ?: 1
+          )
+        }
+        if (stdout.contains("\"exists\": false")) {
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.FAILED,
+            arguments = arguments,
+            output = null,
+            error = "Directory '$pathStr' does not exist in the E2B microVM (/home/user).",
+            errorType = ToolErrorCode.FILE_NOT_FOUND,
+            duration = duration,
+            exitCode = 1
+          )
+        }
+        val isDirEmpty = stdout.contains("\"entries\": []") || stdout.contains("\"total\": 0")
+        val isTrunc = stdout.contains("\"truncated\": true")
+        val outcome = when {
+          isDirEmpty -> ToolExecutionOutcome.SUCCESS_EMPTY
+          isTrunc -> ToolExecutionOutcome.TRUNCATED_OR_PARTIAL
+          else -> ToolExecutionOutcome.SUCCESS_WITH_RESULTS
+        }
+        val tagged = "[env=e2b_cloud]\n$stdout"
         return@withContext ToolResult(
           callId = callId,
           toolName = name,
-          status = ToolStatus.FAILED,
+          status = ToolStatus.SUCCEEDED,
           arguments = arguments,
-          output = null,
-          error = exec.stderrText().ifBlank { "Failed to list directory in the E2B microVM" },
-          errorType = ToolErrorCode.SANDBOX_ERROR,
+          output = tagged,
+          error = null,
           duration = duration,
-          exitCode = exec.exitCode ?: 1
+          stdout = tagged,
+          exitCode = 0,
+          artifacts = artifactManager?.getArtifacts() ?: emptyList(),
+          outcome = outcome,
+          truncation = TruncationDetails(isTruncated = isTrunc)
         )
-      }
-      if (stdout.contains("\"exists\": false")) {
+      } catch (ce: CancellationException) {
+        throw ce
+      } catch (e: Exception) {
         return@withContext ToolResult(
           callId = callId,
           toolName = name,
           status = ToolStatus.FAILED,
           arguments = arguments,
           output = null,
-          error = "Directory '$pathStr' does not exist in the E2B microVM (/home/user).",
-          errorType = ToolErrorCode.FILE_NOT_FOUND,
-          duration = duration,
+          error = "Failed to list directory '$pathStr': ${e.message}",
+          errorType = ToolErrorCode.SANDBOX_ERROR,
+          duration = System.currentTimeMillis() - startTime,
           exitCode = 1
         )
       }
-      val tagged = "[env=e2b_cloud]\n$stdout"
-      return@withContext ToolResult(
-        callId = callId,
-        toolName = name,
-        status = ToolStatus.SUCCEEDED,
-        arguments = arguments,
-        output = tagged,
-        error = null,
-        duration = duration,
-        stdout = tagged,
-        exitCode = 0,
-        artifacts = artifactManager?.getArtifacts() ?: emptyList()
-      )
     }
 }
 
@@ -288,19 +411,22 @@ class ReadFileTool(
         name = "path",
         type = "string",
         description = "Path of the file inside the E2B microVM workspace (relative to /home/user).",
-        required = true
+        required = true,
+        aliases = listOf("file", "filename", "file_path", "filePath", "target")
       ),
       ToolParameter(
         name = "offset",
         type = "number",
         description = "Optional starting line number (1-based).",
-        required = false
+        required = false,
+        aliases = listOf("line", "start_line", "startLine")
       ),
       ToolParameter(
         name = "limit",
         type = "number",
         description = "Optional maximum number of lines to read.",
-        required = false
+        required = false,
+        aliases = listOf("lines", "max_lines", "maxLines")
       )
     )
   )
@@ -357,7 +483,10 @@ class ReadFileTool(
         val duration = System.currentTimeMillis() - startTime
         val exitCode = exec.exitCode ?: 0
         if (exitCode == 0 && exec.error == null) {
-          val content = exec.stdoutText().ifBlank { "(empty file)" }
+          val rawOut = exec.stdoutText()
+          val isFileEmpty = rawOut.isBlank()
+          val content = if (isFileEmpty) "(file exists but is empty, 0 bytes)" else rawOut.trimEnd()
+          val outcome = if (isFileEmpty) ToolExecutionOutcome.SUCCESS_EMPTY else ToolExecutionOutcome.SUCCESS_WITH_RESULTS
           return@withContext ToolResult(
             callId = callId,
             toolName = name,
@@ -368,7 +497,8 @@ class ReadFileTool(
             duration = duration,
             stdout = content,
             exitCode = 0,
-            artifacts = artifactManager?.getArtifacts() ?: emptyList()
+            artifacts = artifactManager?.getArtifacts() ?: emptyList(),
+            outcome = outcome
           )
         }
 
@@ -384,7 +514,14 @@ class ReadFileTool(
             emptyList()
           }
 
-          val content = selectedLines.joinToString("\n")
+          val isFileEmpty = allLines.isEmpty()
+          val isTrunc = allLines.size > (startIdx + selectedLines.size)
+          val outcome = when {
+            isFileEmpty -> ToolExecutionOutcome.SUCCESS_EMPTY
+            isTrunc -> ToolExecutionOutcome.TRUNCATED_OR_PARTIAL
+            else -> ToolExecutionOutcome.SUCCESS_WITH_RESULTS
+          }
+          val content = if (isFileEmpty) "(file exists but is empty, 0 bytes)" else selectedLines.joinToString("\n")
           return@withContext ToolResult(
             callId = callId,
             toolName = name,
@@ -395,7 +532,15 @@ class ReadFileTool(
             duration = System.currentTimeMillis() - startTime,
             stdout = content,
             exitCode = 0,
-            artifacts = artifactManager?.getArtifacts() ?: emptyList()
+            artifacts = artifactManager?.getArtifacts() ?: emptyList(),
+            outcome = outcome,
+            truncation = TruncationDetails(
+              isTruncated = isTrunc,
+              originalLines = allLines.size,
+              capturedLines = selectedLines.size,
+              omittedLines = (allLines.size - (startIdx + selectedLines.size)).coerceAtLeast(0),
+              inspectionHint = if (isTrunc) "To read next lines: read_file path='$pathStr' offset=${startIdx + selectedLines.size + 1} limit=${limit ?: 100}" else null
+            )
           )
         }
 
@@ -408,7 +553,8 @@ class ReadFileTool(
           error = "File '$pathStr' does not exist inside the E2B microVM (/home/user).",
           errorType = ToolErrorCode.FILE_NOT_FOUND,
           duration = System.currentTimeMillis() - startTime,
-          exitCode = 1
+          exitCode = 1,
+          outcome = ToolExecutionOutcome.CONDITION_NOT_FOUND
         )
       } catch (se: SecurityException) {
         ToolResult(
@@ -423,6 +569,7 @@ class ReadFileTool(
           exitCode = 1
         )
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,
@@ -458,13 +605,15 @@ class WriteFileTool(
         name = "path",
         type = "string",
         description = "Path where the file should be saved relative to workspace (e.g. 'report.md', 'output.json', 'document.docx', 'metrics.xlsx'). Note: .docx natively compiles Word documents and .xlsx natively compiles Excel spreadsheets.",
-        required = true
+        required = true,
+        aliases = listOf("file", "filename", "file_path", "filePath", "target")
       ),
       ToolParameter(
         name = "content",
         type = "string",
         description = "Text content to write into the file.",
-        required = true
+        required = true,
+        aliases = listOf("text", "data", "body")
       ),
       ToolParameter(
         name = "overwrite",
@@ -568,11 +717,11 @@ class WriteFileTool(
           if (append && file.exists()) {
             file.appendText(content, StandardCharsets.UTF_8)
           } else {
-            file.writeText(content, StandardCharsets.UTF_8)
+            PathSecurity.atomicWriteText(file, content, StandardCharsets.UTF_8)
           }
         }
 
-        // Verify written file exists on disk
+        // Verify written file exists on disk and is non-empty
         if (!file.exists() || !file.isFile) {
           return@withContext ToolResult(
             callId = callId,
@@ -587,17 +736,17 @@ class WriteFileTool(
           )
         }
 
-        val registeredArtifact = artifactManager?.registerArtifact(pathStr, createdByCallId = callId)
+        val relPath = PathSecurity.getRelativePath(workspaceDir, file)
+        val registeredArtifact = artifactManager?.registerArtifact(relPath, createdByCallId = callId)
 
         // Push file into the E2B Cloud MicroVM (the only execution environment) and verify receipt
-        val relPath = PathSecurity.getRelativePath(workspaceDir, file)
         val pushed = try {
           provider.pushFileToRemote(sessionIdProvider(), relPath, file)
         } catch (_: Exception) {
           false
         }
         if (!pushed) {
-          artifactManager?.unregisterArtifact(pathStr)
+          artifactManager?.unregisterArtifact(relPath)
           return@withContext ToolResult(
             callId = callId,
             toolName = name,
@@ -642,6 +791,7 @@ class WriteFileTool(
           exitCode = 1
         )
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,
@@ -815,26 +965,30 @@ class EditFileTool(
         name = "path",
         type = "string",
         description = "Path of the file relative to the workspace.",
-        required = true
+        required = true,
+        aliases = listOf("file", "filename", "file_path", "filePath", "target")
       ),
       ToolParameter(
         name = "targetContent",
         type = "string",
         description = "The exact substring in the file to be replaced.",
-        required = true
+        required = true,
+        aliases = listOf("target_content", "old_string", "oldText", "target", "find")
       ),
       ToolParameter(
         name = "replacementContent",
         type = "string",
         description = "The new text that will replace targetContent.",
-        required = true
+        required = true,
+        aliases = listOf("replacement_content", "new_string", "newText", "replacement", "replace")
       ),
       ToolParameter(
         name = "replaceAll",
         type = "boolean",
         description = "If true, replaces all occurrences. If false, replaces only the first occurrence.",
         required = false,
-        defaultValue = false
+        defaultValue = false,
+        aliases = listOf("replace_all", "all")
       )
     )
   )
@@ -957,10 +1111,10 @@ class EditFileTool(
           )
         }
 
-        file.writeText(newText, StandardCharsets.UTF_8)
-        artifactManager.registerArtifact(pathStr, createdByCallId = callId)
-
+        PathSecurity.atomicWriteText(file, newText, StandardCharsets.UTF_8)
         val relPath = PathSecurity.getRelativePath(workspaceDir, file)
+        artifactManager.registerArtifact(relPath, createdByCallId = callId)
+
         val pushed = try {
           provider.pushFileToRemote(sessionIdProvider(), relPath, file)
         } catch (_: Exception) {
@@ -1006,6 +1160,7 @@ class EditFileTool(
           exitCode = 1
         )
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,
@@ -1090,13 +1245,15 @@ class ApplyPatchTool(
         name = "path",
         type = "string",
         description = "Path of the target file relative to workspace (e.g. 'src/app.py', 'index.js'). Optional if specified in the unified diff header (e.g. '+++ b/path').",
-        required = false
+        required = false,
+        aliases = listOf("file", "filename", "file_path", "filePath", "target")
       ),
       ToolParameter(
         name = "patch",
         type = "string",
         description = "The diff or patch content to apply. Can be unified diff format or <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE blocks.",
-        required = true
+        required = true,
+        aliases = listOf("diff", "patch_content", "patchContent")
       )
     )
   )
@@ -1171,10 +1328,9 @@ class ApplyPatchTool(
           if (isNewFilePatch(patchContent)) {
             val newContent = extractNewFileContent(patchContent)
             file.parentFile?.mkdirs()
-            file.writeText(newContent, StandardCharsets.UTF_8)
-            artifactManager.registerArtifact(pathStr, createdByCallId = callId)
-
+            PathSecurity.atomicWriteText(file, newContent, StandardCharsets.UTF_8)
             val relPath = PathSecurity.getRelativePath(workspaceDir, file)
+            artifactManager.registerArtifact(relPath, createdByCallId = callId)
             val pushed = try {
               provider.pushFileToRemote(sessionIdProvider(), relPath, file)
             } catch (_: Exception) {
@@ -1239,10 +1395,9 @@ class ApplyPatchTool(
           )
         }
 
-        file.writeText(patchedText, StandardCharsets.UTF_8)
-        artifactManager.registerArtifact(pathStr, createdByCallId = callId)
-
+        PathSecurity.atomicWriteText(file, patchedText, StandardCharsets.UTF_8)
         val relPath = PathSecurity.getRelativePath(workspaceDir, file)
+        artifactManager.registerArtifact(relPath, createdByCallId = callId)
         val pushed = try {
           provider.pushFileToRemote(sessionIdProvider(), relPath, file)
         } catch (_: Exception) {
@@ -1288,6 +1443,7 @@ class ApplyPatchTool(
           exitCode = 1
         )
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,
@@ -1550,19 +1706,22 @@ class DiffFilesTool(
         name = "originalPath",
         type = "string",
         description = "Path of the original file relative to workspace.",
-        required = true
+        required = true,
+        aliases = listOf("original_path", "original", "source", "path")
       ),
       ToolParameter(
         name = "modifiedPath",
         type = "string",
         description = "Optional path of the modified file relative to workspace.",
-        required = false
+        required = false,
+        aliases = listOf("modified_path", "modified", "target")
       ),
       ToolParameter(
         name = "modifiedContent",
         type = "string",
         description = "Optional replacement content string to compare against originalPath.",
-        required = false
+        required = false,
+        aliases = listOf("modified_content", "content")
       )
     )
   )
@@ -1671,6 +1830,7 @@ class DiffFilesTool(
           exitCode = 1
         )
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,
@@ -1764,7 +1924,8 @@ class DeleteFileTool(
         name = "path",
         type = "string",
         description = "Path of the file to delete relative to the workspace.",
-        required = true
+        required = true,
+        aliases = listOf("file", "filename", "file_path", "filePath", "target")
       )
     )
   )
@@ -1876,6 +2037,7 @@ class DeleteFileTool(
           exitCode = 1
         )
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,
@@ -1907,13 +2069,15 @@ class MoveFileTool(
         name = "sourcePath",
         type = "string",
         description = "Source file or directory path relative to workspace.",
-        required = true
+        required = true,
+        aliases = listOf("source_path", "source", "from", "src")
       ),
       ToolParameter(
         name = "destinationPath",
         type = "string",
         description = "Destination path relative to workspace.",
-        required = true
+        required = true,
+        aliases = listOf("destination_path", "destination", "to", "dest")
       )
     )
   )
@@ -2027,6 +2191,7 @@ class MoveFileTool(
           exitCode = 1
         )
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,
@@ -2058,13 +2223,15 @@ class CopyFileTool(
         name = "sourcePath",
         type = "string",
         description = "Source file or directory path relative to workspace.",
-        required = true
+        required = true,
+        aliases = listOf("source_path", "source", "from", "src")
       ),
       ToolParameter(
         name = "destinationPath",
         type = "string",
         description = "Destination path relative to workspace.",
-        required = true
+        required = true,
+        aliases = listOf("destination_path", "destination", "to", "dest")
       )
     )
   )
@@ -2172,6 +2339,7 @@ class CopyFileTool(
           exitCode = 1
         )
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,
@@ -2203,7 +2371,8 @@ class CreateDirectoryTool(
         name = "path",
         type = "string",
         description = "Path of the directory to create relative to workspace.",
-        required = true
+        required = true,
+        aliases = listOf("dir", "directory", "folder", "filePath", "target")
       )
     )
   )
@@ -2246,6 +2415,7 @@ class CreateDirectoryTool(
           exitCode = 1
         )
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,
@@ -2277,14 +2447,16 @@ class DeleteDirectoryTool(
         name = "path",
         type = "string",
         description = "Path of the directory to delete relative to workspace.",
-        required = true
+        required = true,
+        aliases = listOf("dir", "directory", "folder", "filePath", "target")
       ),
       ToolParameter(
         name = "recursive",
         type = "boolean",
         description = "Whether to recursively delete contents (default: false).",
         required = false,
-        defaultValue = false
+        defaultValue = false,
+        aliases = listOf("recurse")
       )
     )
   )
@@ -2387,6 +2559,7 @@ class DeleteDirectoryTool(
           exitCode = 1
         )
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,
@@ -2420,7 +2593,8 @@ class FileExistsTool(
         name = "path",
         type = "string",
         description = "Path relative to workspace.",
-        required = true
+        required = true,
+        aliases = listOf("file", "filename", "file_path", "filePath", "target")
       )
     )
   )
@@ -2457,17 +2631,22 @@ class FileExistsTool(
           }
         }.toString()
 
+        val outcome = if (exists) ToolExecutionOutcome.SUCCESS_WITH_RESULTS else ToolExecutionOutcome.CONDITION_NOT_FOUND
+        val readableOutput = if (exists) "File exists: $pathStr ($type${if (file.isFile) ", ${file.length()} bytes" else ""})" else "Condition not found: File does not exist at '$pathStr'"
+
         ToolResult(
           callId = callId,
           toolName = name,
           status = ToolStatus.SUCCEEDED,
           arguments = arguments,
-          output = json,
+          output = readableOutput,
           error = null,
           duration = System.currentTimeMillis() - startTime,
           stdout = json,
           exitCode = 0,
-          artifacts = artifactManager?.getArtifacts() ?: emptyList()
+          artifacts = artifactManager?.getArtifacts() ?: emptyList(),
+          outcome = outcome,
+          responseMetadata = mapOf("exists" to exists, "type" to type, "path" to pathStr)
         )
       } catch (se: SecurityException) {
         ToolResult(
@@ -2478,6 +2657,20 @@ class FileExistsTool(
           output = null,
           error = se.message,
           errorType = ToolErrorCode.PATH_NOT_ALLOWED,
+          duration = System.currentTimeMillis() - startTime,
+          exitCode = 1
+        )
+      } catch (ce: CancellationException) {
+        throw ce
+      } catch (e: Exception) {
+        ToolResult(
+          callId = callId,
+          toolName = name,
+          status = ToolStatus.FAILED,
+          arguments = arguments,
+          output = null,
+          error = "Failed to check file existence: ${e.message}",
+          errorType = ToolErrorCode.SANDBOX_ERROR,
           duration = System.currentTimeMillis() - startTime,
           exitCode = 1
         )
@@ -2503,7 +2696,8 @@ class FileMetadataTool(
         name = "path",
         type = "string",
         description = "Path relative to workspace.",
-        required = true
+        required = true,
+        aliases = listOf("file", "filename", "file_path", "filePath", "target")
       )
     )
   )
@@ -2578,6 +2772,20 @@ class FileMetadataTool(
           output = null,
           error = se.message,
           errorType = ToolErrorCode.PATH_NOT_ALLOWED,
+          duration = System.currentTimeMillis() - startTime,
+          exitCode = 1
+        )
+      } catch (ce: CancellationException) {
+        throw ce
+      } catch (e: Exception) {
+        ToolResult(
+          callId = callId,
+          toolName = name,
+          status = ToolStatus.FAILED,
+          arguments = arguments,
+          output = null,
+          error = "Failed to inspect file metadata: ${e.message}",
+          errorType = ToolErrorCode.SANDBOX_ERROR,
           duration = System.currentTimeMillis() - startTime,
           exitCode = 1
         )

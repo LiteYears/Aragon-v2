@@ -1,5 +1,6 @@
 package com.example.agent.core
 
+import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -28,7 +29,8 @@ class BuildExcelSpreadsheetTool(
         name = "path",
         type = "string",
         description = "Workspace-relative output file path ending in .xlsx (e.g., 'financials/budget_2025.xlsx').",
-        required = true
+        required = true,
+        aliases = listOf("file", "filePath", "file_path", "target")
       ),
       ToolParameter(
         name = "sheet_name",
@@ -65,7 +67,8 @@ class BuildExcelSpreadsheetTool(
         name = "csv_data",
         type = "string",
         description = "Optional raw CSV or TSV string to compile directly into an Excel workbook.",
-        required = false
+        required = false,
+        aliases = listOf("csvData", "data", "csv", "content")
       ),
       ToolParameter(
         name = "markdown_table",
@@ -269,6 +272,7 @@ class BuildExcelSpreadsheetTool(
         exitCode = 0
       )
     } catch (e: Exception) {
+      if (e is CancellationException) throw e
       return ToolResult(
         callId = callId,
         toolName = name,

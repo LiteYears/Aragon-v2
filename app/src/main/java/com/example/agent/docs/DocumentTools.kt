@@ -3,12 +3,14 @@ package com.example.agent.docs
 import com.example.agent.core.ArtifactManager
 import com.example.agent.core.PathSecurity
 import com.example.agent.core.Tool
+import kotlinx.coroutines.CancellationException
 import com.example.agent.core.ToolCategory
 import com.example.agent.core.ToolErrorCode
 import com.example.agent.core.ToolParameter
 import com.example.agent.core.ToolResult
 import com.example.agent.core.ToolSchema
 import com.example.agent.core.ToolStatus
+import com.example.agent.core.ToolExecutionOutcome
 import java.io.File
 
 class DocumentListTool(
@@ -38,6 +40,7 @@ class DocumentListTool(
         exitCode = 0
       )
     } catch (e: Exception) {
+      if (e is CancellationException) throw e
       failure(callId, arguments, startTime, "Failed to list documents: ${e.message ?: "unknown error"}")
     }
   }
@@ -71,20 +74,23 @@ class DocumentSearchTool(
         name = "query",
         type = "string",
         description = "Natural-language or keyword query to find relevant content in the indexed documents.",
-        required = true
+        required = true,
+        aliases = listOf("q", "search", "term")
       ),
       ToolParameter(
         name = "limit",
         type = "number",
         description = "Maximum number of passages to return (default 8, max 20).",
         required = false,
-        defaultValue = 8
+        defaultValue = 8,
+        aliases = listOf("max_results", "maxResults")
       ),
       ToolParameter(
         name = "doc_ids",
         type = "string",
         description = "Optional comma-separated document references (D# numbers, exact names, or ids) to restrict the search to specific documents.",
-        required = false
+        required = false,
+        aliases = listOf("docIds", "documents", "docs")
       )
     )
   )
@@ -150,6 +156,7 @@ class DocumentSearchTool(
       sb.appendLine()
       sb.appendLine("Cite these sources in answers using the [D#] references shown above.")
       val output = sb.toString().trim()
+      val toolOutcome = if (outcome.hits.isEmpty()) ToolExecutionOutcome.CONDITION_NOT_FOUND else ToolExecutionOutcome.SUCCESS_WITH_RESULTS
       ToolResult(
         callId = callId,
         toolName = name,
@@ -159,9 +166,12 @@ class DocumentSearchTool(
         error = null,
         duration = System.currentTimeMillis() - startTime,
         stdout = output,
-        exitCode = 0
+        exitCode = 0,
+        outcome = toolOutcome,
+        responseMetadata = mapOf("query" to query, "hitsCount" to outcome.hits.size, "mode" to outcome.mode)
       )
     } catch (e: Exception) {
+      if (e is CancellationException) throw e
       ToolResult(
         callId = callId,
         toolName = name,
@@ -218,26 +228,30 @@ class DocumentProcessTool(
         name = "document",
         type = "string",
         description = "Document reference: the D# number from document_list, the exact file name, or the document id.",
-        required = true
+        required = true,
+        aliases = listOf("doc", "source", "file")
       ),
       ToolParameter(
         name = "format",
         type = "string",
         description = "Output format to generate.",
         required = true,
-        enumValues = listOf("docx", "xlsx", "markdown", "pdf")
+        enumValues = listOf("docx", "xlsx", "markdown", "pdf"),
+        aliases = listOf("target_format", "output_format")
       ),
       ToolParameter(
         name = "output_name",
         type = "string",
         description = "Optional base file name for the output (without extension). Defaults to the source document name.",
-        required = false
+        required = false,
+        aliases = listOf("outputName", "name", "filename")
       ),
       ToolParameter(
         name = "target_dir",
         type = "string",
         description = "Optional workspace-relative directory for the output file (default: workspace root).",
-        required = false
+        required = false,
+        aliases = listOf("targetDir", "dir", "directory")
       )
     )
   )
@@ -332,6 +346,7 @@ class DocumentProcessTool(
     } catch (de: DocumentException) {
       invalidArguments(callId, arguments, startTime, de.message ?: "Document processing failed.")
     } catch (e: Exception) {
+      if (e is CancellationException) throw e
       ToolResult(
         callId = callId,
         toolName = name,
@@ -380,7 +395,8 @@ class ReadImageTool(
         name = "path",
         type = "string",
         description = "Workspace-relative path to the image file to read/transcribe (e.g. 'receipt.jpg', 'diagram.png', 'scan.webp').",
-        required = true
+        required = true,
+        aliases = listOf("file", "image", "image_path", "imagePath", "filePath")
       ),
       ToolParameter(
         name = "force_cloud",
@@ -441,6 +457,7 @@ class ReadImageTool(
         sb.append("Warnings: ").append(res.warnings.joinToString("; ")).append("\n")
       }
       val outText = sb.toString().trim()
+      val toolOutcome = if (res.fullText.isBlank() && res.tables.isEmpty()) ToolExecutionOutcome.CONDITION_NOT_FOUND else ToolExecutionOutcome.SUCCESS_WITH_RESULTS
       ToolResult(
         callId = callId,
         toolName = name,
@@ -450,9 +467,12 @@ class ReadImageTool(
         error = null,
         duration = System.currentTimeMillis() - startTime,
         stdout = outText,
-        exitCode = 0
+        exitCode = 0,
+        outcome = toolOutcome,
+        responseMetadata = mapOf("engine" to res.engine, "tablesCount" to res.tables.size)
       )
     } catch (e: Exception) {
+      if (e is CancellationException) throw e
       ToolResult(
         callId = callId,
         toolName = name,

@@ -355,6 +355,7 @@ class AgentViewModel(
 
   init {
     try {
+      ArtifactDownloader.defaultWorkspaceDir = engine.workspaceDir
       engine.mcpManager = mcpManager
       AgentServiceBridge.engine = engine
       engine.approvalManager.policy = _approvalPolicy.value
@@ -997,6 +998,7 @@ class AgentViewModel(
       refreshExplorer()
       filename
     } catch (e: Throwable) {
+      android.util.Log.e("AgentViewModel", "Failed to save transcript to workspace", e)
       ""
     }
   }
@@ -1059,6 +1061,11 @@ class AgentViewModel(
   fun stopExecution() {
     AgentExecutionService.stop(getApplication())
     engine.cancel()
+  }
+
+  fun pauseExecution() {
+    AgentExecutionService.stop(getApplication())
+    engine.pauseTask()
   }
 
   fun resetWorkspace(cleanFiles: Boolean = true) {
@@ -1196,6 +1203,9 @@ class AgentViewModel(
         !file.name.startsWith(".git") &&
         !file.name.startsWith(".e2b_session") &&
         !file.name.startsWith(".sessions") &&
+        !file.name.startsWith(".observations") &&
+        !file.name.startsWith(".artifacts") &&
+        !file.name.startsWith(".mcp_data") &&
         !file.name.startsWith(".tmp_")
       }.map { file ->
         val fileRel = PathSecurity.getRelativePath(workspaceDir, file)
@@ -1253,7 +1263,9 @@ class AgentViewModel(
             }
           }
         }
-      } catch (_: Exception) {}
+      } catch (e: Exception) {
+        android.util.Log.e("AgentViewModel", "Failed to rename explorer item: ${item.relativePath} -> $newName", e)
+      }
     }
   }
 
@@ -1277,7 +1289,9 @@ class AgentViewModel(
           engine.deliverableTracker.scanAndVerify(engine.artifactManager)
           loadExplorerDirectory(_currentExplorerPath.value)
         }
-      } catch (_: Exception) {}
+      } catch (e: Exception) {
+        android.util.Log.e("AgentViewModel", "Failed to duplicate explorer item: ${item.relativePath}", e)
+      }
     }
   }
 
@@ -1316,7 +1330,9 @@ class AgentViewModel(
         engine.artifactManager.registerArtifact(relPath)
         engine.deliverableTracker.scanAndVerify(engine.artifactManager)
         loadExplorerDirectory(_currentExplorerPath.value)
-      } catch (_: Exception) {}
+      } catch (e: Exception) {
+        android.util.Log.e("AgentViewModel", "Failed to create new file: $fileName", e)
+      }
     }
   }
 
@@ -1330,7 +1346,9 @@ class AgentViewModel(
         val newDir = File(targetDir, cleanName)
         newDir.mkdirs()
         loadExplorerDirectory(_currentExplorerPath.value)
-      } catch (_: Exception) {}
+      } catch (e: Exception) {
+        android.util.Log.e("AgentViewModel", "Failed to create new folder: $folderName", e)
+      }
     }
   }
 
@@ -1348,7 +1366,9 @@ class AgentViewModel(
         }
         engine.deliverableTracker.scanAndVerify(engine.artifactManager)
         loadExplorerDirectory(_currentExplorerPath.value)
-      } catch (_: Exception) {}
+      } catch (e: Exception) {
+        android.util.Log.e("AgentViewModel", "Failed to delete explorer item: ${item.relativePath}", e)
+      }
     }
   }
 
@@ -1365,7 +1385,8 @@ class AgentViewModel(
       navigateToFolder(item.name)
       return
     }
-    val artifact = Artifact(
+    val artifact = engine.artifactManager.getArtifact(item.relativePath) ?: Artifact(
+      id = engine.artifactManager.generateStableId(null, item.relativePath),
       path = item.relativePath,
       name = item.name,
       type = engine.artifactManager.determineFileType(item.name),
@@ -1377,7 +1398,8 @@ class AgentViewModel(
   }
 
   fun saveExplorerItem(context: Context, item: FileExplorerItem) {
-    val artifact = Artifact(
+    val artifact = engine.artifactManager.getArtifact(item.relativePath) ?: Artifact(
+      id = engine.artifactManager.generateStableId(null, item.relativePath),
       path = item.relativePath,
       name = item.name,
       type = engine.artifactManager.determineFileType(item.name),
@@ -1389,7 +1411,8 @@ class AgentViewModel(
   }
 
   fun shareExplorerItem(context: Context, item: FileExplorerItem) {
-    val artifact = Artifact(
+    val artifact = engine.artifactManager.getArtifact(item.relativePath) ?: Artifact(
+      id = engine.artifactManager.generateStableId(null, item.relativePath),
       path = item.relativePath,
       name = item.name,
       type = engine.artifactManager.determineFileType(item.name),

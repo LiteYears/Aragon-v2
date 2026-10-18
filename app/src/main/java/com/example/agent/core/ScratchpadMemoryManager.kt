@@ -86,7 +86,10 @@ data class AgentCheckpoint(
   val planItems: List<String> = emptyList(),
   val artifactPaths: List<String> = emptyList(),
   val totalFindingsCount: Int = 0,
-  val status: String = "IN_PROGRESS"
+  val status: String = "IN_PROGRESS",
+  val recoveryState: String? = null,
+  val currentPhase: String = "EXECUTION",
+  val persistentTaskJson: String? = null
 ) {
   fun toJsonString(): String {
     val obj = JSONObject()
@@ -107,6 +110,13 @@ data class AgentCheckpoint(
     obj.put("artifactPaths", artArr)
     obj.put("totalFindingsCount", totalFindingsCount)
     obj.put("status", status)
+    if (!recoveryState.isNullOrBlank()) {
+      obj.put("recoveryState", recoveryState)
+    }
+    obj.put("currentPhase", currentPhase)
+    if (!persistentTaskJson.isNullOrBlank()) {
+      obj.put("persistentTaskJson", persistentTaskJson)
+    }
     return obj.toString(2)
   }
 
@@ -129,7 +139,10 @@ data class AgentCheckpoint(
           planItems = jsonArrayToList(obj.optJSONArray("planItems")),
           artifactPaths = jsonArrayToList(obj.optJSONArray("artifactPaths")),
           totalFindingsCount = obj.optInt("totalFindingsCount", 0),
-          status = obj.optString("status", "IN_PROGRESS")
+          status = obj.optString("status", "IN_PROGRESS"),
+          recoveryState = obj.optString("recoveryState").takeIf { it.isNotBlank() },
+          currentPhase = obj.optString("currentPhase", "EXECUTION"),
+          persistentTaskJson = obj.optString("persistentTaskJson").takeIf { it.isNotBlank() }
         )
       } catch (_: Exception) {
         null
@@ -431,5 +444,20 @@ class ScratchpadMemoryManager(val workspaceDir: File) {
         tasksDir.deleteRecursively()
       }
     } catch (_: Exception) {}
+  }
+
+  /**
+   * Persists a structured PersistentTask to disk.
+   */
+  @Synchronized
+  fun saveTask(task: PersistentTask) {
+    saveTaskRecord(TaskRecord.fromPersistentTask(task))
+  }
+
+  /**
+   * Loads a structured PersistentTask from disk if available.
+   */
+  fun loadTask(taskId: String): PersistentTask? {
+    return loadTaskDetail(taskId)?.toPersistentTask()
   }
 }

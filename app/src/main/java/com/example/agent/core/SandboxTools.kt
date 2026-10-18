@@ -5,6 +5,7 @@ import com.alibaba.opensandbox.codeinterpreter.domain.models.execd.executions.Ru
 import com.alibaba.opensandbox.codeinterpreter.domain.models.execd.executions.SupportedLanguage
 import com.alibaba.opensandbox.sandbox.domain.models.execd.executions.RunCommandRequest
 import com.alibaba.opensandbox.sandbox.Sandbox
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -40,7 +41,8 @@ class CodeInterpreterTool(
         name = "code",
         type = "string",
         description = "The code snippet or script to execute.",
-        required = true
+        required = true,
+        aliases = listOf("script", "source", "snippet")
       ),
       ToolParameter(
         name = "language",
@@ -48,14 +50,16 @@ class CodeInterpreterTool(
         description = "Language runtime: 'python' (default), 'bash', or 'javascript'.",
         required = false,
         enumValues = listOf("python", "bash", "javascript"),
-        defaultValue = "python"
+        defaultValue = "python",
+        aliases = listOf("lang")
       ),
       ToolParameter(
         name = "timeoutSeconds",
         type = "number",
         description = "Maximum execution time in seconds (default: 30).",
         required = false,
-        defaultValue = 30
+        defaultValue = 30,
+        aliases = listOf("timeout", "timeout_seconds")
       )
     )
   )
@@ -165,6 +169,7 @@ class CodeInterpreterTool(
           )
         )
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,
@@ -299,6 +304,7 @@ class SandboxDiagnosticsTool(
           exitCode = 0
         )
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,
@@ -333,25 +339,29 @@ class BrowserAutomationTool(
         type = "string",
         description = "Browser action to execute: 'navigate', 'get_dom', 'click', 'fill_form', 'scroll'.",
         required = true,
-        enumValues = listOf("navigate", "get_dom", "click", "fill_form", "scroll")
+        enumValues = listOf("navigate", "get_dom", "click", "fill_form", "scroll"),
+        aliases = listOf("act", "op")
       ),
       ToolParameter(
         name = "url",
         type = "string",
         description = "URL to navigate to (required for 'navigate').",
-        required = false
+        required = false,
+        aliases = listOf("target_url", "link", "address")
       ),
       ToolParameter(
         name = "selector",
         type = "string",
         description = "Target CSS/DOM selector or element text for click or fill_form.",
-        required = false
+        required = false,
+        aliases = listOf("element", "target", "css")
       ),
       ToolParameter(
         name = "text",
         type = "string",
         description = "Text value to enter for fill_form.",
-        required = false
+        required = false,
+        aliases = listOf("value", "input")
       ),
       ToolParameter(
         name = "scrollDirection",
@@ -359,7 +369,8 @@ class BrowserAutomationTool(
         description = "Scroll direction: 'up' or 'down' (default: 'down').",
         required = false,
         enumValues = listOf("up", "down"),
-        defaultValue = "down"
+        defaultValue = "down",
+        aliases = listOf("scroll_direction", "direction")
       )
     )
   )
@@ -450,6 +461,7 @@ class BrowserAutomationTool(
               metadata = mapOf("currentUrl" to currentUrl, "title" to doc.title)
             )
           } catch (e: Exception) {
+            if (e is CancellationException) throw e
             ToolResult(
               callId = callId,
               toolName = name,
@@ -580,6 +592,7 @@ class BrowserAutomationTool(
               metadata = mapOf("currentUrl" to currentUrl, "title" to doc.title)
             )
           } catch (e: Exception) {
+            if (e is CancellationException) throw e
             ToolResult(
               callId = callId,
               toolName = name,
@@ -700,6 +713,7 @@ class BrowserAutomationTool(
               metadata = mapOf("currentUrl" to currentUrl, "title" to doc.title, "method" to formTarget.method)
             )
           } catch (e: Exception) {
+            if (e is CancellationException) throw e
             ToolResult(
               callId = callId,
               toolName = name,
@@ -881,20 +895,23 @@ class DeepWebResearchTool(
         name = "query",
         type = "string",
         description = "The research query or topic to investigate in depth.",
-        required = true
+        required = true,
+        aliases = listOf("topic", "prompt", "search", "q")
       ),
       ToolParameter(
         name = "maxSources",
         type = "number",
         description = "Number of sources to retrieve and inspect (default: 4, max: 8).",
         required = false,
-        defaultValue = 4
+        defaultValue = 4,
+        aliases = listOf("max_sources", "limit")
       ),
       ToolParameter(
         name = "focusDomain",
         type = "string",
         description = "Optional domain filter (e.g. 'github.com', 'wikipedia.org').",
-        required = false
+        required = false,
+        aliases = listOf("domain", "focus_domain")
       )
     )
   )
@@ -995,6 +1012,7 @@ class DeepWebResearchTool(
           metadata = mapOf("sourcesCount" to compiledFindings.size)
         )
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,
@@ -1041,19 +1059,22 @@ class E2BCloudTool(
         description = "The E2B operation: 'run_command' (default), 'run_code', 'list_sandboxes', or 'status'.",
         required = false,
         enumValues = listOf("run_command", "run_code", "list_sandboxes", "status"),
-        defaultValue = "run_command"
+        defaultValue = "run_command",
+        aliases = listOf("act", "op", "operation")
       ),
       ToolParameter(
         name = "command",
         type = "string",
         description = "Shell command to execute in the E2B microVM (required for action='run_command').",
-        required = false
+        required = false,
+        aliases = listOf("cmd", "c")
       ),
       ToolParameter(
         name = "code",
         type = "string",
         description = "Code snippet to run in the E2B microVM (required for action='run_code').",
-        required = false
+        required = false,
+        aliases = listOf("script", "source", "snippet")
       ),
       ToolParameter(
         name = "language",
@@ -1061,7 +1082,8 @@ class E2BCloudTool(
         description = "Language runtime: 'python' (default), 'bash', or 'javascript'.",
         required = false,
         enumValues = listOf("python", "bash", "javascript"),
-        defaultValue = "python"
+        defaultValue = "python",
+        aliases = listOf("lang")
       ),
       ToolParameter(
         name = "template",
@@ -1083,7 +1105,8 @@ class E2BCloudTool(
       val startTime = System.currentTimeMillis()
       val action = arguments["action"]?.toString()?.trim()?.lowercase() ?: "run_command"
 
-      when (action) {
+      try {
+        when (action) {
         "status" -> {
           val isOnline = e2bProvider.ping()
           val sandboxes = e2bProvider.listActiveSandboxes()
@@ -1212,6 +1235,22 @@ class E2BCloudTool(
             artifacts = artifacts
           )
         }
+      }
+    } catch (ce: CancellationException) {
+      throw ce
+    } catch (e: Exception) {
+        ToolResult(
+          callId = callId,
+          toolName = name,
+          status = ToolStatus.FAILED,
+          arguments = arguments,
+          output = null,
+          error = "E2B Cloud operation failed: ${e.message}",
+          errorType = ToolErrorCode.SANDBOX_INFRA_ERROR,
+          duration = System.currentTimeMillis() - startTime,
+          exitCode = 1,
+          artifacts = artifactManager.getArtifacts()
+        )
       }
     }
 }

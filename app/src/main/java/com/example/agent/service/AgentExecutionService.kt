@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
 import com.example.agent.core.AgentStatus
@@ -74,11 +75,13 @@ class AgentExecutionService : Service() {
         startForeground(NOTIFICATION_ID, notification)
       }
       true
-    } catch (_: Throwable) {
+    } catch (t: Throwable) {
+      Log.w(TAG, "startForeground with TYPE_DATA_SYNC failed; attempting generic startForeground fallback", t)
       try {
         startForeground(NOTIFICATION_ID, notification)
         true
-      } catch (_: Throwable) {
+      } catch (t2: Throwable) {
+        Log.e(TAG, "Generic startForeground also failed", t2)
         false
       }
     }
@@ -153,7 +156,9 @@ class AgentExecutionService : Service() {
             }
             AgentStatus.IDLE -> {}
           }
-        } catch (_: Throwable) {}
+        } catch (t: Throwable) {
+          Log.w(TAG, "Failed to update foreground notification for state: ${state.status}", t)
+        }
       }
     }
   }
@@ -247,6 +252,7 @@ class AgentExecutionService : Service() {
   }
 
   companion object {
+    private const val TAG = "AgentExecutionService"
     const val CHANNEL_ID = "aragon_agent_execution_channel"
     const val NOTIFICATION_ID = 1001
     const val ACTION_START = "com.example.agent.START_TASK"
@@ -264,7 +270,9 @@ class AgentExecutionService : Service() {
         } else {
           context.startService(intent)
         }
-      } catch (_: Exception) {}
+      } catch (e: Exception) {
+        Log.e("AgentExecutionService", "Failed to start AgentExecutionService", e)
+      }
     }
 
     fun stop(context: Context) {
@@ -273,7 +281,9 @@ class AgentExecutionService : Service() {
           action = ACTION_STOP
         }
         context.startService(intent)
-      } catch (_: Exception) {}
+      } catch (e: Exception) {
+        Log.e("AgentExecutionService", "Failed to stop AgentExecutionService", e)
+      }
     }
   }
 }

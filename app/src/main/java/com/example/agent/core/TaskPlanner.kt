@@ -49,17 +49,25 @@ data class ReflectionOutcome(
  * retries, todo list state, capability caching, and reflection.
  */
 class TaskPlanner(private val goal: String) {
-  val envIndex = EnvironmentStateIndex()
   private val steps = mutableListOf<PlanStep>()
   private val todos = mutableListOf<TodoItem>()
   private val capabilityCache = mutableMapOf<String, String>() // "AVAILABLE", "UNAVAILABLE", "UNKNOWN"
   private val capabilityFailureCounts = mutableMapOf<String, Int>()
+
+  private var currentPhase: TaskPhase = TaskPhase.DISCOVERY
+  private val actionableSteps = mutableListOf<ActionableStep>()
+  private val completionEvidence = mutableListOf<CompletionEvidenceItem>()
+  private val observations = mutableListOf<String>()
+  private val generatedArtifacts = mutableListOf<String>()
 
   private var revision = 0
   private var replanReason: String? = null
   private var consecutiveFailures = 0
   private var lastToolName: String? = null
   private var noProgressTurnCount = 0
+
+  fun getCurrentPhase(): TaskPhase = currentPhase
+  fun setPhase(phase: TaskPhase) { currentPhase = phase }
 
   fun recordProgress(madeProgress: Boolean = true) {
     if (madeProgress) {
@@ -77,6 +85,10 @@ class TaskPlanner(private val goal: String) {
   fun acceptModelPlan(planText: String?) {
     val proposed = parsePlan(planText)
     if (proposed.isEmpty()) return
+
+    if (currentPhase == TaskPhase.DISCOVERY) {
+      currentPhase = TaskPhase.PLANNING
+    }
 
     val currentDescriptions = steps.map { normalize(it.description) }
     val proposedNormalized = proposed.map { normalize(it) }
@@ -131,6 +143,50 @@ class TaskPlanner(private val goal: String) {
       }
       todos.clear()
       todos.addAll(newTodos)
+    }
+
+    // Synchronize first-class ActionableSteps with dependency awareness and history preservation
+    val existingActionableByNorm = actionableSteps.associateBy { normalize(it.description) }
+    val newActionableSteps = mutableListOf<ActionableStep>()
+
+    proposed.forEachIndexed { index, description ->
+      val stepNum = index + 1
+      val norm = normalize(description)
+      val existing = existingActionableByNorm[norm]
+      if (existing != null) {
+        newActionableSteps.add(existing.copy(stepNumber = stepNum))
+      } else {
+        val stepId = "step_${stepNum}"
+        val deps = extractDependencies(description, index, newActionableSteps)
+        newActionableSteps.add(
+          ActionableStep(
+            id = stepId,
+            stepNumber = stepNum,
+            description = description,
+            phase = TaskPhase.EXECUTION,
+            status = ActionExecutionStatus.PLANNED,
+            dependencies = deps
+          )
+        )
+      }
+    }
+
+    // Preserve previously completed steps and mark active steps omitted from revised plan as SUPERSEDED
+    for (oldStep in actionableSteps) {
+      if (newActionableSteps.none { it.id == oldStep.id }) {
+        if (oldStep.status == ActionExecutionStatus.COMPLETED) {
+          newActionableSteps.add(oldStep)
+        } else {
+          newActionableSteps.add(oldStep.copy(status = ActionExecutionStatus.SUPERSEDED))
+        }
+      }
+    }
+
+    actionableSteps.clear()
+    actionableSteps.addAll(newActionableSteps.sortedBy { it.stepNumber })
+
+    if (currentPhase == TaskPhase.PLANNING || currentPhase == TaskPhase.DISCOVERY) {
+      currentPhase = TaskPhase.EXECUTION
     }
 
     revision++
@@ -357,8 +413,27 @@ class TaskPlanner(private val goal: String) {
 
   fun context(): String {
     val sb = StringBuilder()
-    if (steps.isNotEmpty()) {
-      sb.appendLine("EXECUTION PLAN (revision $revision; goal: $goal):")
+    sb.appendLine("TASK PHASE: [${currentPhase.name}] (revision $revision; goal: $goal)")
+
+    if (actionableSteps.isNotEmpty()) {
+      sb.appendLine("ACTIONABLE STEPS (Dependencies & Execution State):")
+      actionableSteps.forEach { step ->
+        val depText = if (step.dependencies.isNotEmpty()) " [Requires: ${step.dependencies.joinToString()}]" else ""
+        val toolText = if (!step.assignedTool.isNullOrBlank()) " (tool: ${step.assignedTool})" else ""
+        val attemptText = if (step.attempts > 0) " (attempts: ${step.attempts})" else ""
+        val statusTag = "[${step.status.name}]"
+        sb.appendLine("${step.stepNumber}. $statusTag ${step.id}: ${step.description}$depText$toolText$attemptText")
+        if (!step.lastError.isNullOrBlank()) {
+          sb.appendLine("   Last error: ${step.lastError}")
+        }
+      }
+
+      val readySteps = getReadySteps()
+      if (readySteps.isNotEmpty()) {
+        sb.appendLine("READY FOR EXECUTION: [${readySteps.joinToString { "${it.id} (#${it.stepNumber})" }}]")
+      }
+    } else if (steps.isNotEmpty()) {
+      sb.appendLine("EXECUTION PLAN:")
       steps.forEach { step ->
         val matchingTodo = todos.find { normalize(it.description) == normalize(step.description) }
         val todoTag = if (matchingTodo != null) "[${matchingTodo.id}] " else ""
@@ -374,14 +449,12 @@ class TaskPlanner(private val goal: String) {
       }
     }
 
-    // Only output additional dynamic todos if they exist and are not already represented in steps
-    val stepNorms = steps.map { normalize(it.description) }.toSet()
-    val extraTodos = todos.filter { normalize(it.description) !in stepNorms }
-    if (steps.isNotEmpty() && extraTodos.isNotEmpty()) {
-      sb.appendLine("ADDITIONAL DYNAMIC TODOS:")
-      extraTodos.forEach { todo ->
-        val reasonStr = if (todo.abandonReason != null) " (Abandoned reason: ${todo.abandonReason})" else ""
-        sb.appendLine("- [${todo.status.uppercase()}] ${todo.id}: ${todo.description}$reasonStr")
+    if (completionEvidence.isNotEmpty()) {
+      sb.appendLine("VERIFIABLE COMPLETION EVIDENCE:")
+      completionEvidence.forEach { ev ->
+        val status = if (ev.verified) "VERIFIED" else "PENDING_VERIFICATION"
+        val target = if (!ev.target.isNullOrBlank()) " -> ${ev.target}" else ""
+        sb.appendLine("- [$status] ${ev.type}: ${ev.description}$target")
       }
     }
 
@@ -394,6 +467,217 @@ class TaskPlanner(private val goal: String) {
     return sb.toString().trim()
   }
 
+  fun getActionableSteps(): List<ActionableStep> = actionableSteps.toList()
+
+  fun getReadySteps(): List<ActionableStep> {
+    val completedIds = actionableSteps.filter { it.status == ActionExecutionStatus.COMPLETED }.map { it.id }.toSet()
+    return actionableSteps.filter { step ->
+      step.status == ActionExecutionStatus.PLANNED && step.dependencies.all { it in completedIds }
+    }
+  }
+
+  fun isStepReady(step: ActionableStep): Boolean {
+    val completedIds = actionableSteps.filter { it.status == ActionExecutionStatus.COMPLETED }.map { it.id }.toSet()
+    return step.dependencies.all { it in completedIds }
+  }
+
+  fun markStepDispatched(stepId: String, toolCallId: String, toolName: String) {
+    val idx = actionableSteps.indexOfFirst { it.id == stepId }
+    if (idx >= 0) {
+      val cur = actionableSteps[idx]
+      actionableSteps[idx] = cur.copy(
+        status = ActionExecutionStatus.DISPATCHED,
+        toolCallId = toolCallId,
+        assignedTool = toolName
+      )
+    }
+  }
+
+  fun markStepExecuting(stepId: String) {
+    val idx = actionableSteps.indexOfFirst { it.id == stepId }
+    if (idx >= 0) {
+      val cur = actionableSteps[idx]
+      actionableSteps[idx] = cur.copy(status = ActionExecutionStatus.EXECUTING)
+    }
+  }
+
+  fun markStepCompleted(
+    stepId: String,
+    observation: String? = null,
+    artifact: String? = null,
+    evidence: CompletionEvidenceItem? = null
+  ) {
+    val idx = actionableSteps.indexOfFirst { it.id == stepId }
+    if (idx >= 0) {
+      val cur = actionableSteps[idx]
+      val newObs = if (observation != null) cur.observations + observation else cur.observations
+      val newArts = if (artifact != null) cur.artifacts + artifact else cur.artifacts
+      val newEv = if (evidence != null) cur.completionEvidence + evidence else cur.completionEvidence
+      actionableSteps[idx] = cur.copy(
+        status = ActionExecutionStatus.COMPLETED,
+        observations = newObs,
+        artifacts = newArts,
+        completionEvidence = newEv
+      )
+      if (observation != null) recordObservation(observation)
+      if (artifact != null) recordArtifact(artifact)
+      if (evidence != null) recordEvidence(evidence)
+
+      // Sync legacy steps and todos
+      val norm = normalize(cur.description)
+      val stepIdx = steps.indexOfFirst { normalize(it.description) == norm }
+      if (stepIdx >= 0) steps[stepIdx] = steps[stepIdx].copy(status = PlanStepStatus.COMPLETED)
+      val todoItem = todos.find { normalize(it.description) == norm }
+      if (todoItem != null) todoItem.status = "done"
+    }
+  }
+
+  fun markStepFailed(stepId: String, error: String, unrecoverable: Boolean = false) {
+    val idx = actionableSteps.indexOfFirst { it.id == stepId }
+    if (idx >= 0) {
+      val cur = actionableSteps[idx]
+      val newStatus = if (unrecoverable) ActionExecutionStatus.SUPERSEDED else ActionExecutionStatus.FAILED
+      actionableSteps[idx] = cur.copy(
+        status = newStatus,
+        attempts = cur.attempts + 1,
+        lastError = error
+      )
+      if (unrecoverable) {
+        // Skip downstream dependent steps
+        actionableSteps.forEachIndexed { i, step ->
+          if (step.dependencies.contains(stepId) && step.status == ActionExecutionStatus.PLANNED) {
+            actionableSteps[i] = step.copy(
+              status = ActionExecutionStatus.SKIPPED,
+              lastError = "Prerequisite step '$stepId' failed unrecoverably: $error"
+            )
+          }
+        }
+      }
+    }
+  }
+
+  fun markStepSkipped(stepId: String, reason: String) {
+    val idx = actionableSteps.indexOfFirst { it.id == stepId }
+    if (idx >= 0) {
+      val cur = actionableSteps[idx]
+      actionableSteps[idx] = cur.copy(
+        status = ActionExecutionStatus.SKIPPED,
+        lastError = reason
+      )
+    }
+  }
+
+  fun recordEvidence(item: CompletionEvidenceItem) {
+    if (completionEvidence.none { it.type == item.type && it.target == item.target && it.verified == item.verified }) {
+      completionEvidence.add(item)
+    }
+  }
+
+  fun getCompletionEvidence(): List<CompletionEvidenceItem> = completionEvidence.toList()
+
+  fun recordArtifact(path: String) {
+    val clean = path.trim()
+    if (clean.isNotBlank() && !generatedArtifacts.contains(clean)) {
+      generatedArtifacts.add(clean)
+    }
+  }
+
+  fun recordObservation(obs: String) {
+    val clean = obs.trim()
+    if (clean.isNotBlank()) {
+      observations.add(clean)
+      if (observations.size > 50) {
+        observations.removeAt(0)
+      }
+    }
+  }
+
+  fun isAllRequiredStepsCompleted(): Boolean {
+    val active = actionableSteps.filter {
+      it.status != ActionExecutionStatus.SKIPPED && it.status != ActionExecutionStatus.SUPERSEDED
+    }
+    return active.isNotEmpty() && active.all { it.status == ActionExecutionStatus.COMPLETED }
+  }
+
+  fun toPersistentTask(
+    sessionId: String,
+    turn: Int,
+    maxTurns: Int = 50,
+    status: AgentStatus = AgentStatus.RUNNING,
+    error: String? = null,
+    conclusion: String? = null
+  ): PersistentTask {
+    return PersistentTask(
+      id = "task_" + UUID.randomUUID().toString().take(8),
+      sessionId = sessionId,
+      requestedOutcome = goal,
+      currentPhase = currentPhase,
+      actionableSteps = actionableSteps.toList(),
+      executionStatus = status,
+      observations = observations.toList(),
+      generatedArtifacts = generatedArtifacts.toList(),
+      completionEvidence = completionEvidence.toList(),
+      revision = revision,
+      currentTurn = turn,
+      maxTurns = maxTurns,
+      error = error,
+      conclusion = conclusion
+    )
+  }
+
+  fun restoreFromPersistentTask(task: PersistentTask) {
+    currentPhase = task.currentPhase
+    revision = task.revision
+    actionableSteps.clear()
+    actionableSteps.addAll(task.actionableSteps)
+    completionEvidence.clear()
+    completionEvidence.addAll(task.completionEvidence)
+    observations.clear()
+    observations.addAll(task.observations)
+    generatedArtifacts.clear()
+    generatedArtifacts.addAll(task.generatedArtifacts)
+
+    // Sync legacy steps and todos
+    steps.clear()
+    task.actionableSteps.forEach { aStep ->
+      val pStatus = when (aStep.status) {
+        ActionExecutionStatus.COMPLETED -> PlanStepStatus.COMPLETED
+        ActionExecutionStatus.EXECUTING, ActionExecutionStatus.DISPATCHED -> PlanStepStatus.IN_PROGRESS
+        ActionExecutionStatus.FAILED -> PlanStepStatus.FAILED
+        ActionExecutionStatus.SKIPPED, ActionExecutionStatus.SUPERSEDED -> PlanStepStatus.BLOCKED
+        ActionExecutionStatus.PLANNED -> PlanStepStatus.PENDING
+      }
+      steps.add(
+        PlanStep(
+          number = aStep.stepNumber,
+          description = aStep.description,
+          status = pStatus,
+          attempts = aStep.attempts,
+          lastError = aStep.lastError
+        )
+      )
+    }
+
+    todos.clear()
+    task.actionableSteps.forEach { aStep ->
+      val todoStatus = when (aStep.status) {
+        ActionExecutionStatus.COMPLETED -> "done"
+        ActionExecutionStatus.EXECUTING, ActionExecutionStatus.DISPATCHED -> "in_progress"
+        ActionExecutionStatus.SKIPPED, ActionExecutionStatus.SUPERSEDED -> "abandoned"
+        else -> "pending"
+      }
+      todos.add(
+        TodoItem(
+          id = aStep.id,
+          description = aStep.description,
+          status = todoStatus,
+          createdAtStep = 1,
+          assignedTool = aStep.assignedTool
+        )
+      )
+    }
+  }
+
   fun planDescriptions(): List<String> = steps.map { it.description }
 
   fun completedDescriptions(): List<String> = steps.filter { it.status == PlanStepStatus.COMPLETED }.map { it.description }
@@ -403,6 +687,55 @@ class TaskPlanner(private val goal: String) {
   }.map { it.description }
 
   fun isBlocked(): Boolean = steps.any { it.status == PlanStepStatus.BLOCKED }
+
+  fun setReplanReason(reason: String) {
+    replanReason = reason
+  }
+
+  fun markStepBlocked(stepNumber: Int, reason: String) {
+    val idx = steps.indexOfFirst { it.number == stepNumber }
+    if (idx >= 0) {
+      steps[idx] = steps[idx].copy(
+        status = PlanStepStatus.BLOCKED,
+        lastError = reason
+      )
+      replanReason = "Step $stepNumber blocked: $reason"
+    }
+  }
+
+  fun isStepIneffective(limit: Int = 3): Boolean {
+    val active = steps.firstOrNull { it.status == PlanStepStatus.IN_PROGRESS || it.status == PlanStepStatus.FAILED }
+    return active != null && active.attempts >= limit
+  }
+
+  private fun extractDependencies(description: String, currentStepIdx: Int, existingSteps: List<ActionableStep>): List<String> {
+    val depMatch = Regex("(?i)(?:\\[(?:deps?|after):\\s*([0-9,\\s]+)\\]|(?:depends on|after|prerequisite|requires)\\s*(?:step\\s*)?([0-9,\\s]+))").find(description)
+    if (depMatch != null) {
+      val rawNumbers = (depMatch.groupValues[1].ifBlank { depMatch.groupValues[2] })
+      val parsedStepNums = Regex("\\d+").findAll(rawNumbers).mapNotNull { it.value.toIntOrNull() }.toList()
+      val matchedIds = mutableListOf<String>()
+      for (num in parsedStepNums) {
+        val target = existingSteps.firstOrNull { it.stepNumber == num }
+        if (target != null) {
+          matchedIds.add(target.id)
+        } else {
+          matchedIds.add("step_$num")
+        }
+      }
+      if (matchedIds.isNotEmpty()) return matchedIds
+    }
+
+    val isExplicitConcurrent = description.contains("(parallel)", ignoreCase = true) ||
+      description.contains("(concurrent)", ignoreCase = true) ||
+      description.contains("[parallel]", ignoreCase = true)
+    if (isExplicitConcurrent) return emptyList()
+
+    if (currentStepIdx > 0 && currentStepIdx - 1 < existingSteps.size) {
+      return listOf(existingSteps[currentStepIdx - 1].id)
+    }
+
+    return emptyList()
+  }
 
   private fun parsePlan(planText: String?): List<String> {
     if (planText.isNullOrBlank()) return emptyList()
@@ -423,27 +756,6 @@ class TaskPlanner(private val goal: String) {
   }
 
   private fun normalize(value: String): String = value.lowercase(Locale.US).replace(Regex("\\s+"), " ").trim()
-
-  fun parseCrossEnvIntent(planText: String?): String? {
-    if (planText == null) return null
-    val regex = Regex("""cross_env\s*[:=]\s*\{?[^}]*action\s*[:=]\s*["']?(transfer|stay_in)["']?""", RegexOption.IGNORE_CASE)
-    val match = regex.find(planText)
-    if (match != null) return match.groupValues[1].lowercase()
-    if (planText.contains("\"action\": \"transfer\"", ignoreCase = true) || planText.contains("action: transfer", ignoreCase = true)) return "transfer"
-    if (planText.contains("\"action\": \"stay_in\"", ignoreCase = true) || planText.contains("action: stay_in", ignoreCase = true)) return "stay_in"
-    return null
-  }
-
-  fun validateCrossEnvPlan(
-    planText: String?,
-    toolCalls: List<ToolCall>,
-    workspaceDir: java.io.File,
-    isRemoteSandbox: Boolean
-  ): String? {
-    // E2B Cloud is the sole execution sandbox; files created via write_file/edit_file
-    // are automatically pushed to E2B /home/user, so cross-env declarations are unnecessary.
-    return null
-  }
 
   companion object {
     const val MAX_PLAN_STEPS = 12

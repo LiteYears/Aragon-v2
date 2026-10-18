@@ -1,5 +1,6 @@
 package com.example.agent.core
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -28,19 +29,22 @@ class EnvironmentCapabilityTool(
         description = "Capability action to perform: 'check' (default), 'provision', 'list', 'diagnose', or 'smoke_test'.",
         required = false,
         enumValues = listOf("check", "provision", "list", "diagnose", "smoke_test", "verify"),
-        defaultValue = "check"
+        defaultValue = "check",
+        aliases = listOf("act", "operation", "op")
       ),
       ToolParameter(
         name = "capability",
         type = "string",
         description = "Capability identifier (e.g. 'docs.docx', 'data.pandas', 'web.beautifulsoup4', 'ocr.tesseract', 'data.numpy'). Required for 'check' and 'provision'.",
-        required = false
+        required = false,
+        aliases = listOf("cap", "id", "capId", "capability_id")
       ),
       ToolParameter(
         name = "category",
         type = "string",
         description = "Optional category filter for 'list': 'CORE_EXECUTION', 'WEB_RESEARCH', 'DOCUMENTS', 'OCR_IMAGE', 'DATA_ANALYSIS', 'WEB_APPS', 'SYSTEM_UTILITIES'.",
-        required = false
+        required = false,
+        aliases = listOf("filter")
       )
     )
   )
@@ -217,6 +221,7 @@ class EnvironmentCapabilityTool(
           }
         }
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,

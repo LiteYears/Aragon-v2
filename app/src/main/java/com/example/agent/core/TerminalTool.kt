@@ -62,48 +62,55 @@ class TerminalTool(
         name = "command",
         type = "string",
         description = "The shell command to run (e.g. 'ls -la', 'head -n 20 data.csv', 'cat report.md').",
-        required = true
+        required = true,
+        aliases = listOf("cmd", "c")
       ),
       ToolParameter(
         name = "timeoutSeconds",
         type = "number",
         description = "Maximum execution time in seconds (default: 30).",
         required = false,
-        defaultValue = 30
+        defaultValue = 30,
+        aliases = listOf("timeout", "timeout_seconds")
       ),
       ToolParameter(
         name = "best_effort",
         type = "boolean",
         description = "If true, allows non-fatal error patterns (like 2>/dev/null) and captures stderr with [SUPPRESSED_STDERR] tag.",
         required = false,
-        defaultValue = false
+        defaultValue = false,
+        aliases = listOf("bestEffort")
       ),
       ToolParameter(
         name = "max_output",
         type = "number",
         description = "Optional byte limit for captured stdout (default: 32768).",
         required = false,
-        defaultValue = 32768
+        defaultValue = 32768,
+        aliases = listOf("maxOutput")
       ),
       ToolParameter(
         name = "cwd",
         type = "string",
-        description = "Optional working directory relative to workspace root.",
-        required = false
+        description = "Optional working directory relative to workspace root (/home/user).",
+        required = false,
+        aliases = listOf("workingDirectory", "working_dir", "dir")
       ),
       ToolParameter(
         name = "allow_nonzero",
         type = "boolean",
         description = "If true, treats expected nonzero exit codes as successful probe outcomes.",
         required = false,
-        defaultValue = false
+        defaultValue = false,
+        aliases = listOf("allowNonzero", "allowNonZero")
       ),
       ToolParameter(
         name = "reset_cwd",
         type = "boolean",
         description = "If true, resets working directory back to workspace root (/home/user).",
         required = false,
-        defaultValue = false
+        defaultValue = false,
+        aliases = listOf("resetWorkingDirectory", "reset_working_directory")
       )
     )
   )
@@ -209,7 +216,7 @@ class TerminalTool(
       val defaultRemoteDir = "/home/user"
       val remoteWorkingDir = sessionWorkingDirs.getOrDefault(currentSession, defaultRemoteDir)
       val cdPrefix = if (remoteWorkingDir != defaultRemoteDir) "cd '$remoteWorkingDir' && " else ""
-      val wrappedRemoteCmd = "trap 'echo \"__ARAGON_CWD__:\$PWD\"' EXIT; $cdPrefix$effectiveCommand"
+      val wrappedRemoteCmd = "set -o pipefail; trap 'echo \"__ARAGON_CWD__:\$PWD\"' EXIT; $cdPrefix$effectiveCommand"
 
       val req = RunCommandRequest.builder()
         .command(wrappedRemoteCmd)
@@ -236,9 +243,14 @@ class TerminalTool(
       val rawStderr = execution.stderrText()
       val exitCode = execution.exitCode ?: 0
 
+      val isSearchCmd = ObservationPayloadPolicy.isSearchOrValidationCommand(effectiveCommand)
+      val isValidationCmd = ObservationPayloadPolicy.isValidationCheckCommand(effectiveCommand)
+      val isDiffCmd = effectiveCommand.trim().startsWith("diff ")
+
       val allowNonZero = (arguments["allow_nonzero"] as? Boolean) == true || (arguments["allowNonZero"] as? Boolean) == true
       val expectedCodes = (arguments["expectedExitCodes"] as? List<*>)?.mapNotNull { (it as? Number)?.toInt() }.orEmpty()
-      val isExpectedNonZero = (exitCode in expectedCodes) || (allowNonZero && exitCode != 0) || (isBestEffort && exitCode == 1)
+      val isExpectedNonZero = (exitCode in expectedCodes) || (allowNonZero && exitCode != 0) || (isBestEffort && exitCode == 1) ||
+        (exitCode == 1 && (isSearchCmd || isValidationCmd || isDiffCmd) && rawStderr.isBlank())
       val isSuccess = (exitCode == 0 || isExpectedNonZero) && execution.error == null
 
       // Apply structured error taxonomy classification
@@ -276,14 +288,25 @@ class TerminalTool(
         else -> ToolErrorCode.PROCESS_FAILED
       }
 
-      // Apply Observation Payload Policy (32KB cap + spillover)
+      // Apply Observation Payload Policy (configurable output limits + spillover)
       val formattedObs = ObservationPayloadPolicy.processOutput(
         workspaceDir = workspaceDir,
         stepId = callId,
         rawStdout = rawStdout,
         rawStderr = rawStderr,
         customMaxBytes = maxOutputBytes,
-        isSuppressedStderr = lintResult.isSuppressedStderr
+        isSuppressedStderr = lintResult.isSuppressedStderr,
+        fileExtension = "txt"
+      )
+
+      val outcome = ObservationPayloadPolicy.classifyOutcome(
+        toolName = name,
+        status = if (isSuccess) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
+        exitCode = exitCode,
+        stdout = rawStdout,
+        stderr = rawStderr,
+        command = effectiveCommand,
+        isTruncated = formattedObs.isTruncated
       )
 
       val structuredJson = JSONObject().apply {
@@ -312,6 +335,7 @@ class TerminalTool(
           put("truncated", true)
           put("fullOutputPath", formattedObs.spilloverPath)
         }
+        put("outcome", outcome.code)
         put("backend", provider.name)
         put("environment", "E2B_CLOUD")
         put("sessionId", currentSession)
@@ -334,12 +358,27 @@ class TerminalTool(
         capabilities = setOf("shell", "process_execution")
       )
 
+      val usefulOutput = when {
+        !isSuccess -> structuredJson
+        outcome == ToolExecutionOutcome.CONDITION_NOT_FOUND -> {
+          when {
+            isSearchCmd -> "Condition not found: 0 matching lines found for search in '$effectiveCommand'."
+            isValidationCmd -> "Validation condition evaluated to FALSE (exit code $exitCode)."
+            else -> formattedObs.contextPayload.ifEmpty { "Condition not found (0 results)." }
+          }
+        }
+        outcome == ToolExecutionOutcome.SUCCESS_EMPTY -> {
+          "(command executed successfully with exit code 0, no output produced)"
+        }
+        else -> formattedObs.contextPayload
+      }
+
       return@withContext ToolResult(
         callId = callId,
         toolName = name,
         status = if (isSuccess) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
         arguments = arguments,
-        output = if (isSuccess) formattedObs.contextPayload.ifEmpty { "(command executed with exit code 0 on ${provider.name})" } else structuredJson,
+        output = usefulOutput,
         error = if (isSuccess) null else (execution.error?.value ?: rawStderr.ifBlank { "Remote process exited with code $exitCode" }),
         errorType = errorType,
         duration = duration,
@@ -353,9 +392,18 @@ class TerminalTool(
           "environment" to "E2B_CLOUD",
           "sessionId" to currentSession,
           "isTruncated" to formattedObs.isTruncated,
-          "spilloverPath" to (formattedObs.spilloverPath ?: "")
+          "spilloverPath" to (formattedObs.spilloverPath ?: ""),
+          "outcome" to outcome.code
         ),
-        executionContext = remoteExecContext
+        executionContext = remoteExecContext,
+        outcome = outcome,
+        truncation = formattedObs.truncationDetails,
+        responseMetadata = mapOf(
+          "command" to effectiveCommand,
+          "exitCode" to exitCode,
+          "isSearch" to isSearchCmd,
+          "isValidation" to isValidationCmd
+        )
       )
     } catch (ce: CancellationException) {
       ToolResult(

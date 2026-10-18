@@ -106,20 +106,22 @@ class ToolExecutor(
     }
 
     // Step 4: Schema Validation
-    val validationError = registry.validate(normalizedCall)
-    if (validationError != null) {
+    val validationResult = registry.validateStructured(normalizedCall)
+    if (!validationResult.isValid) {
+      val schemaDetails = tool.schema.toJsonSchemaString()
       val result = ToolResult(
         callId = normalizedCall.callId,
         toolName = tool.name,
         status = ToolStatus.FAILED,
         arguments = normalizedCall.arguments,
         output = null,
-        error = "Argument validation error: $validationError",
+        error = "Argument validation error for tool '${tool.name}': ${validationResult.errorMessage}. Parameter specification:\n$schemaDetails",
         errorType = ToolErrorCode.INVALID_ARGUMENTS,
         duration = System.currentTimeMillis() - startTime,
         exitCode = 1,
         artifacts = artifactManager.getArtifacts(),
-        executionContext = resolvedContext
+        executionContext = resolvedContext,
+        outcome = ToolExecutionOutcome.EXECUTION_FAILED
       )
       executionHistory[normalizedCall.callId] = result
       return result
@@ -152,9 +154,18 @@ class ToolExecutor(
     val result = try {
       withTimeout(tool.defaultTimeoutMs) {
         val execRes = tool.execute(normalizedCall.callId, normalizedArgs, resolvedContext)
-        if (execRes.executionContext == null) {
-          execRes.copy(executionContext = resolvedContext)
-        } else execRes
+        val classifiedOutcome = ObservationPayloadPolicy.classifyOutcome(
+          toolName = tool.name,
+          status = execRes.status,
+          exitCode = execRes.exitCode,
+          stdout = execRes.stdout ?: execRes.output,
+          stderr = execRes.stderr,
+          command = normalizedArgs["command"]?.toString(),
+          isTruncated = execRes.truncation.isTruncated,
+          explicitOutcome = if (execRes.outcome != ToolExecutionOutcome.SUCCESS_WITH_RESULTS) execRes.outcome else null
+        )
+        val contextAttached = if (execRes.executionContext == null) execRes.copy(executionContext = resolvedContext) else execRes
+        contextAttached.copy(outcome = classifiedOutcome)
       }
     } catch (tce: TimeoutCancellationException) {
       ToolResult(
@@ -245,12 +256,31 @@ class ToolExecutor(
       else -> null
     }
 
-    val summary = if (result.isSuccess) {
-      val outPreview = usefulOutput?.lines()?.firstOrNull()?.take(80) ?: "ok"
-      "Tool '${result.toolName}' succeeded in ${result.duration}ms: $outPreview"
-    } else {
-      val errText = result.error ?: result.stderr ?: "Unknown failure"
-      "Tool '${result.toolName}' failed (${result.errorType?.name ?: "FAILED"}): ${errText.take(120)}"
+    val summary = when (result.outcome) {
+      ToolExecutionOutcome.EXECUTION_FAILED -> {
+        val errText = result.error ?: result.stderr ?: "Unknown failure"
+        "Tool '${result.toolName}' failed (${result.errorType?.name ?: "FAILED"}): ${errText.take(120)}"
+      }
+      ToolExecutionOutcome.CONDITION_NOT_FOUND -> {
+        val preview = usefulOutput?.lines()?.firstOrNull()?.take(100) ?: "Condition not met"
+        "Tool '${result.toolName}' condition not found: $preview"
+      }
+      ToolExecutionOutcome.SUCCESS_EMPTY -> {
+        "Tool '${result.toolName}' succeeded with no output in ${result.duration}ms"
+      }
+      ToolExecutionOutcome.TRUNCATED_OR_PARTIAL -> {
+        val bytesInfo = if (result.truncation.originalBytes > 0) "${result.truncation.capturedBytes / 1024}KB of ${result.truncation.originalBytes / 1024}KB" else "partially retrieved"
+        val outPreview = usefulOutput?.lines()?.firstOrNull()?.take(80) ?: "truncated output"
+        "Tool '${result.toolName}' succeeded (truncated: $bytesInfo) in ${result.duration}ms: $outPreview"
+      }
+      ToolExecutionOutcome.UNVERIFIED -> {
+        val preview = usefulOutput?.lines()?.firstOrNull()?.take(100) ?: "unverified outcome"
+        "Tool '${result.toolName}' completed but outcome could not be verified: $preview"
+      }
+      ToolExecutionOutcome.SUCCESS_WITH_RESULTS -> {
+        val outPreview = usefulOutput?.lines()?.firstOrNull()?.take(80) ?: "ok"
+        "Tool '${result.toolName}' succeeded in ${result.duration}ms: $outPreview"
+      }
     }
 
     val obs = Observation(
@@ -258,6 +288,7 @@ class ToolExecutor(
       callId = result.callId,
       toolName = result.toolName,
       status = result.status,
+      outcome = result.outcome,
       isSuccess = result.isSuccess,
       inputsSummary = inputsSummary,
       result = usefulOutput,
@@ -270,7 +301,9 @@ class ToolExecutor(
       artifacts = result.artifacts,
       recoverability = result.errorType?.recoveryHint,
       summary = summary,
-      executionContext = result.executionContext
+      executionContext = result.executionContext,
+      truncation = result.truncation,
+      responseMetadata = result.responseMetadata
     )
 
     return obs.copy(rawOutput = obs.toAuthoritativePromptText())

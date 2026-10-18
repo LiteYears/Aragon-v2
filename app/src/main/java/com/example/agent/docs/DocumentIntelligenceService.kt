@@ -7,6 +7,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import com.example.agent.core.Artifact
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
@@ -224,6 +225,56 @@ class DocumentIntelligenceService(
     } catch (e: Exception) {
       temp.delete()
       ImportOutcome(null, displayName, false, e.message ?: "Import failed")
+    }
+  }
+
+  /**
+   * Registers a verified generated deliverable artifact directly into the document database (Room).
+   */
+  suspend fun registerArtifactDocument(artifact: Artifact): Boolean = withContext(Dispatchers.IO) {
+    try {
+      val file = File(artifact.canonicalPath.ifBlank { artifact.absolutePath })
+      if (!file.exists() || !file.isFile || file.length() == 0L) return@withContext false
+
+      val sha = artifact.sha256 ?: DocumentDigest.sha256(file)
+      val existing = repository.findBySha(sha)
+      if (existing != null) {
+        return@withContext true
+      }
+
+      val now = System.currentTimeMillis()
+      val detection = converter.detect(file, artifact.name)
+      val entity = DocumentEntity(
+        id = artifact.id,
+        displayName = DocumentText.sanitizeDisplayName(artifact.name),
+        type = detection.type.name,
+        sizeBytes = file.length(),
+        sha256 = sha,
+        status = DocumentStatus.READY.name,
+        error = null,
+        pageCount = 0,
+        sheetCount = 0,
+        engineLabel = "ARAGON_ARTIFACT_PIPELINE",
+        warningsJson = "[]",
+        inScope = true,
+        hasEmbeddings = false,
+        embeddingProvider = null,
+        embeddingModel = null,
+        embeddingDims = 0,
+        originalPath = file.canonicalPath,
+        structurePath = null,
+        createdAt = now,
+        updatedAt = now
+      )
+      repository.upsert(entity)
+      val current = _scope.value.toMutableSet()
+      current.add(artifact.id)
+      _scope.value = current
+      prefs.edit().putStringSet("documents_scope_ids", current).apply()
+      refreshDocuments()
+      true
+    } catch (_: Exception) {
+      false
     }
   }
 

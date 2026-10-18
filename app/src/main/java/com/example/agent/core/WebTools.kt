@@ -1,5 +1,6 @@
 package com.example.agent.core
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -8,6 +9,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -324,14 +326,16 @@ class WebSearchTool(private val isConfigured: Boolean = true) : Tool {
         name = "query",
         type = "string",
         description = "Keywords to search on the live web.",
-        required = true
+        required = true,
+        aliases = listOf("q", "search", "term", "prompt")
       ),
       ToolParameter(
         name = "maxResults",
         type = "number",
         description = "Maximum number of search results to return (default: 5, max: 10).",
         required = false,
-        defaultValue = 5
+        defaultValue = 5,
+        aliases = listOf("max_results", "limit")
       ),
       ToolParameter(
         name = "domain",
@@ -378,7 +382,7 @@ class WebSearchTool(private val isConfigured: Boolean = true) : Tool {
         val results = WebSearchEngine.search(effectiveQuery, maxResults)
 
         if (results.isEmpty()) {
-          val emptyMsg = "Web search for '$effectiveQuery' completed. 0 direct results returned."
+          val emptyMsg = "Web search for '$effectiveQuery' completed: 0 results found."
           return@withContext ToolResult(
             callId = callId,
             toolName = name,
@@ -388,7 +392,9 @@ class WebSearchTool(private val isConfigured: Boolean = true) : Tool {
             error = null,
             duration = System.currentTimeMillis() - startTime,
             stdout = emptyMsg,
-            exitCode = 0
+            exitCode = 0,
+            outcome = ToolExecutionOutcome.CONDITION_NOT_FOUND,
+            responseMetadata = mapOf("resultsCount" to 0, "query" to effectiveQuery)
           )
         }
 
@@ -425,9 +431,12 @@ class WebSearchTool(private val isConfigured: Boolean = true) : Tool {
           duration = System.currentTimeMillis() - startTime,
           stdout = out,
           exitCode = 0,
-          metadata = mapOf("resultsCount" to results.size)
+          outcome = ToolExecutionOutcome.SUCCESS_WITH_RESULTS,
+          metadata = mapOf("resultsCount" to results.size),
+          responseMetadata = mapOf("resultsCount" to results.size, "query" to effectiveQuery)
         )
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,
@@ -447,7 +456,7 @@ class WebSearchTool(private val isConfigured: Boolean = true) : Tool {
 /**
  * Opens and inspects a webpage, returning clean Markdown content and discovered links.
  */
-class WebOpenTool(private val isConfigured: Boolean = true) : Tool {
+class WebOpenTool(private val isConfigured: Boolean = true, var workspaceDir: File? = null) : Tool {
   override val name: String = "web_open"
   override val description: String =
     "Open and fetch a webpage URL, extracting clean Markdown text, publication date, metadata, and outgoing links for research."
@@ -458,14 +467,16 @@ class WebOpenTool(private val isConfigured: Boolean = true) : Tool {
         name = "url",
         type = "string",
         description = "Full HTTP or HTTPS URL to open and read.",
-        required = true
+        required = true,
+        aliases = listOf("uri", "link", "target_url", "address")
       ),
       ToolParameter(
         name = "maxChars",
         type = "number",
         description = "Maximum length of Markdown content to return (default: 8000).",
         required = false,
-        defaultValue = 8000
+        defaultValue = 8000,
+        aliases = listOf("max_chars", "limit")
       ),
       ToolParameter(
         name = "extractLinks",
@@ -549,6 +560,33 @@ class WebOpenTool(private val isConfigured: Boolean = true) : Tool {
         }
 
         val out = sb.toString().trim()
+        val isTruncated = doc.retrievedContent.contains("...[content truncated at")
+        val isContentBlank = doc.retrievedContent.isBlank()
+
+        var spilloverPath: String? = null
+        if (isTruncated && workspaceDir != null) {
+          try {
+            val obsDir = File(workspaceDir, ".observations").apply { mkdirs() }
+            val spillFile = File(obsDir, "web_${callId.replace(Regex("[^a-zA-Z0-9_-]"), "_")}.md")
+            spillFile.writeText(html, StandardCharsets.UTF_8)
+            spilloverPath = spillFile.absolutePath
+          } catch (_: Exception) {}
+        }
+
+        val outcome = when {
+          isContentBlank -> ToolExecutionOutcome.SUCCESS_EMPTY
+          isTruncated -> ToolExecutionOutcome.TRUNCATED_OR_PARTIAL
+          else -> ToolExecutionOutcome.SUCCESS_WITH_RESULTS
+        }
+
+        val truncDetails = TruncationDetails(
+          isTruncated = isTruncated,
+          originalBytes = html.toByteArray(StandardCharsets.UTF_8).size,
+          capturedBytes = out.toByteArray(StandardCharsets.UTF_8).size,
+          spilloverPath = spilloverPath,
+          inspectionHint = if (spilloverPath != null) "Full raw content saved at: $spilloverPath. Use read_file to inspect." else null
+        )
+
         ToolResult(
           callId = callId,
           toolName = name,
@@ -559,9 +597,13 @@ class WebOpenTool(private val isConfigured: Boolean = true) : Tool {
           duration = System.currentTimeMillis() - startTime,
           stdout = out,
           exitCode = 0,
-          metadata = mapOf("url" to url, "title" to doc.title, "linksCount" to doc.links.size)
+          outcome = outcome,
+          truncation = truncDetails,
+          metadata = mapOf("url" to url, "title" to doc.title, "linksCount" to doc.links.size),
+          responseMetadata = mapOf("url" to url, "title" to doc.title, "linksCount" to doc.links.size)
         )
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,
@@ -591,7 +633,8 @@ class WebExtractTool(private val isConfigured: Boolean = true) : Tool {
         name = "url",
         type = "string",
         description = "URL to extract structured data from.",
-        required = true
+        required = true,
+        aliases = listOf("uri", "link", "target_url", "address")
       ),
       ToolParameter(
         name = "extractionType",
@@ -599,7 +642,8 @@ class WebExtractTool(private val isConfigured: Boolean = true) : Tool {
         description = "Type of data: 'tables', 'metadata', 'links'. Default: 'tables'.",
         required = false,
         enumValues = listOf("tables", "metadata", "links"),
-        defaultValue = "tables"
+        defaultValue = "tables",
+        aliases = listOf("target", "extract", "mode")
       )
     )
   )
@@ -681,6 +725,7 @@ class WebExtractTool(private val isConfigured: Boolean = true) : Tool {
           exitCode = 0
         )
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,
@@ -710,14 +755,16 @@ class WebCrawlTool(private val isConfigured: Boolean = true) : Tool {
         name = "startUrl",
         type = "string",
         description = "Starting URL to begin crawling from.",
-        required = true
+        required = true,
+        aliases = listOf("start_url", "url")
       ),
       ToolParameter(
         name = "maxPages",
         type = "number",
         description = "Maximum number of pages to crawl (default: 3, max: 6).",
         required = false,
-        defaultValue = 3
+        defaultValue = 3,
+        aliases = listOf("max_pages")
       ),
       ToolParameter(
         name = "sameDomainOnly",
@@ -790,6 +837,7 @@ class WebCrawlTool(private val isConfigured: Boolean = true) : Tool {
             }
           }
         } catch (e: Exception) {
+          if (e is CancellationException) throw e
           errors.add("Error crawling '$currentUrl': ${e.message}")
         }
       }
@@ -833,10 +881,10 @@ class WebCrawlTool(private val isConfigured: Boolean = true) : Tool {
 /**
  * Raw HTTP client tool for REST APIs and web services.
  */
-class WebFetchTool(private val isConfigured: Boolean = true) : Tool {
+class WebFetchTool(private val isConfigured: Boolean = true, var workspaceDir: File? = null) : Tool {
   override val name: String = "web_fetch"
   override val description: String =
-    "Execute an HTTP request (GET, POST, PUT, DELETE, HEAD) to an external URL or REST API. Returns status code, headers, and body."
+    "Execute an HTTP request (GET, POST, PUT, DELETE, HEAD) to an external URL or REST API. Returns status code, headers, and body with configurable limits and JSON path extraction."
 
   override val schema: ToolSchema = ToolSchema(
     listOf(
@@ -844,7 +892,8 @@ class WebFetchTool(private val isConfigured: Boolean = true) : Tool {
         name = "url",
         type = "string",
         description = "Target HTTP or HTTPS URL.",
-        required = true
+        required = true,
+        aliases = listOf("uri", "link", "target_url", "address")
       ),
       ToolParameter(
         name = "method",
@@ -859,6 +908,28 @@ class WebFetchTool(private val isConfigured: Boolean = true) : Tool {
         type = "string",
         description = "Request body payload for POST/PUT/PATCH.",
         required = false
+      ),
+      ToolParameter(
+        name = "max_bytes",
+        type = "number",
+        description = "Optional byte limit for response body returned in context (default: 16384). Full response is saved to disk if larger.",
+        required = false,
+        defaultValue = 16384,
+        aliases = listOf("maxBytes")
+      ),
+      ToolParameter(
+        name = "json_path",
+        type = "string",
+        description = "Optional JSON key or path (e.g. 'data.user', 'items[0].id') to extract specifically from a JSON response.",
+        required = false,
+        aliases = listOf("jsonPath")
+      ),
+      ToolParameter(
+        name = "search_query",
+        type = "string",
+        description = "Optional search keyword to extract only lines matching the query.",
+        required = false,
+        aliases = listOf("searchQuery", "query", "filter")
       )
     )
   )
@@ -881,6 +952,9 @@ class WebFetchTool(private val isConfigured: Boolean = true) : Tool {
       val url = arguments["url"]?.toString()?.trim() ?: ""
       val method = arguments["method"]?.toString()?.uppercase() ?: "GET"
       val body = arguments["body"]?.toString()
+      val maxBytes = (arguments["max_bytes"] as? Number)?.toInt() ?: 16384
+      val jsonPath = arguments["json_path"]?.toString()?.trim()
+      val searchQuery = arguments["search_query"]?.toString()?.trim()
 
       if (url.isBlank() || !url.startsWith("http")) {
         return@withContext ToolResult(
@@ -892,7 +966,8 @@ class WebFetchTool(private val isConfigured: Boolean = true) : Tool {
           error = "Invalid URL '$url'.",
           errorType = ToolErrorCode.INVALID_ARGUMENTS,
           duration = System.currentTimeMillis() - startTime,
-          exitCode = 1
+          exitCode = 1,
+          outcome = ToolExecutionOutcome.EXECUTION_FAILED
         )
       }
 
@@ -909,29 +984,173 @@ class WebFetchTool(private val isConfigured: Boolean = true) : Tool {
         }
 
         httpClient.newCall(reqBuilder.build()).execute().use { resp ->
+          val code = resp.code
+          val message = resp.message
+          val contentType = resp.header("Content-Type").orEmpty()
+          val contentLength = resp.header("Content-Length")
           val respBody = resp.body?.string().orEmpty()
-          val sb = StringBuilder()
-          sb.appendLine("HTTP ${resp.code} ${resp.message}")
-          resp.headers.forEach { (k, v) -> sb.appendLine("$k: $v") }
-          sb.appendLine()
-          sb.appendLine(respBody)
 
-          val out = sb.toString().trim()
+          val headersMap = mutableMapOf<String, Any?>()
+          headersMap["statusCode"] = code
+          headersMap["contentType"] = contentType
+          if (contentLength != null) headersMap["contentLength"] = contentLength
+
+          if (code == 404) {
+            val notFoundMsg = "HTTP 404 Not Found: Target resource '$url' was not found on server."
+            return@withContext ToolResult(
+              callId = callId,
+              toolName = name,
+              status = ToolStatus.FAILED,
+              arguments = arguments,
+              output = notFoundMsg,
+              error = notFoundMsg,
+              errorType = ToolErrorCode.HTTP_ERROR,
+              duration = System.currentTimeMillis() - startTime,
+              stdout = "",
+              stderr = notFoundMsg,
+              exitCode = 1,
+              outcome = ToolExecutionOutcome.CONDITION_NOT_FOUND,
+              responseMetadata = headersMap
+            )
+          }
+
+          if (code == 204 || (resp.isSuccessful && respBody.isBlank())) {
+            val emptyMsg = "HTTP $code $message: Success with no response body (0 bytes)."
+            return@withContext ToolResult(
+              callId = callId,
+              toolName = name,
+              status = ToolStatus.SUCCEEDED,
+              arguments = arguments,
+              output = emptyMsg,
+              error = null,
+              duration = System.currentTimeMillis() - startTime,
+              stdout = emptyMsg,
+              exitCode = 0,
+              outcome = ToolExecutionOutcome.SUCCESS_EMPTY,
+              responseMetadata = headersMap
+            )
+          }
+
+          if (!resp.isSuccessful) {
+            val errMsg = "HTTP $code $message: ${respBody.take(300)}"
+            return@withContext ToolResult(
+              callId = callId,
+              toolName = name,
+              status = ToolStatus.FAILED,
+              arguments = arguments,
+              output = errMsg,
+              error = errMsg,
+              errorType = ToolErrorCode.HTTP_ERROR,
+              duration = System.currentTimeMillis() - startTime,
+              stdout = "",
+              stderr = errMsg,
+              exitCode = 1,
+              outcome = ToolExecutionOutcome.EXECUTION_FAILED,
+              responseMetadata = headersMap
+            )
+          }
+
+          // Successful response with body
+          // 1. Check targeted JSON extraction if requested
+          if (!jsonPath.isNullOrBlank()) {
+            val extractedJson = ObservationPayloadPolicy.extractJsonPath(respBody, jsonPath)
+            if (extractedJson != null) {
+              val out = "HTTP $code $message\n--- EXTRACTED JSON PATH '$jsonPath' ---\n$extractedJson"
+              return@withContext ToolResult(
+                callId = callId,
+                toolName = name,
+                status = ToolStatus.SUCCEEDED,
+                arguments = arguments,
+                output = out,
+                error = null,
+                duration = System.currentTimeMillis() - startTime,
+                stdout = out,
+                exitCode = 0,
+                outcome = ToolExecutionOutcome.SUCCESS_WITH_RESULTS,
+                responseMetadata = headersMap + mapOf("extractedJsonPath" to jsonPath)
+              )
+            } else {
+              val out = "HTTP $code $message\nCondition not found: JSON path '$jsonPath' did not match any elements in response body."
+              return@withContext ToolResult(
+                callId = callId,
+                toolName = name,
+                status = ToolStatus.SUCCEEDED,
+                arguments = arguments,
+                output = out,
+                error = null,
+                duration = System.currentTimeMillis() - startTime,
+                stdout = out,
+                exitCode = 0,
+                outcome = ToolExecutionOutcome.CONDITION_NOT_FOUND,
+                responseMetadata = headersMap + mapOf("failedJsonPath" to jsonPath)
+              )
+            }
+          }
+
+          // 2. Check targeted line search if requested
+          if (!searchQuery.isNullOrBlank()) {
+            val matched = ObservationPayloadPolicy.searchLines(respBody, searchQuery)
+            val hasMatches = !matched.startsWith("No lines matching")
+            val out = "HTTP $code $message\n$matched"
+            return@withContext ToolResult(
+              callId = callId,
+              toolName = name,
+              status = ToolStatus.SUCCEEDED,
+              arguments = arguments,
+              output = out,
+              error = null,
+              duration = System.currentTimeMillis() - startTime,
+              stdout = out,
+              exitCode = 0,
+              outcome = if (hasMatches) ToolExecutionOutcome.SUCCESS_WITH_RESULTS else ToolExecutionOutcome.CONDITION_NOT_FOUND,
+              responseMetadata = headersMap + mapOf("searchQuery" to searchQuery)
+            )
+          }
+
+          // 3. Normal response formatting with configurable output limits and spillover
+          val targetDir = workspaceDir ?: File(System.getProperty("java.io.tmpdir") ?: "/tmp")
+          val isJson = contentType.contains("json", ignoreCase = true) || respBody.trim().startsWith("{") || respBody.trim().startsWith("[")
+          val ext = if (isJson) "json" else "txt"
+
+          val formatted = ObservationPayloadPolicy.processOutput(
+            workspaceDir = targetDir,
+            stepId = "http_$callId",
+            rawStdout = respBody,
+            rawStderr = "",
+            customMaxBytes = maxBytes,
+            fileExtension = ext
+          )
+
+          val headerText = buildString {
+            appendLine("HTTP $code $message")
+            resp.headers.take(8).forEach { (k, v) -> appendLine("$k: $v") }
+            if (resp.headers.size > 8) appendLine("... (${resp.headers.size - 8} additional headers omitted)")
+            appendLine()
+          }
+
+          val finalPayload = headerText + formatted.contextPayload
+          val outcome = if (formatted.isTruncated) ToolExecutionOutcome.TRUNCATED_OR_PARTIAL else ToolExecutionOutcome.SUCCESS_WITH_RESULTS
+
           ToolResult(
             callId = callId,
             toolName = name,
-            status = if (resp.isSuccessful) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
+            status = ToolStatus.SUCCEEDED,
             arguments = arguments,
-            output = out,
-            error = if (!resp.isSuccessful) "HTTP ${resp.code}: ${resp.message}" else null,
-            errorType = if (!resp.isSuccessful) ToolErrorCode.NETWORK_ERROR else null,
+            output = finalPayload,
+            error = null,
             duration = System.currentTimeMillis() - startTime,
-            stdout = out,
-            exitCode = if (resp.isSuccessful) 0 else 1,
-            metadata = mapOf("statusCode" to resp.code)
+            stdout = finalPayload,
+            exitCode = 0,
+            outcome = outcome,
+            truncation = formatted.truncationDetails,
+            responseMetadata = headersMap + mapOf(
+              "isTruncated" to formatted.isTruncated,
+              "totalBytes" to formatted.totalBytes
+            )
           )
         }
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         ToolResult(
           callId = callId,
           toolName = name,
@@ -941,7 +1160,8 @@ class WebFetchTool(private val isConfigured: Boolean = true) : Tool {
           error = "HTTP request failed: ${e.message}",
           errorType = ToolErrorCode.NETWORK_ERROR,
           duration = System.currentTimeMillis() - startTime,
-          exitCode = 1
+          exitCode = 1,
+          outcome = ToolExecutionOutcome.EXECUTION_FAILED
         )
       }
     }

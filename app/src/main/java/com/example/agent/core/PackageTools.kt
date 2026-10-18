@@ -1,5 +1,6 @@
 package com.example.agent.core
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -33,13 +34,15 @@ class InstallPackageTool(
         name = "name",
         type = "string",
         description = "Package/module name to install (e.g. 'pytesseract', 'tesseract-ocr', 'python-docx', 'requests').",
-        required = true
+        required = true,
+        aliases = listOf("package", "pkg", "module", "package_name")
       ),
       ToolParameter(
         name = "sourceUrl",
         type = "string",
         description = "Optional direct HTTP/HTTPS URL to a prebuilt executable binary (not an archive).",
-        required = false
+        required = false,
+        aliases = listOf("source_url", "url")
       )
     )
   )
@@ -157,6 +160,7 @@ class InstallPackageTool(
           artifacts = artifactManager.getArtifacts()
         )
       } catch (e: Exception) {
+        if (e is CancellationException) throw e
         failure(callId, arguments, startTime, "Package installation failed: ${e.message}", ToolErrorCode.SANDBOX_ERROR)
       }
     }

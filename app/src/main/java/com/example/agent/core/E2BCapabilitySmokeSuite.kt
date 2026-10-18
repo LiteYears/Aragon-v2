@@ -611,6 +611,7 @@ class E2BCapabilitySmokeSuite(
           )
           val verified = art.exists && art.size == testPayload.length.toLong() && art.checksum != null
           localFile.delete()
+          artifactManager.unregisterArtifact(testFileName)
           return if (verified) {
             ScenarioResult(
               scenarioNumber = 9,
@@ -632,6 +633,7 @@ class E2BCapabilitySmokeSuite(
           }
         } catch (e: Exception) {
           localFile.delete()
+          artifactManager.unregisterArtifact(testFileName)
           return ScenarioResult(
             scenarioNumber = 9,
             name = "Create a file, register it as an artifact, and verify it can be retrieved",

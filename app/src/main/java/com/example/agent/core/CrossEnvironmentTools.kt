@@ -240,8 +240,7 @@ class DownloadArtifactFromSandboxTool(
         )
       }
 
-      val bytes = destFile.readBytes()
-      val sha256 = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+      val sha256 = ArtifactValidatorRegistry.computeSha256(destFile)
       val artifact = artifactManager.registerArtifact(
         relativePath = localPath,
         createdByCallId = callId,
@@ -253,10 +252,13 @@ class DownloadArtifactFromSandboxTool(
         put("success", true)
         put("remotePath", remotePath)
         put("localPath", localPath)
+        put("canonicalPath", artifact.canonicalPath)
         put("sizeBytes", destFile.length())
         put("sha256", sha256)
         put("artifactId", artifact.id)
         put("mimeType", artifact.mimeType)
+        put("creationStatus", artifact.creationStatus.name)
+        put("isVerified", artifact.isVerified)
         put("originatingEnvironment", provider.name)
       }.toString(2)
 
@@ -384,13 +386,13 @@ class E2BWriteFileTool(
 
       val out = "Successfully wrote ${content.length} characters to '$pathStr' in E2B microVM (/home/user)."
       try {
-        val cleanRel = cleanPath.removePrefix("/home/user/").removePrefix("/")
+        val cleanRel = PathSecurity.toCanonicalRelativePath(artifactManager.workspaceDir, cleanPath)
         val localFile = PathSecurity.resolveSafe(artifactManager.workspaceDir, cleanRel)
         localFile.parentFile?.mkdirs()
         if (append && localFile.exists()) {
           localFile.appendText(content, java.nio.charset.StandardCharsets.UTF_8)
         } else {
-          localFile.writeText(content, java.nio.charset.StandardCharsets.UTF_8)
+          PathSecurity.atomicWriteText(localFile, content, java.nio.charset.StandardCharsets.UTF_8)
         }
         artifactManager.registerArtifact(cleanRel, createdByCallId = callId)
       } catch (_: Exception) {}
@@ -504,11 +506,11 @@ class E2BReadFileTool(
       val isSuccess = exitCode == 0 && exec.error == null
       if (isSuccess && exec.stdoutText().isNotBlank()) {
         try {
-          val cleanRel = cleanPath.removePrefix("/home/user/").removePrefix("/")
+          val cleanRel = PathSecurity.toCanonicalRelativePath(artifactManager.workspaceDir, cleanPath)
           val localFile = PathSecurity.resolveSafe(artifactManager.workspaceDir, cleanRel)
           if (!localFile.exists()) {
             localFile.parentFile?.mkdirs()
-            localFile.writeText(exec.stdoutText(), java.nio.charset.StandardCharsets.UTF_8)
+            PathSecurity.atomicWriteText(localFile, exec.stdoutText(), java.nio.charset.StandardCharsets.UTF_8)
             artifactManager.syncWorkspace()
           }
         } catch (_: Exception) {}

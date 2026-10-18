@@ -1,5 +1,6 @@
 package com.example.agent.core
 
+import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -31,7 +32,8 @@ class BuildPdfDocumentTool(
         name = "path",
         type = "string",
         description = "Workspace-relative output file path ending in .pdf (e.g., 'reports/summary.pdf').",
-        required = true
+        required = true,
+        aliases = listOf("file", "filePath", "file_path", "target")
       ),
       ToolParameter(
         name = "title",
@@ -43,7 +45,8 @@ class BuildPdfDocumentTool(
         name = "markdown",
         type = "string",
         description = "Optional Markdown report content to compile directly into a styled PDF.",
-        required = false
+        required = false,
+        aliases = listOf("content", "text", "body")
       ),
       ToolParameter(
         name = "author",
@@ -249,6 +252,7 @@ class BuildPdfDocumentTool(
         exitCode = 0
       )
     } catch (e: Exception) {
+      if (e is CancellationException) throw e
       return ToolResult(
         callId = callId,
         toolName = name,

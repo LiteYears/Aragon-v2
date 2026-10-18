@@ -12,7 +12,9 @@ data class ArtifactValidationResult(
   val isValid: Boolean,
   val errorMessage: String? = null,
   val detectedFormat: String? = null,
-  val byteCount: Long = 0L
+  val byteCount: Long = 0L,
+  val sha256: String? = null,
+  val isCorrupted: Boolean = false
 )
 
 /**
@@ -20,6 +22,24 @@ data class ArtifactValidationResult(
  * Prevents corrupted, placeholder, or pseudo-format files from being written or accepted.
  */
 object ArtifactValidatorRegistry {
+
+  fun computeSha256(file: File): String? {
+    if (!file.exists() || !file.isFile || !file.canRead()) return null
+    return try {
+      val digest = java.security.MessageDigest.getInstance("SHA-256")
+      file.inputStream().use { input ->
+        val buffer = ByteArray(16384)
+        var bytesRead = input.read(buffer)
+        while (bytesRead != -1) {
+          digest.update(buffer, 0, bytesRead)
+          bytesRead = input.read(buffer)
+        }
+      }
+      digest.digest().joinToString("") { "%02x".format(it) }
+    } catch (_: Exception) {
+      null
+    }
+  }
 
   fun validateContent(path: String, content: String): ArtifactValidationResult {
     val cleanPath = path.trim().lowercase()
@@ -38,70 +58,128 @@ object ArtifactValidatorRegistry {
 
   fun validateExistingFile(file: File): ArtifactValidationResult {
     if (!file.exists()) {
-      return ArtifactValidationResult(isValid = false, errorMessage = "File does not exist: ${file.name}")
+      return ArtifactValidationResult(isValid = false, errorMessage = "File does not exist: ${file.name}", isCorrupted = false)
     }
-    val ext = file.extension.lowercase()
+    if (file.isDirectory) {
+      return ArtifactValidationResult(isValid = false, errorMessage = "Path '${file.name}' is a directory, not a deliverable file.", isCorrupted = false)
+    }
+    if (!file.canRead()) {
+      return ArtifactValidationResult(isValid = false, errorMessage = "File '${file.name}' cannot be read (permission denied).", isCorrupted = false)
+    }
     val length = file.length()
+    if (length == 0L) {
+      return ArtifactValidationResult(
+        isValid = false,
+        errorMessage = "File '${file.name}' is empty (0 bytes). Deliverables must contain non-empty synthesized content.",
+        byteCount = 0L,
+        isCorrupted = true
+      )
+    }
+
+    val ext = file.extension.lowercase()
+    val sha = computeSha256(file)
 
     return when (ext) {
       "docx", "doc" -> {
         if (length < 500L) {
           ArtifactValidationResult(
             isValid = false,
-            errorMessage = "DOCX file is too small ($length bytes). A valid Word archive is at least 1-2 KB."
-          )
-        } else if (!DocxBuilder.isZipFile(file)) {
-          ArtifactValidationResult(
-            isValid = false,
-            errorMessage = "DOCX file is corrupt: missing PK\\x03\\x04 zip archive header signature."
+            errorMessage = "DOCX file is too small ($length bytes). A valid Word archive is at least 1-2 KB.",
+            byteCount = length,
+            sha256 = sha,
+            isCorrupted = true
           )
         } else {
-          ArtifactValidationResult(isValid = true, detectedFormat = "Microsoft Word (OpenXML)", byteCount = length)
+          val zipValid = try {
+            java.util.zip.ZipFile(file).use { zip ->
+              val hasTypes = zip.getEntry("[Content_Types].xml") != null
+              val hasDoc = zip.getEntry("word/document.xml") != null
+              hasTypes && hasDoc
+            }
+          } catch (_: Exception) {
+            false
+          }
+          if (!zipValid) {
+            ArtifactValidationResult(
+              isValid = false,
+              errorMessage = "DOCX file is corrupt: missing PK\\x03\\x04 zip archive header or required OpenXML structure ([Content_Types].xml, word/document.xml).",
+              byteCount = length,
+              sha256 = sha,
+              isCorrupted = true
+            )
+          } else {
+            ArtifactValidationResult(isValid = true, detectedFormat = "Microsoft Word (OpenXML)", byteCount = length, sha256 = sha)
+          }
         }
       }
       "xlsx", "xls" -> {
         if (length < 300L) {
           ArtifactValidationResult(
             isValid = false,
-            errorMessage = "XLSX file is too small ($length bytes). A valid Excel archive is at least 1-2 KB."
-          )
-        } else if (!XlsxBuilder.isZipFile(file)) {
-          ArtifactValidationResult(
-            isValid = false,
-            errorMessage = "XLSX file is corrupt: missing PK\\x03\\x04 zip archive header signature or workbook structure."
+            errorMessage = "XLSX file is too small ($length bytes). A valid Excel archive is at least 1-2 KB.",
+            byteCount = length,
+            sha256 = sha,
+            isCorrupted = true
           )
         } else {
-          ArtifactValidationResult(isValid = true, detectedFormat = "Microsoft Excel (OpenXML)", byteCount = length)
+          val zipValid = try {
+            java.util.zip.ZipFile(file).use { zip ->
+              val hasTypes = zip.getEntry("[Content_Types].xml") != null
+              val hasSheet = zip.getEntry("xl/workbook.xml") != null || zip.getEntry("xl/worksheets/sheet1.xml") != null
+              hasTypes && hasSheet
+            }
+          } catch (_: Exception) {
+            false
+          }
+          if (!zipValid) {
+            ArtifactValidationResult(
+              isValid = false,
+              errorMessage = "XLSX file is corrupt: missing PK\\x03\\x04 zip archive header or workbook structure ([Content_Types].xml, xl/workbook.xml).",
+              byteCount = length,
+              sha256 = sha,
+              isCorrupted = true
+            )
+          } else {
+            ArtifactValidationResult(isValid = true, detectedFormat = "Microsoft Excel (OpenXML)", byteCount = length, sha256 = sha)
+          }
         }
       }
       "json" -> {
         try {
           val text = file.readText(StandardCharsets.UTF_8).trim()
-          if (text.startsWith("[")) JSONArray(text) else JSONObject(text)
-          ArtifactValidationResult(isValid = true, detectedFormat = "JSON", byteCount = length)
+          if (text.isBlank()) {
+            ArtifactValidationResult(isValid = false, errorMessage = "JSON file contains only whitespace.", byteCount = length, sha256 = sha, isCorrupted = true)
+          } else {
+            if (text.startsWith("[")) JSONArray(text) else JSONObject(text)
+            ArtifactValidationResult(isValid = true, detectedFormat = "JSON Document", byteCount = length, sha256 = sha)
+          }
         } catch (e: Exception) {
-          ArtifactValidationResult(isValid = false, errorMessage = "Corrupted JSON syntax: ${e.message}")
+          ArtifactValidationResult(isValid = false, errorMessage = "Corrupted JSON syntax: ${e.message}", byteCount = length, sha256 = sha, isCorrupted = true)
         }
       }
       "jsonl" -> {
         try {
-          val badLines = file.useLines { lines ->
-            lines.filter { it.isNotBlank() }.filter { line ->
-              try { JSONObject(line.trim()); false } catch (_: Exception) { true }
-            }.count()
-          }
-          if (badLines > 0) {
-            ArtifactValidationResult(isValid = false, errorMessage = "Corrupted JSONL syntax: $badLines invalid line(s).")
+          val lines = file.readLines(StandardCharsets.UTF_8).filter { it.isNotBlank() }
+          if (lines.isEmpty()) {
+            ArtifactValidationResult(isValid = false, errorMessage = "JSONL file is empty or contains only whitespace.", byteCount = length, sha256 = sha, isCorrupted = true)
           } else {
-            ArtifactValidationResult(isValid = true, detectedFormat = "JSON Lines", byteCount = length)
+            var badCount = 0
+            for (line in lines) {
+              try { JSONObject(line.trim()) } catch (_: Exception) { badCount++ }
+            }
+            if (badCount > 0) {
+              ArtifactValidationResult(isValid = false, errorMessage = "Corrupted JSONL syntax: $badCount invalid JSON line(s).", byteCount = length, sha256 = sha, isCorrupted = true)
+            } else {
+              ArtifactValidationResult(isValid = true, detectedFormat = "JSON Lines (${lines.size} records)", byteCount = length, sha256 = sha)
+            }
           }
         } catch (e: Exception) {
-          ArtifactValidationResult(isValid = false, errorMessage = "Error reading JSONL: ${e.message}")
+          ArtifactValidationResult(isValid = false, errorMessage = "Error reading JSONL: ${e.message}", byteCount = length, sha256 = sha, isCorrupted = true)
         }
       }
       "pdf" -> {
         if (length < 100L) {
-          ArtifactValidationResult(isValid = false, errorMessage = "PDF file too small ($length bytes).")
+          ArtifactValidationResult(isValid = false, errorMessage = "PDF file too small ($length bytes).", byteCount = length, sha256 = sha, isCorrupted = true)
         } else {
           val isPdf = try {
             file.inputStream().use {
@@ -109,14 +187,52 @@ object ArtifactValidatorRegistry {
               it.read(buf) == 4 && buf[0] == '%'.code.toByte() && buf[1] == 'P'.code.toByte() && buf[2] == 'D'.code.toByte() && buf[3] == 'F'.code.toByte()
             }
           } catch (_: Exception) { false }
+
+          val hasEof = try {
+            val seekPos = (file.length() - 1024L).coerceAtLeast(0L)
+            java.io.RandomAccessFile(file, "r").use { raf ->
+              raf.seek(seekPos)
+              val tailBytes = ByteArray((file.length() - seekPos).toInt())
+              raf.readFully(tailBytes)
+              val tailStr = String(tailBytes, StandardCharsets.ISO_8859_1)
+              tailStr.contains("%%EOF")
+            }
+          } catch (_: Exception) { false }
+
           if (!isPdf) {
-            ArtifactValidationResult(isValid = false, errorMessage = "Missing %PDF magic bytes.")
+            ArtifactValidationResult(isValid = false, errorMessage = "Missing %PDF magic bytes signature.", byteCount = length, sha256 = sha, isCorrupted = true)
+          } else if (!hasEof) {
+            ArtifactValidationResult(isValid = false, errorMessage = "Truncated or partial PDF deliverable: missing %%EOF trailer signature.", byteCount = length, sha256 = sha, isCorrupted = true)
           } else {
-            ArtifactValidationResult(isValid = true, detectedFormat = "PDF", byteCount = length)
+            ArtifactValidationResult(isValid = true, detectedFormat = "PDF Document", byteCount = length, sha256 = sha)
           }
         }
       }
-      else -> ArtifactValidationResult(isValid = true, byteCount = length)
+      "csv" -> {
+        try {
+          val lines = file.readLines(StandardCharsets.UTF_8).filter { it.isNotBlank() }
+          if (lines.size < 2) {
+            ArtifactValidationResult(isValid = false, errorMessage = "CSV file requires at least a header row and one data row.", byteCount = length, sha256 = sha, isCorrupted = true)
+          } else {
+            ArtifactValidationResult(isValid = true, detectedFormat = "CSV Table (${lines.size} rows)", byteCount = length, sha256 = sha)
+          }
+        } catch (e: Exception) {
+          ArtifactValidationResult(isValid = false, errorMessage = "CSV reading error: ${e.message}", byteCount = length, sha256 = sha, isCorrupted = true)
+        }
+      }
+      "md", "markdown", "txt" -> {
+        try {
+          val text = file.readText(StandardCharsets.UTF_8).trim()
+          if (text.isBlank()) {
+            ArtifactValidationResult(isValid = false, errorMessage = "Text/Markdown document contains only whitespace.", byteCount = length, sha256 = sha, isCorrupted = true)
+          } else {
+            ArtifactValidationResult(isValid = true, detectedFormat = "Markdown/Text Document (${text.length} chars)", byteCount = length, sha256 = sha)
+          }
+        } catch (e: Exception) {
+          ArtifactValidationResult(isValid = false, errorMessage = "Encoding/read error: ${e.message}", byteCount = length, sha256 = sha, isCorrupted = true)
+        }
+      }
+      else -> ArtifactValidationResult(isValid = true, detectedFormat = "Deliverable Binary (${ext.uppercase()})", byteCount = length, sha256 = sha)
     }
   }
 

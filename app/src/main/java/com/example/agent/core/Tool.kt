@@ -202,6 +202,35 @@ data class EnvironmentIdentity(
 )
 
 /**
+ * Detailed error when an argument fails schema validation.
+ */
+data class ParameterValidationError(
+  val parameterName: String,
+  val expectedType: String,
+  val actualValue: Any?,
+  val message: String
+)
+
+/**
+ * Result of validating arguments against a ToolSchema.
+ */
+data class SchemaValidationResult(
+  val isValid: Boolean,
+  val errors: List<ParameterValidationError> = emptyList()
+) {
+  val errorMessage: String?
+    get() = if (isValid) null else errors.joinToString("; ") { it.message }
+
+  companion object {
+    val VALID = SchemaValidationResult(isValid = true)
+    fun failure(errors: List<ParameterValidationError>): SchemaValidationResult =
+      SchemaValidationResult(isValid = false, errors = errors)
+    fun failure(error: ParameterValidationError): SchemaValidationResult =
+      SchemaValidationResult(isValid = false, errors = listOf(error))
+  }
+}
+
+/**
  * Schema parameter definition for a tool.
  */
 data class ToolParameter(
@@ -210,8 +239,67 @@ data class ToolParameter(
   val description: String,
   val required: Boolean = true,
   val enumValues: List<String>? = null,
-  val defaultValue: Any? = null
-)
+  val defaultValue: Any? = null,
+  val aliases: List<String> = emptyList()
+) {
+  /**
+   * Validates a supplied parameter value against this parameter's type and constraints.
+   */
+  fun validateValue(value: Any?): ParameterValidationError? {
+    val isNullOrBlank = value == null ||
+      value == JSONObject.NULL ||
+      (value is String && value.isBlank())
+
+    if (required && isNullOrBlank) {
+      return ParameterValidationError(
+        parameterName = name,
+        expectedType = type,
+        actualValue = value,
+        message = "Missing required parameter '$name' ($type). $description"
+      )
+    }
+
+    if (isNullOrBlank) {
+      // Optional parameter omitted: valid.
+      return null
+    }
+
+    // Type checking & validation
+    val typeValid = when (type.lowercase()) {
+      "string" -> value is CharSequence
+      "number", "integer" -> value is Number || (value is String && value.toDoubleOrNull() != null)
+      "boolean" -> value is Boolean || (value is String && (value.equals("true", ignoreCase = true) || value.equals("false", ignoreCase = true)))
+      "array" -> value is List<*> || value is JSONArray || value is Array<*> || (value is String && value.startsWith("[") && value.endsWith("]"))
+      "object" -> value is Map<*, *> || value is JSONObject || (value is String && value.startsWith("{") && value.endsWith("}"))
+      else -> true
+    }
+
+    if (!typeValid) {
+      val actualTypeName = value?.javaClass?.simpleName ?: "null"
+      return ParameterValidationError(
+        parameterName = name,
+        expectedType = type,
+        actualValue = value,
+        message = "Invalid type for parameter '$name': expected '$type', got '$actualTypeName' ($value)"
+      )
+    }
+
+    // Enum constraint checking
+    if (enumValues != null && enumValues.isNotEmpty()) {
+      val strVal = value.toString().trim()
+      if (!enumValues.contains(strVal)) {
+        return ParameterValidationError(
+          parameterName = name,
+          expectedType = type,
+          actualValue = value,
+          message = "Invalid value '$strVal' for parameter '$name'. Allowed values: ${enumValues.joinToString(", ")}"
+        )
+      }
+    }
+
+    return null
+  }
+}
 
 /**
  * Input schema specification exposed to the LLM.
@@ -219,6 +307,29 @@ data class ToolParameter(
 data class ToolSchema(
   val parameters: List<ToolParameter>
 ) {
+  /**
+   * Validates tool invocation arguments against this schema.
+   */
+  fun validateArguments(arguments: Map<String, Any?>): SchemaValidationResult {
+    val errors = mutableListOf<ParameterValidationError>()
+    for (param in parameters) {
+      var value = arguments[param.name]
+      if (value == null) {
+        for (alias in param.aliases) {
+          if (arguments.containsKey(alias)) {
+            value = arguments[alias]
+            break
+          }
+        }
+      }
+      val err = param.validateValue(value)
+      if (err != null) {
+        errors.add(err)
+      }
+    }
+    return if (errors.isEmpty()) SchemaValidationResult.VALID else SchemaValidationResult.failure(errors)
+  }
+
   fun toJsonSchemaString(): String {
     val props = parameters.joinToString(",\n      ") { param ->
       val enumPart = if (param.enumValues != null) {
@@ -228,7 +339,10 @@ data class ToolSchema(
         val defValStr = if (param.defaultValue is String) "\"${param.defaultValue}\"" else "${param.defaultValue}"
         ", \"default\": $defValStr"
       } else ""
-      "\"${param.name}\": { \"type\": \"${param.type}\", \"description\": \"${param.description}\"$enumPart$defPart }"
+      val aliasPart = if (param.aliases.isNotEmpty()) {
+        ", \"aliases\": [${param.aliases.joinToString(", ") { "\"$it\"" }}]"
+      } else ""
+      "\"${param.name}\": { \"type\": \"${param.type}\", \"description\": \"${param.description}\"$enumPart$defPart$aliasPart }"
     }
     val requiredFields = parameters.filter { it.required }.joinToString(", ") { "\"${it.name}\"" }
     return """
@@ -258,6 +372,11 @@ data class ToolSchema(
       }
       if (param.defaultValue != null) {
         p.put("default", param.defaultValue)
+      }
+      if (param.aliases.isNotEmpty()) {
+        val aliasArr = JSONArray()
+        param.aliases.forEach { aliasArr.put(it) }
+        p.put("aliases", aliasArr)
       }
       props.put(param.name, p)
       if (param.required) {
@@ -302,6 +421,35 @@ data class ToolCall(
 }
 
 /**
+ * Structured taxonomy of distinct tool execution outcomes.
+ * Prevents command/tool success from being mistaken for a successful search or validation.
+ */
+enum class ToolExecutionOutcome(val code: String, val description: String) {
+  EXECUTION_FAILED("EXECUTION_FAILED", "Execution failed"),
+  SUCCESS_EMPTY("SUCCESS_EMPTY", "Execution succeeded with no output"),
+  SUCCESS_WITH_RESULTS("SUCCESS_WITH_RESULTS", "Execution succeeded with results"),
+  CONDITION_NOT_FOUND("CONDITION_NOT_FOUND", "Execution succeeded but the requested condition was not found"),
+  TRUNCATED_OR_PARTIAL("TRUNCATED_OR_PARTIAL", "Output was truncated or partially retrieved"),
+  UNVERIFIED("UNVERIFIED", "Result could not be verified")
+}
+
+/**
+ * Fine-grained truncation and pagination details for large tool outputs.
+ */
+data class TruncationDetails(
+  val isTruncated: Boolean = false,
+  val originalBytes: Int = 0,
+  val capturedBytes: Int = 0,
+  val originalLines: Int = 0,
+  val capturedLines: Int = 0,
+  val omittedLines: Int = 0,
+  val omittedBytes: Int = 0,
+  val spilloverPath: String? = null,
+  val artifactRef: Artifact? = null,
+  val inspectionHint: String? = null
+)
+
+/**
  * Authoritative result produced ONLY by the application executing the tool.
  * Never fabricated or assumed.
  */
@@ -319,7 +467,10 @@ data class ToolResult(
   val exitCode: Int? = null,
   val artifacts: List<Artifact> = emptyList(),
   val metadata: Map<String, Any?> = emptyMap(),
-  val executionContext: ToolExecutionContext? = null
+  val executionContext: ToolExecutionContext? = null,
+  val outcome: ToolExecutionOutcome = if (status == ToolStatus.SUCCEEDED) ToolExecutionOutcome.SUCCESS_WITH_RESULTS else ToolExecutionOutcome.EXECUTION_FAILED,
+  val truncation: TruncationDetails = TruncationDetails(),
+  val responseMetadata: Map<String, Any?> = emptyMap()
 ) {
   val durationMs: Long get() = duration
   val isSuccess: Boolean get() = status == ToolStatus.SUCCEEDED
@@ -334,6 +485,7 @@ data class Observation(
   val callId: String,
   val toolName: String,
   val status: ToolStatus,
+  val outcome: ToolExecutionOutcome = if (status == ToolStatus.SUCCEEDED) ToolExecutionOutcome.SUCCESS_WITH_RESULTS else ToolExecutionOutcome.EXECUTION_FAILED,
   val isSuccess: Boolean = status == ToolStatus.SUCCEEDED,
   val inputsSummary: String,
   val result: String?,
@@ -348,7 +500,9 @@ data class Observation(
   val summary: String = "",
   val rawOutput: String = "",
   val timestamp: Long = System.currentTimeMillis(),
-  val executionContext: ToolExecutionContext? = null
+  val executionContext: ToolExecutionContext? = null,
+  val truncation: TruncationDetails = TruncationDetails(),
+  val responseMetadata: Map<String, Any?> = emptyMap()
 ) {
   /**
    * The explicit, unambiguous plaintext representation provided to the LLM.
@@ -357,6 +511,8 @@ data class Observation(
     val stdoutText = when {
       !stdout.isNullOrBlank() -> stdout.trim()
       !result.isNullOrBlank() -> result.trim()
+      outcome == ToolExecutionOutcome.SUCCESS_EMPTY -> "(command completed successfully with no output, 0 bytes)"
+      outcome == ToolExecutionOutcome.CONDITION_NOT_FOUND -> "(requested condition, search pattern, or resource was not found)"
       else -> "empty (0 bytes)"
     }
     val stderrText = if (stderr.isNullOrBlank()) "empty (0 bytes)" else stderr.trim()
@@ -364,6 +520,20 @@ data class Observation(
     val errorTypeStr = errorType?.code ?: if (isSuccess) "NONE" else "UNKNOWN"
     val recoveryStr = recoverability ?: errorType?.recoveryHint ?: "none"
     val artifactsText = if (artifacts.isEmpty()) "none" else artifacts.joinToString("; ") { "${it.path} (${it.size} bytes, ${it.type})" }
+
+    val truncationBlock = if (truncation.isTruncated) {
+      val spilloverInfo = if (!truncation.spilloverPath.isNullOrBlank()) "\nFULL OUTPUT PERSISTED AT: ${truncation.spilloverPath}" else ""
+      val hintInfo = if (!truncation.inspectionHint.isNullOrBlank()) "\nINSPECTION HINT: ${truncation.inspectionHint}" else ""
+      """
+    TRUNCATION: Captured ${truncation.capturedBytes} bytes (${truncation.capturedLines} lines) of ${truncation.originalBytes} bytes (${truncation.originalLines} lines). ${truncation.omittedLines} lines (${truncation.omittedBytes} bytes) omitted.$spilloverInfo$hintInfo
+      """.trimIndent() + "\n"
+    } else ""
+
+    val responseMetaBlock = if (responseMetadata.isNotEmpty()) {
+      """
+    RESPONSE METADATA: ${responseMetadata.entries.joinToString(", ") { "${it.key}=${it.value}" }}
+      """.trimIndent() + "\n"
+    } else ""
 
     val envHeader = if (executionContext != null) {
       val sbxPart = if (!executionContext.sandboxId.isNullOrBlank()) " [Sandbox ID: ${executionContext.sandboxId}]" else ""
@@ -379,7 +549,8 @@ data class Observation(
     TOOL: $toolName
     CALL ID: $callId
     STATUS: ${status.name}
-    $envHeader${""}INPUTS: $inputsSummary
+    OUTCOME: ${outcome.code} (${outcome.description})
+    $envHeader$responseMetaBlock$truncationBlock${""}INPUTS: $inputsSummary
     EXIT CODE: ${exitCode ?: (if (isSuccess) 0 else 1)}
     DURATION: ${durationMs}ms
     ERROR TYPE: $errorTypeStr
@@ -394,6 +565,28 @@ data class Observation(
 }
 
 /**
+ * Fully consolidated metadata representation of a Tool contract.
+ * Exposes operational constraints, timeout, resources, environment, and schemas.
+ */
+data class ToolMetadata(
+  val name: String,
+  val description: String,
+  val category: ToolCategory,
+  val target: ToolTarget,
+  val permissions: Set<ToolPermission>,
+  val owningBackend: ExecutionEnvironmentType,
+  val workspaceRoot: String,
+  val workingDirectoryRequirement: String,
+  val defaultTimeoutMs: Long,
+  val supportsCancellation: Boolean,
+  val mutatesWorkspace: Boolean,
+  val requiresNetwork: Boolean,
+  val requiresSandbox: Boolean,
+  val maxOutputBytes: Int,
+  val schema: ToolSchema
+)
+
+/**
  * The canonical, authoritative Tool contract.
  */
 interface Tool {
@@ -406,15 +599,42 @@ interface Tool {
   val owningBackend: ExecutionEnvironmentType get() = ExecutionEnvironmentType.E2B_CLOUD
   val requiredCapabilities: Set<String> get() = emptySet()
   val workspaceRoot: String get() = "/home/user"
+  val workingDirectoryRequirement: String get() = workspaceRoot
+  val defaultTimeoutMs: Long get() = 30000L
+  val supportsCancellation: Boolean get() = true
+  val mutatesWorkspace: Boolean get() = permissions.contains(ToolPermission.WORKSPACE_WRITE)
+  val requiresNetwork: Boolean get() = permissions.contains(ToolPermission.NETWORK_ACCESS) || target == ToolTarget.HOST_NETWORK
+  val requiresSandbox: Boolean get() = owningBackend == ExecutionEnvironmentType.E2B_CLOUD
+  val maxOutputBytes: Int get() = 32768
+
   val environmentIdentity: EnvironmentIdentity get() = EnvironmentIdentity(
     type = owningBackend,
     name = "E2B Cloud MicroVM",
     sessionId = "default",
-    workingDirectory = workspaceRoot,
+    workingDirectory = workingDirectoryRequirement,
     capabilities = requiredCapabilities
   )
-  val defaultTimeoutMs: Long get() = 30000L
-  val supportsCancellation: Boolean get() = true
+
+  /**
+   * Returns a complete, consolidated metadata snapshot of this tool contract.
+   */
+  fun getMetadata(): ToolMetadata = ToolMetadata(
+    name = name,
+    description = description,
+    category = category,
+    target = target,
+    permissions = permissions,
+    owningBackend = owningBackend,
+    workspaceRoot = workspaceRoot,
+    workingDirectoryRequirement = workingDirectoryRequirement,
+    defaultTimeoutMs = defaultTimeoutMs,
+    supportsCancellation = supportsCancellation,
+    mutatesWorkspace = mutatesWorkspace,
+    requiresNetwork = requiresNetwork,
+    requiresSandbox = requiresSandbox,
+    maxOutputBytes = maxOutputBytes,
+    schema = schema
+  )
 
   /**
    * Reports whether this tool is available and executable in the current runtime environment.

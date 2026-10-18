@@ -129,6 +129,7 @@ class McpBridgedTool(
       }
     } else {
       val ex = res.exceptionOrNull()
+      if (ex is kotlinx.coroutines.CancellationException) throw ex
       val errType = when (ex) {
         is TimeoutException, is SocketTimeoutException -> ToolErrorCode.TIMEOUT
         is McpRpcException -> ToolErrorCode.PROCESS_FAILED

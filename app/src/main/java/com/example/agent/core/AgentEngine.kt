@@ -5,6 +5,7 @@ import com.example.agent.docs.DocumentIntelligenceService
 import com.example.agent.docs.DocumentListTool
 import com.example.agent.docs.DocumentProcessTool
 import com.example.agent.docs.DocumentSearchTool
+import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -57,9 +58,10 @@ class AgentEngine(
   val artifactManager = ArtifactManager(workspaceDir)
   val deliverableTracker = DeliverableTracker(workspaceDir)
   val approvalManager = ApprovalManager()
+  val recoveryManager = UnifiedRecoveryManager(workspaceDir)
   val registry = ToolRegistry()
   val executor = ToolExecutor(registry, artifactManager)
-  val dispatcher = ToolDispatcher(registry, executor, approvalManager)
+  val dispatcher = ToolDispatcher(registry, executor, approvalManager, recoveryManager)
 
   var mcpManager: com.example.agent.mcp.McpManager? = null
   private var configuredProvider: LLMProvider = initialProvider
@@ -70,6 +72,15 @@ class AgentEngine(
 
   init {
     workspaceDir.mkdirs()
+    ArtifactDownloader.defaultWorkspaceDir = workspaceDir
+
+    artifactManager.databaseRegistrar = { art ->
+      documentService?.let { ds ->
+        scope.launch {
+          ds.registerArtifactDocument(art)
+        }
+      }
+    }
 
     // 1. Process Tool (powered by E2B Cloud Firecracker MicroVM execution engine)
     val terminalTool = TerminalTool(
@@ -83,9 +94,6 @@ class AgentEngine(
     val initialE2BProvider = sandboxProvider as E2BSandboxProvider
     registry.register(E2BCloudTool(initialE2BProvider, artifactManager, sessionIdProvider = { _state.value.sessionId }))
     registry.register(CheckToolsTool(workspaceDir, sandboxProvider = sandboxProvider, sessionIdProvider = { _state.value.sessionId }))
-    registry.register(E2BWriteFileTool(initialE2BProvider, artifactManager, sessionIdProvider = { _state.value.sessionId }))
-    registry.register(E2BReadFileTool(initialE2BProvider, artifactManager, sessionIdProvider = { _state.value.sessionId }))
-    registry.register(E2BListDirectoryTool(initialE2BProvider, artifactManager, sessionIdProvider = { _state.value.sessionId }))
 
     // Code Interpreter & Diagnostics & Capabilities
     val codeInterpreterTool = CodeInterpreterTool(
@@ -127,7 +135,6 @@ class AgentEngine(
       sandboxProviderSupplier = { sandboxProvider }
     )
     registry.register(listDirTool)
-    registry.register(ListFilesTool(listDirTool))
 
     val readFileTool = ReadFileTool(
       workspaceDir = workspaceDir,
@@ -168,11 +175,11 @@ class AgentEngine(
     )
 
     // 5. Web & Browser Subsystem Tools
-    registry.register(WebSearchTool(isConfigured = webEnabled))
-    registry.register(WebOpenTool(isConfigured = webEnabled))
+    registry.register(WebSearchTool(isConfigured = webEnabled, workspaceDir = workspaceDir))
+    registry.register(WebOpenTool(isConfigured = webEnabled, workspaceDir = workspaceDir))
     registry.register(WebExtractTool(isConfigured = webEnabled))
     registry.register(WebCrawlTool(isConfigured = webEnabled))
-    registry.register(WebFetchTool(isConfigured = webEnabled))
+    registry.register(WebFetchTool(isConfigured = webEnabled, workspaceDir = workspaceDir))
     registry.register(BrowserAutomationTool(isConfigured = webEnabled))
     registry.register(DeepWebResearchTool(isConfigured = webEnabled))
 
@@ -217,9 +224,6 @@ class AgentEngine(
     (registry.getTool("install_package") as? InstallPackageTool)?.sandboxProvider = active
     if (active is E2BSandboxProvider) {
       (registry.getTool("e2b_sandbox") as? E2BCloudTool)?.e2bProvider = active
-      (registry.getTool("e2b_write_file") as? E2BWriteFileTool)?.e2bProvider = active
-      (registry.getTool("e2b_read_file") as? E2BReadFileTool)?.e2bProvider = active
-      (registry.getTool("e2b_list_directory") as? E2BListDirectoryTool)?.e2bProvider = active
     }
   }
 
@@ -298,6 +302,7 @@ class AgentEngine(
       if (existing != null && existing.status == status && existing.conclusion == conclusion && existing.executionFeed.isNotEmpty()) {
         return
       }
+      val pTask = _state.value.persistentTask?.copy(artifacts = artifacts)
       val record = TaskRecord(
         id = task.id,
         sessionId = task.sessionId,
@@ -306,17 +311,23 @@ class AgentEngine(
         startedAt = task.createdAt,
         completedAt = System.currentTimeMillis(),
         expectedArtifact = task.expectedArtifact,
-        artifactsProduced = artifacts.map { it.name },
+        artifactsProduced = artifacts.map { it.path },
         totalTurns = _state.value.currentStep,
         summary = _state.value.completionSummary ?: conclusion,
         error = _state.value.error,
         conclusion = conclusion,
-        deliverables = artifacts.map { it.name },
+        deliverables = artifacts.map { it.path },
         timestamp = System.currentTimeMillis(),
         conversation = _state.value.messages,
         planSteps = _state.value.plan,
         executionFeed = _state.value.executionFeed,
-        fiveStageRecord = _state.value.fiveStageRecord
+        fiveStageRecord = _state.value.fiveStageRecord,
+        currentPhase = pTask?.currentPhase ?: TaskPhase.COMPLETED,
+        actionableSteps = pTask?.actionableSteps ?: emptyList(),
+        completionEvidence = pTask?.completionEvidence ?: emptyList(),
+        revision = pTask?.revision ?: 0,
+        persistentTask = pTask,
+        artifacts = artifacts
       )
       scratchpad.saveTaskRecord(record)
       val history = listOf(record) + _state.value.taskHistory.filter { it.id != task.id }
@@ -407,9 +418,10 @@ class AgentEngine(
     activeJob?.cancel()
     activeProvider = configuredProvider
 
-    val isContinuation = continueConversation ||
-      (resumeSessionId != null && resumeSessionId == _state.value.sessionId) ||
+    val isFollowUp = continueConversation ||
       (_state.value.status == AgentStatus.COMPLETED && _state.value.messages.isNotEmpty())
+    val isResuming = !isFollowUp && (resumeSessionId != null && resumeSessionId == _state.value.sessionId)
+    val isContinuation = isFollowUp || isResuming
 
     val sessionId = if (isContinuation) _state.value.sessionId else (resumeSessionId ?: UUID.randomUUID().toString())
     // Retain workspace deliverables across consecutive tasks so subsequent tasks
@@ -431,26 +443,48 @@ class AgentEngine(
     )
 
     val currentHistory = _state.value.taskHistory
+    val initialPTask = task.toPersistentTask()
     val taskRecord = TaskRecord(
       id = task.id,
       sessionId = sessionId,
       goal = task.goal,
       status = AgentStatus.THINKING,
       deliverables = initialArtifacts.map { it.name },
-      timestamp = System.currentTimeMillis()
+      timestamp = System.currentTimeMillis(),
+      currentPhase = task.currentPhase,
+      actionableSteps = task.actionableSteps,
+      persistentTask = initialPTask
     )
     scratchpad.saveTaskRecord(taskRecord)
-    val updatedHistory = listOf(taskRecord) + currentHistory.filter { it.id != task.id }
+    scratchpad.saveTask(initialPTask)
+    val existingRecord = if (isResuming && _state.value.messages.isEmpty()) {
+      _state.value.taskHistory.firstOrNull { it.sessionId == sessionId }
+        ?: scratchpad.loadTaskHistory().firstOrNull { it.sessionId == sessionId }
+    } else null
 
-    val previousMessages = if (isContinuation) _state.value.messages else emptyList()
-    val previousFeed = if (isContinuation) _state.value.executionFeed else emptyList()
+    val previousMessages = when {
+      isContinuation && _state.value.messages.isNotEmpty() -> _state.value.messages
+      isResuming && existingRecord != null -> existingRecord.conversation
+      isContinuation -> _state.value.messages
+      else -> emptyList()
+    }
+    val previousFeed = when {
+      isContinuation && _state.value.executionFeed.isNotEmpty() -> _state.value.executionFeed
+      isResuming && existingRecord != null -> existingRecord.executionFeed
+      isContinuation -> _state.value.executionFeed
+      else -> emptyList()
+    }
     val startingStep = previousFeed.size
 
     val newStep = ExecutionStep(
       id = "step_intent_${task.id}",
       stepNumber = startingStep + 1,
       type = StepType.TASK_INTENT,
-      title = if (isContinuation) "Follow-up / Task Modification" else "Task Received",
+      title = when {
+        isResuming -> "Task Resumed"
+        isFollowUp -> "Follow-up / Task Modification"
+        else -> "Task Received"
+      },
       content = task.goal
     )
 
@@ -468,7 +502,11 @@ class AgentEngine(
       .distinct()
 
     val userMessageContent = buildString {
-      append(if (isContinuation) "User Follow-up Request: ${task.goal}" else "Task Objective: ${task.goal}")
+      append(when {
+        isResuming -> "Task Objective (Resumed): ${task.goal}"
+        isFollowUp -> "User Follow-up Request: ${task.goal}"
+        else -> "Task Objective: ${task.goal}"
+      })
       if (inputFiles.isNotEmpty()) {
         appendLine()
         appendLine()
@@ -530,14 +568,18 @@ class AgentEngine(
       sessionId = sessionId,
       task = task,
       status = AgentStatus.THINKING,
-      currentAction = if (isContinuation) "Processing follow-up: '${task.goal}'" else "Understanding task objective: '${task.goal}'",
+      currentAction = when {
+        isResuming -> "Resuming task: '${task.goal}'"
+        isFollowUp -> "Processing follow-up: '${task.goal}'"
+        else -> "Understanding task objective: '${task.goal}'"
+      },
       artifacts = initialArtifacts,
-      plan = if (isContinuation) _state.value.plan else emptyList(),
+      plan = if (_state.value.plan.isNotEmpty()) _state.value.plan else (existingRecord?.planSteps ?: emptyList()),
       fiveStageRecord = FiveStageRecord(
         intent = task.goal,
-        currentPlan = if (isContinuation) _state.value.fiveStageRecord.currentPlan else emptyList(),
-        actions = if (isContinuation) _state.value.fiveStageRecord.actions else emptyList(),
-        observations = if (isContinuation) _state.value.fiveStageRecord.observations else emptyList()
+        currentPlan = if (_state.value.fiveStageRecord.currentPlan.isNotEmpty()) _state.value.fiveStageRecord.currentPlan else (existingRecord?.fiveStageRecord?.currentPlan ?: emptyList()),
+        actions = if (isContinuation) _state.value.fiveStageRecord.actions else (existingRecord?.fiveStageRecord?.actions ?: emptyList()),
+        observations = if (isContinuation) _state.value.fiveStageRecord.observations else (existingRecord?.fiveStageRecord?.observations ?: emptyList())
       ),
       taskHistory = updatedHistory,
       executionFeed = addOrUpdateStep(previousFeed, newStep),
@@ -557,6 +599,8 @@ class AgentEngine(
         // Normal cancellation
       } catch (t: Throwable) {
         val err = "Fatal execution fault: ${t.message ?: t.javaClass.simpleName}"
+        android.util.Log.e("AgentEngine", "Fatal execution fault in task ${task.id}", t)
+        recordTaskCompletion(task, AgentStatus.FAILED, err, artifactManager.getArtifacts())
         _state.value = _state.value.copy(
           status = AgentStatus.FAILED,
           error = err,
@@ -570,6 +614,1063 @@ class AgentEngine(
   /**
    * Central Autonomous Agent Execution Loop.
    */
+  /**
+   * Execution outcome evaluated at Phase 6 of each turn.
+   */
+  private sealed class TurnOutcome {
+    object Continue : TurnOutcome()
+    object ReplanningRequired : TurnOutcome()
+    data class Terminal(val status: AgentStatus, val summary: String) : TurnOutcome()
+  }
+
+  /**
+   * Executed tool call pairing the request, normalized tool result, and observation.
+   */
+  private data class ExecutedToolResult(
+    val call: ToolCall,
+    val result: ToolResult,
+    val observation: Observation,
+    val isSkippedLoop: Boolean = false
+  )
+
+  /**
+   * Execution wave grouping independent actions that can run concurrently,
+   * while preserving strict sequential ordering across dependent waves.
+   */
+  private data class ExecutionWave(
+    val waveIndex: Int,
+    val calls: List<ToolCall>,
+    val isParallel: Boolean
+  )
+
+  /**
+   * Outcome of Phase 3 tool dispatching for an iteration batch.
+   */
+  private data class BatchDispatchResult(
+    val results: List<ExecutedToolResult>,
+    val fatalHaltMessage: String? = null,
+    val resetSandboxStep: ExecutionStep? = null
+  )
+
+  /**
+   * Outcome of Phase 2 model query.
+   */
+  private data class ModelQueryResult(
+    val decision: LLMDecision,
+    val updatedDropRetries: Int,
+    val restoredProviderStep: Boolean = false
+  )
+
+  /**
+   * Proactively pre-syncs imported documents and workspace input files into the remote microVM (/home/user).
+   * Skips redundant mass uploads if the microVM session is already active from earlier turns.
+   */
+  private suspend fun syncSandboxInputFiles(
+    task: Task,
+    expectedSandboxId: String?,
+    onStepCreated: (ExecutionStep) -> Unit
+  ) {
+    val activeSandbox = sandboxProvider
+    if (activeSandbox != null && activeSandbox.isRemote) {
+      try {
+        val syncedFiles = mutableListOf<String>()
+        val allDocs = documentService?.documents?.value ?: emptyList()
+        for (doc in allDocs) {
+          val localDocFile = documentService?.resolveDocumentFile(doc.id)
+            ?: File(workspaceDir, doc.displayName).takeIf { it.exists() }
+          if (localDocFile != null && localDocFile.isFile) {
+            val ok = activeSandbox.pushFileToRemote(task.sessionId, doc.displayName, localDocFile)
+            if (ok) syncedFiles.add(doc.displayName)
+          }
+        }
+        val isExistingActiveSandbox = expectedSandboxId != null
+        if (!isExistingActiveSandbox) {
+          val allWorkspaceFiles = workspaceDir.walkTopDown()
+            .filter { f ->
+              f.isFile && !f.name.startsWith(".") &&
+                !f.relativeTo(workspaceDir).path.startsWith("documents/") &&
+                !f.relativeTo(workspaceDir).path.startsWith(".scratchpad/")
+            }
+            .toList()
+          for (f in allWorkspaceFiles) {
+            val relPath = f.relativeTo(workspaceDir).path.replace('\\', '/')
+            if (!syncedFiles.contains(relPath)) {
+              val ok = activeSandbox.pushFileToRemote(task.sessionId, relPath, f)
+              if (ok) syncedFiles.add(relPath)
+            }
+          }
+        }
+        if (syncedFiles.isNotEmpty()) {
+          val syncStep = ExecutionStep(
+            id = "step_sync_files_${task.id}",
+            stepNumber = 1,
+            type = StepType.TOOL_EXECUTION,
+            title = "Placed Input Files in E2B Sandbox",
+            content = "Successfully uploaded ${syncedFiles.size} input file(s) into E2B Cloud Sandbox (/home/user):\n" +
+              syncedFiles.joinToString("\n") { "• /home/user/$it" }
+          )
+          onStepCreated(syncStep)
+        }
+      } catch (e: Exception) {
+        Log.w("AgentEngine", "Pre-sync input files to E2B sandbox failed (non-fatal, continuing)", e)
+      }
+    }
+  }
+
+  /**
+   * Phase 2: Queries the configured or fallback model for the next action.
+   * Periodically probes primary provider recovery when running under fallback mode.
+   */
+  private suspend fun queryModelDecision(
+    task: Task,
+    systemPrompt: String,
+    messages: List<AgentMessage>,
+    turnCounter: Int,
+    lastFallbackProbeTurn: Int,
+    providerDropRetries: Int
+  ): ModelQueryResult {
+    val isFallbackActive = activeProvider !== configuredProvider
+    return if (isFallbackActive && turnCounter - lastFallbackProbeTurn >= FALLBACK_PROBE_INTERVAL_TURNS) {
+      val probe = configuredProvider.decideNextAction(
+        systemPrompt = systemPrompt,
+        taskIntent = task.goal,
+        messages = messages,
+        tools = registry.getAvailableTools()
+      )
+      if (probe !is LLMDecision.ProviderError) {
+        activeProvider = configuredProvider
+        ModelQueryResult(probe, updatedDropRetries = 0, restoredProviderStep = true)
+      } else {
+        val decision = activeProvider.decideNextAction(
+          systemPrompt = systemPrompt,
+          taskIntent = task.goal,
+          messages = messages,
+          tools = registry.getAvailableTools()
+        )
+        ModelQueryResult(decision, updatedDropRetries = providerDropRetries, restoredProviderStep = false)
+      }
+    } else {
+      val decision = activeProvider.decideNextAction(
+        systemPrompt = systemPrompt,
+        taskIntent = task.goal,
+        messages = messages,
+        tools = registry.getAvailableTools()
+      )
+      ModelQueryResult(decision, updatedDropRetries = providerDropRetries, restoredProviderStep = false)
+    }
+  }
+
+  /**
+   * Phase 3: Validates and dispatches tool calls through the registry and dispatcher.
+   * Enforces loop signature checks, duplicate action limits, sandbox identity tracking,
+   * and concurrent multitasking or sequential fallback dispatching.
+   */
+  /**
+   * Partitions a batch of tool calls into execution waves.
+   * Independent tool actions run in parallel within each wave.
+   * Dependent tool actions are strictly ordered into subsequent waves.
+   */
+  private fun partitionIntoExecutionWaves(
+    calls: List<ToolCall>,
+    actionableSteps: List<ActionableStep>
+  ): List<ExecutionWave> {
+    if (calls.isEmpty()) return emptyList()
+    if (calls.size == 1) {
+      return listOf(ExecutionWave(waveIndex = 0, calls = calls, isParallel = false))
+    }
+
+    val readOnlyTools = setOf(
+      "read_file", "list_directory", "file_exists", "file_metadata",
+      "diff_files", "web_search", "web_fetch", "web_open", "web_extract",
+      "web_crawl", "check_tools", "sandbox_diagnostics",
+      "document_search", "document_list",
+      "mcp_list_servers", "mcp_list_resources", "mcp_read_resource", "mcp_list_prompts"
+    )
+
+    val waves = mutableListOf<ExecutionWave>()
+    val currentWaveCalls = mutableListOf<ToolCall>()
+    var currentWaveIsReadOnly = false
+    val currentWavePaths = mutableSetOf<String>()
+
+    fun flushWave(isParallel: Boolean) {
+      if (currentWaveCalls.isNotEmpty()) {
+        waves.add(
+          ExecutionWave(
+            waveIndex = waves.size,
+            calls = currentWaveCalls.toList(),
+            isParallel = isParallel && currentWaveCalls.size > 1
+          )
+        )
+        currentWaveCalls.clear()
+        currentWavePaths.clear()
+        currentWaveIsReadOnly = false
+      }
+    }
+
+    for (call in calls) {
+      val resolvedName = registry.resolveToolName(call.toolName)
+      val isReadOnly = resolvedName in readOnlyTools
+      val writePath = if (resolvedName in setOf("write_file", "edit_file")) call.arguments["path"] as? String else null
+
+      if (currentWaveCalls.isEmpty()) {
+        currentWaveCalls.add(call)
+        currentWaveIsReadOnly = isReadOnly
+        if (writePath != null) currentWavePaths.add(writePath)
+      } else if (currentWaveIsReadOnly && isReadOnly) {
+        currentWaveCalls.add(call)
+      } else if (!currentWaveIsReadOnly && writePath != null && currentWavePaths.isNotEmpty() && !currentWavePaths.contains(writePath)) {
+        currentWaveCalls.add(call)
+        currentWavePaths.add(writePath)
+      } else {
+        flushWave(isParallel = currentWaveIsReadOnly || currentWavePaths.size > 1)
+        currentWaveCalls.add(call)
+        currentWaveIsReadOnly = isReadOnly
+        if (writePath != null) currentWavePaths.add(writePath)
+      }
+    }
+    flushWave(isParallel = currentWaveIsReadOnly || currentWavePaths.size > 1)
+
+    return waves
+  }
+
+  /**
+   * Phase 3: Validates and dispatches tool calls with dependency-aware execution waves,
+   * sandbox identity verification, unified pre-flight recovery checks, and live feed synchronization.
+   */
+  private suspend fun dispatchToolCallsBatch(
+    task: Task,
+    turnCounter: Int,
+    validatedToolCalls: List<ToolCall>,
+    currentState: AgentState,
+    currentSandboxId: String?,
+    planner: TaskPlanner,
+    stepCounterProvider: () -> Int
+  ): BatchDispatchResult {
+    val toolContext = ToolExecutionContext(
+      environmentType = ExecutionEnvironmentType.E2B_CLOUD,
+      backendName = sandboxProvider.name,
+      sessionId = task.sessionId,
+      taskId = task.id,
+      sandboxId = (sandboxProvider as? E2BSandboxProvider)?.getActiveSession(task.sessionId)?.sandboxId,
+      workspaceDir = workspaceDir,
+      workingDirectory = (registry.getTool("terminal") as? TerminalTool)?.getWorkingDirectory(task.sessionId) ?: "/home/user",
+      capabilities = setOf("shell", "process_execution")
+    )
+
+    val waves = partitionIntoExecutionWaves(validatedToolCalls, planner.getActionableSteps())
+    val results = mutableListOf<ExecutedToolResult>()
+    var activeExpectedSandboxId = currentSandboxId
+    var resetStep: ExecutionStep? = null
+    var fatalHaltMessage: String? = null
+
+    for (wave in waves) {
+      currentCoroutineContext().ensureActive()
+
+      if (wave.isParallel) {
+        // Execute independent tool actions concurrently
+        val currentFeed = _state.value.executionFeed.toMutableList()
+        val waveStepIds = wave.calls.map { "step_tool_${it.callId}" }
+        val matchingSteps = wave.calls.map { call ->
+          planner.getActionableSteps().firstOrNull { it.toolCallId == call.callId || (it.assignedTool == call.toolName && it.status == ActionExecutionStatus.DISPATCHED) }
+        }
+
+        wave.calls.forEachIndexed { idx, toolCall ->
+          val step = matchingSteps[idx]
+          if (step != null) {
+            planner.markStepExecuting(step.id)
+          }
+          currentFeed.add(
+            ExecutionStep(
+              id = waveStepIds[idx],
+              stepNumber = stepCounterProvider(),
+              type = StepType.TOOL_EXECUTION,
+              title = "Executing [Wave ${wave.waveIndex + 1} Parallel]: ${toolCall.toolName}",
+              content = formatArguments(toolCall.arguments),
+              toolName = toolCall.toolName,
+              toolCallId = toolCall.callId,
+              toolStatus = ToolStatus.RUNNING.name,
+              actionStatus = ActionExecutionStatus.EXECUTING,
+              actionableStepId = step?.id,
+              waveIndex = wave.waveIndex,
+              isCompleted = false
+            )
+          )
+        }
+
+        _state.value = _state.value.copy(
+          status = AgentStatus.EXECUTING_TOOL,
+          currentAction = "Executing Wave ${wave.waveIndex + 1}: ${wave.calls.size} operations concurrently (Multitasking)...",
+          executionFeed = currentFeed,
+          isMultitasking = true,
+          activeConcurrentTasks = wave.calls.size
+        )
+
+        val asyncDispatches = wave.calls.map { call ->
+          scope.async(Dispatchers.IO) {
+            val result = dispatcher.dispatch(call, task.id, toolContext)
+            ExecutedToolResult(call, result.first, result.second)
+          }
+        }
+        val waveResults = asyncDispatches.awaitAll()
+        results.addAll(waveResults)
+
+        val anyFailed = waveResults.any { it.result.status == ToolStatus.FAILED || it.result.status == ToolStatus.CANCELLED }
+        if (anyFailed) {
+          val failedItem = waveResults.first { it.result.status == ToolStatus.FAILED || it.result.status == ToolStatus.CANCELLED }
+          val remainingWaves = waves.filter { it.waveIndex > wave.waveIndex }
+          for (remWave in remainingWaves) {
+            for (remCall in remWave.calls) {
+              val remStep = planner.getActionableSteps().firstOrNull { it.toolCallId == remCall.callId || (it.assignedTool == remCall.toolName && it.status == ActionExecutionStatus.DISPATCHED) }
+              val skipReason = "Skipped because prerequisite operation '${failedItem.call.toolName}' in Wave ${wave.waveIndex + 1} failed: ${failedItem.result.error ?: "error"}"
+              val synResult = ToolResult(
+                callId = remCall.callId,
+                toolName = remCall.toolName,
+                status = ToolStatus.CANCELLED,
+                arguments = remCall.arguments,
+                output = null,
+                error = skipReason,
+                errorType = ToolErrorCode.REPETITION_GUARD,
+                duration = 0L,
+                exitCode = 1,
+                outcome = ToolExecutionOutcome.EXECUTION_FAILED
+              )
+              val synObs = Observation(
+                callId = remCall.callId,
+                toolName = remCall.toolName,
+                status = ToolStatus.CANCELLED,
+                isSuccess = false,
+                inputsSummary = formatArguments(remCall.arguments),
+                result = null,
+                error = skipReason,
+                errorType = ToolErrorCode.REPETITION_GUARD,
+                summary = skipReason,
+                rawOutput = skipReason,
+                outcome = ToolExecutionOutcome.EXECUTION_FAILED
+              )
+              results.add(ExecutedToolResult(remCall, synResult, synObs, isSkippedLoop = true))
+              if (remStep != null) {
+                planner.markStepSkipped(remStep.id, skipReason)
+              }
+            }
+          }
+          break
+        }
+      } else {
+        // Sequential wave execution (single call or state-modifying action)
+        var waveHalted = false
+        for (toolCall in wave.calls) {
+          currentCoroutineContext().ensureActive()
+
+          // Sandbox identity verification
+          val e2b = sandboxProvider as? E2BSandboxProvider
+          if (e2b != null && e2b.isE2B) {
+            val activeSess = e2b.getActiveSession(task.sessionId)
+            val currentSbxId = activeSess?.sandboxId
+            if (activeExpectedSandboxId != null && (currentSbxId == null || currentSbxId != activeExpectedSandboxId)) {
+              resetStep = ExecutionStep(
+                stepNumber = stepCounterProvider(),
+                type = StepType.SANDBOX_RESET,
+                title = "SANDBOX_RESET Detected",
+                content = "Sandbox identity mismatch detected: expected '$activeExpectedSandboxId', found '${currentSbxId ?: "null"}'. Halting for re-provisioning and state sync to prevent state loss."
+              )
+              val fresh = e2b.getOrCreateE2BSession(task.sessionId, task.id)
+              activeExpectedSandboxId = fresh.sandboxId
+              try {
+                e2b.syncArtifacts(task.sessionId, workspaceDir, task.id)
+              } catch (e: Exception) {
+                Log.w("AgentEngine", "syncArtifacts failed after sandbox reset (non-fatal)", e)
+              }
+            } else if (activeExpectedSandboxId == null && currentSbxId != null) {
+              activeExpectedSandboxId = currentSbxId
+            }
+          }
+
+          // Pre-flight decision checks
+          when (val preFlight = recoveryManager.checkPreFlight(toolCall)) {
+            is PreFlightDecision.HaltLoop -> {
+              fatalHaltMessage = preFlight.fatalMessage
+              waveHalted = true
+              break
+            }
+            is PreFlightDecision.SkipLoop -> {
+              val synResult = ToolResult(
+                callId = toolCall.callId,
+                toolName = toolCall.toolName,
+                status = ToolStatus.FAILED,
+                arguments = toolCall.arguments,
+                output = null,
+                error = preFlight.reason,
+                errorType = ToolErrorCode.REPETITION_GUARD,
+                duration = 0L,
+                exitCode = 1,
+                outcome = ToolExecutionOutcome.CONDITION_NOT_FOUND,
+                metadata = mapOf("suggested_alternative_tool" to (preFlight.suggestedTool ?: ""))
+              )
+              val synObs = Observation(
+                callId = toolCall.callId,
+                toolName = toolCall.toolName,
+                status = ToolStatus.FAILED,
+                isSuccess = false,
+                inputsSummary = formatArguments(toolCall.arguments),
+                result = null,
+                error = preFlight.reason,
+                errorType = ToolErrorCode.REPETITION_GUARD,
+                summary = preFlight.reason,
+                rawOutput = preFlight.reason,
+                outcome = ToolExecutionOutcome.CONDITION_NOT_FOUND
+              )
+              results.add(ExecutedToolResult(toolCall, synResult, synObs, isSkippedLoop = true))
+              waveHalted = true
+              break
+            }
+            is PreFlightDecision.BlockDeterministicFailure -> {
+              val blockMsg = "Deterministic Failure Repeat Guard: ${preFlight.priorError}. ${preFlight.recoveryHint}"
+              val synResult = ToolResult(
+                callId = toolCall.callId,
+                toolName = toolCall.toolName,
+                status = ToolStatus.FAILED,
+                arguments = toolCall.arguments,
+                output = null,
+                error = blockMsg,
+                errorType = ToolErrorCode.UNSUPPORTED_OPERATION,
+                duration = 0L,
+                exitCode = 1,
+                outcome = ToolExecutionOutcome.EXECUTION_FAILED
+              )
+              val synObs = Observation(
+                callId = toolCall.callId,
+                toolName = toolCall.toolName,
+                status = ToolStatus.FAILED,
+                isSuccess = false,
+                inputsSummary = formatArguments(toolCall.arguments),
+                result = null,
+                error = blockMsg,
+                errorType = ToolErrorCode.UNSUPPORTED_OPERATION,
+                summary = blockMsg,
+                rawOutput = blockMsg,
+                outcome = ToolExecutionOutcome.EXECUTION_FAILED
+              )
+              results.add(ExecutedToolResult(toolCall, synResult, synObs, isSkippedLoop = true))
+              waveHalted = true
+              break
+            }
+            is PreFlightDecision.Proceed -> {
+              // Proceed
+            }
+          }
+
+          val matchingStep = planner.getActionableSteps().firstOrNull {
+            it.toolCallId == toolCall.callId || (it.assignedTool == toolCall.toolName && it.status == ActionExecutionStatus.DISPATCHED)
+          }
+          if (matchingStep != null) {
+            planner.markStepExecuting(matchingStep.id)
+          }
+
+          val runningStepId = "step_tool_${toolCall.callId}"
+          val runningStep = ExecutionStep(
+            id = runningStepId,
+            stepNumber = stepCounterProvider(),
+            type = StepType.TOOL_EXECUTION,
+            title = if (waves.size > 1) "Executing [Wave ${wave.waveIndex + 1}]: ${toolCall.toolName}" else "Executing: ${toolCall.toolName}",
+            content = formatArguments(toolCall.arguments),
+            toolName = toolCall.toolName,
+            toolCallId = toolCall.callId,
+            toolStatus = ToolStatus.RUNNING.name,
+            actionStatus = ActionExecutionStatus.EXECUTING,
+            actionableStepId = matchingStep?.id,
+            waveIndex = wave.waveIndex,
+            isCompleted = false
+          )
+          _state.value = _state.value.copy(
+            status = AgentStatus.EXECUTING_TOOL,
+            currentAction = "Executing '${toolCall.toolName}' (Wave ${wave.waveIndex + 1}/${waves.size})...",
+            executionFeed = addOrUpdateStep(_state.value.executionFeed, runningStep),
+            isMultitasking = false,
+            activeConcurrentTasks = 0
+          )
+
+          delay(80)
+          val (toolResult, observation) = dispatcher.dispatch(toolCall, task.id, toolContext)
+          results.add(ExecutedToolResult(toolCall, toolResult, observation, isSkippedLoop = false))
+
+          if (toolResult.status == ToolStatus.FAILED || toolResult.status == ToolStatus.CANCELLED) {
+            waveHalted = true
+            break
+          }
+        }
+
+        if (waveHalted) {
+          val remainingWaves = waves.filter { it.waveIndex > wave.waveIndex }
+          for (remWave in remainingWaves) {
+            for (remCall in remWave.calls) {
+              val remStep = planner.getActionableSteps().firstOrNull { it.toolCallId == remCall.callId || (it.assignedTool == remCall.toolName && it.status == ActionExecutionStatus.DISPATCHED) }
+              val skipReason = "Skipped because previous wave action in Wave ${wave.waveIndex + 1} encountered a halting condition."
+              val synResult = ToolResult(
+                callId = remCall.callId,
+                toolName = remCall.toolName,
+                status = ToolStatus.CANCELLED,
+                arguments = remCall.arguments,
+                output = null,
+                error = skipReason,
+                errorType = ToolErrorCode.REPETITION_GUARD,
+                duration = 0L,
+                exitCode = 1,
+                outcome = ToolExecutionOutcome.EXECUTION_FAILED
+              )
+              val synObs = Observation(
+                callId = remCall.callId,
+                toolName = remCall.toolName,
+                status = ToolStatus.CANCELLED,
+                isSuccess = false,
+                inputsSummary = formatArguments(remCall.arguments),
+                result = null,
+                error = skipReason,
+                errorType = ToolErrorCode.REPETITION_GUARD,
+                summary = skipReason,
+                rawOutput = skipReason,
+                outcome = ToolExecutionOutcome.EXECUTION_FAILED
+              )
+              results.add(ExecutedToolResult(remCall, synResult, synObs, isSkippedLoop = true))
+              if (remStep != null) {
+                planner.markStepSkipped(remStep.id, skipReason)
+              }
+            }
+          }
+          break
+        }
+      }
+    }
+
+    return BatchDispatchResult(
+      results = results,
+      fatalHaltMessage = fatalHaltMessage,
+      resetSandboxStep = resetStep
+    )
+  }
+
+  /**
+   * Phases 4 & 5: Normalizes results, returns observations, ingests research, reflects,
+   * syncs artifacts, and updates persistent checkpoints.
+   */
+  private suspend fun processExecutedResultsAndReflect(
+    task: Task,
+    turnCounter: Int,
+    results: List<ExecutedToolResult>,
+    currentState: AgentState,
+    planner: TaskPlanner,
+    stepCounterProvider: () -> Int
+  ): AgentState {
+    var updatedFeed = currentState.executionFeed.toMutableList()
+    var updatedMessages = currentState.messages
+    var updatedToolExecutions = currentState.toolExecutions
+    var updatedObservations = currentState.observations
+    var updatedActions = currentState.fiveStageRecord.actions
+    var updatedObsStrings = currentState.fiveStageRecord.observations
+
+    for (item in results) {
+      val call = item.call
+      val toolResult = item.result
+      val observation = item.observation
+
+      if (toolResult.status == ToolStatus.SUCCEEDED && toolResult.output != null) {
+        scratchpad.autoIngestFromToolOutput(call.toolName, call.arguments, toolResult.output)
+      }
+
+      val runningStepId = "step_tool_${call.callId}"
+      val finalActionStatus = when (toolResult.status) {
+        ToolStatus.SUCCEEDED -> ActionExecutionStatus.COMPLETED
+        ToolStatus.FAILED -> ActionExecutionStatus.FAILED
+        ToolStatus.CANCELLED -> ActionExecutionStatus.SKIPPED
+        else -> ActionExecutionStatus.COMPLETED
+      }
+      updatedFeed = updatedFeed.map { feedStep ->
+        if (feedStep.id == runningStepId) {
+          feedStep.copy(
+            toolStatus = toolResult.status.name,
+            actionStatus = finalActionStatus,
+            durationMs = toolResult.duration,
+            exitCode = toolResult.exitCode,
+            stdout = toolResult.stdout,
+            stderr = toolResult.stderr,
+            isCompleted = true,
+            outcome = observation.outcome.name
+          )
+        } else feedStep
+      }.toMutableList()
+
+      val obsStepId = if (item.isSkippedLoop) "step_loopguard_${call.callId}" else "step_obs_${call.callId}"
+      val obsTitle = when {
+        item.isSkippedLoop -> "Loop Guard Triggered"
+        observation.outcome == ToolExecutionOutcome.CONDITION_NOT_FOUND -> "Condition Not Found"
+        observation.outcome == ToolExecutionOutcome.SUCCESS_EMPTY -> "Succeeded (No Output)"
+        observation.outcome == ToolExecutionOutcome.TRUNCATED_OR_PARTIAL -> "Observation (Truncated / Partial)"
+        observation.outcome == ToolExecutionOutcome.UNVERIFIED -> "Observation (Unverified)"
+        observation.isSuccess -> "Observation (${toolResult.status.name})"
+        else -> "Observation (${toolResult.errorType?.name ?: "FAILED"})"
+      }
+      updatedFeed = addOrUpdateStep(
+        updatedFeed,
+        ExecutionStep(
+          id = obsStepId,
+          stepNumber = stepCounterProvider(),
+          type = StepType.OBSERVATION,
+          title = obsTitle,
+          content = observation.summary,
+          stdout = observation.stdout,
+          stderr = observation.stderr,
+          toolStatus = toolResult.status.name,
+          outcome = observation.outcome.name
+        )
+      ).toMutableList()
+
+      // Authoritative evaluation through Unified Recovery Manager
+      val evalConclusion = recoveryManager.evaluateExecution(call, toolResult, observation, null)
+
+      // Emit distinct evaluation/recovery step to keep evaluator conclusions separate from raw tool observations
+      if (!evalConclusion.isSatisfied || evalConclusion.failureCategory != null || item.isSkippedLoop) {
+        val evalStepId = "step_recovery_${call.callId}"
+        val evalTitle = if (item.isSkippedLoop) "Recovery: Loop Intervention" else "Recovery: ${evalConclusion.recoveryStrategy.name}"
+        updatedFeed = addOrUpdateStep(
+          updatedFeed,
+          ExecutionStep(
+            id = evalStepId,
+            stepNumber = stepCounterProvider(),
+            type = StepType.RECOVERY,
+            title = evalTitle,
+            content = evalConclusion.explanation,
+            recoveryStrategy = evalConclusion.recoveryStrategy.name,
+            failureCategory = evalConclusion.failureCategory?.name
+          )
+        ).toMutableList()
+
+        // Inject actionable recovery guidance prompt for the LLM
+        val guidanceMsg = AgentMessage(
+          role = MessageRole.USER,
+          content = evalConclusion.toSystemGuidancePrompt()
+        )
+        updatedMessages = updatedMessages + guidanceMsg
+
+        if (evalConclusion.recoveryStrategy == RecoveryStrategy.REVISE_PLAN) {
+          planner.setReplanReason(evalConclusion.explanation)
+        }
+        if (evalConclusion.recoveryStrategy == RecoveryStrategy.RETRY_WITH_BACKOFF && evalConclusion.backoffMs > 0) {
+          delay(evalConclusion.backoffMs)
+        }
+      }
+
+      updatedActions = updatedActions + "Dispatched '${call.toolName}' with ${formatArguments(call.arguments)}"
+      updatedObsStrings = updatedObsStrings + observation.summary
+
+      planner.recordToolResult(toolResult, observation.summary)
+
+      // Synchronize first-class ActionableStep state & extract verifiable completion evidence
+      val matchingStep = planner.getActionableSteps().firstOrNull { it.toolCallId == call.callId }
+        ?: planner.getActionableSteps().firstOrNull {
+          (it.assignedTool == call.toolName || it.status == ActionExecutionStatus.DISPATCHED || it.status == ActionExecutionStatus.EXECUTING)
+        }
+
+      val evidenceItem = when {
+        toolResult.status == ToolStatus.SUCCEEDED && (call.toolName == "write_file" || call.toolName == "edit_file") -> {
+          val path = call.arguments["path"]?.toString()
+          CompletionEvidenceItem(
+            type = "FILE_EXISTS",
+            description = "File written successfully: $path",
+            target = path,
+            verified = true,
+            details = observation.summary
+          )
+        }
+        toolResult.status == ToolStatus.SUCCEEDED && (call.toolName.startsWith("build_") || call.toolName.startsWith("recreate_")) -> {
+          val path = call.arguments["file_path"]?.toString() ?: call.arguments["output_path"]?.toString()
+          CompletionEvidenceItem(
+            type = "FILE_EXISTS",
+            description = "Document deliverable built: $path",
+            target = path,
+            verified = true,
+            details = observation.summary
+          )
+        }
+        toolResult.status == ToolStatus.SUCCEEDED && call.toolName == "terminal" && toolResult.exitCode == 0 -> {
+          val cmd = call.arguments["command"]?.toString()
+          CompletionEvidenceItem(
+            type = "EXIT_CODE_ZERO",
+            description = "Command completed with zero exit code",
+            target = cmd?.take(80),
+            verified = true,
+            details = "Exit code 0"
+          )
+        }
+        else -> null
+      }
+
+      val producedArtifact = if (toolResult.status == ToolStatus.SUCCEEDED) {
+        call.arguments["path"]?.toString() ?: call.arguments["file_path"]?.toString() ?: call.arguments["output_path"]?.toString()
+      } else null
+
+      if (matchingStep != null) {
+        if (toolResult.status == ToolStatus.SUCCEEDED) {
+          planner.markStepCompleted(matchingStep.id, observation.summary, producedArtifact, evidenceItem)
+        } else if (toolResult.status == ToolStatus.FAILED) {
+          planner.markStepFailed(matchingStep.id, toolResult.error ?: observation.summary)
+        } else if (toolResult.status == ToolStatus.CANCELLED) {
+          planner.markStepSkipped(matchingStep.id, toolResult.error ?: "Action skipped")
+        }
+      } else {
+        if (evidenceItem != null) planner.recordEvidence(evidenceItem)
+        if (producedArtifact != null) planner.recordArtifact(producedArtifact)
+        planner.recordObservation(observation.summary)
+      }
+
+      val reflection = planner.reflect(
+        currentStep = turnCounter,
+        toolName = call.toolName,
+        toolArgs = call.arguments,
+        result = toolResult,
+        observationSummary = observation.summary,
+        boundTodoId = call.arguments["todo_id"]?.toString()
+      )
+      if (reflection.transcriptWarning != null) {
+        val refStepId = "step_reflect_${call.callId}"
+        updatedFeed = addOrUpdateStep(
+          updatedFeed,
+          ExecutionStep(
+            id = refStepId,
+            stepNumber = stepCounterProvider(),
+            type = StepType.OBSERVATION,
+            title = "Planner Reflection",
+            content = reflection.transcriptWarning
+          )
+        ).toMutableList()
+      }
+
+      val hasToolMsg = updatedMessages.any { it.role == MessageRole.TOOL && it.toolCallId == call.callId }
+      updatedMessages = if (hasToolMsg) {
+        updatedMessages.map {
+          if (it.role == MessageRole.TOOL && it.toolCallId == call.callId) {
+            it.copy(content = observation.rawOutput)
+          } else it
+        }
+      } else {
+        updatedMessages + AgentMessage(
+          role = MessageRole.TOOL,
+          content = observation.rawOutput,
+          toolCallId = call.callId,
+          toolName = call.toolName
+        )
+      }
+
+      updatedToolExecutions = updatedToolExecutions + toolResult
+      updatedObservations = updatedObservations + observation
+    }
+
+    val updatedArtifacts = artifactManager.syncWorkspace(task.id)
+
+    val hasNewArtifact = updatedArtifacts.size > currentState.artifacts.size ||
+      updatedArtifacts.any { art -> currentState.artifacts.none { it.path == art.path && it.size == art.size } }
+    val isStateChanging = results.any {
+      registry.resolveToolName(it.call.toolName) in STATE_CHANGING_TOOLS && it.result.isSuccess
+    }
+    val isInformative = results.any {
+      registry.resolveToolName(it.call.toolName) in INFORMATIVE_TOOLS && it.result.isSuccess
+    }
+    if (hasNewArtifact || isStateChanging || isInformative) {
+      planner.recordProgress(true)
+    } else if (results.all { !it.result.isSuccess || it.observation.outcome == ToolExecutionOutcome.CONDITION_NOT_FOUND }) {
+      planner.recordProgress(false)
+    }
+
+    val currentPersistentTask = planner.toPersistentTask(
+      sessionId = task.sessionId,
+      turn = turnCounter,
+      maxTurns = maxSteps,
+      status = AgentStatus.RUNNING
+    )
+    scratchpad.saveTask(currentPersistentTask)
+
+    scratchpad.saveCheckpoint(
+      AgentCheckpoint(
+        taskGoal = task.goal,
+        currentTurn = turnCounter,
+        completedSections = planner.completedDescriptions(),
+        pendingSections = planner.pendingDescriptions(),
+        planItems = planner.planDescriptions(),
+        artifactPaths = updatedArtifacts.map { it.path },
+        totalFindingsCount = scratchpad.loadAllFindings().size,
+        status = "IN_PROGRESS",
+        recoveryState = recoveryManager.exportStateJson(),
+        currentPhase = planner.getCurrentPhase().name,
+        persistentTaskJson = currentPersistentTask.toJsonString()
+      )
+    )
+
+    return currentState.copy(
+      status = AgentStatus.OBSERVING,
+      currentAction = "Completed execution of ${results.size} operation(s).",
+      messages = updatedMessages,
+      toolExecutions = updatedToolExecutions,
+      observations = updatedObservations,
+      artifacts = updatedArtifacts,
+      executionFeed = updatedFeed,
+      plan = planner.planDescriptions(),
+      isMultitasking = false,
+      activeConcurrentTasks = 0,
+      persistentTask = currentPersistentTask,
+      fiveStageRecord = currentState.fiveStageRecord.copy(
+        currentPlan = planner.planDescriptions(),
+        actions = updatedActions,
+        observations = updatedObsStrings
+      )
+    )
+  }
+
+  /**
+   * Phase 6: Authoritative objective verification and self-audit against disk ground truth.
+   * Prevents premature or unverified completion declarations.
+   */
+  private suspend fun evaluateCompletion(
+    task: Task,
+    conclusion: String,
+    turnCounter: Int,
+    currentState: AgentState,
+    planner: TaskPlanner,
+    consecutiveVerificationFailures: Int,
+    stepCounterProvider: () -> Int,
+    onVerificationFailureIncremented: (Int) -> Unit
+  ): TurnOutcome {
+    planner.setPhase(TaskPhase.VERIFICATION)
+    var state = currentState.copy(
+      status = AgentStatus.VERIFYING,
+      currentAction = "Authoritatively verifying objective satisfaction against filesystem and actionable steps...",
+      persistentTask = planner.toPersistentTask(task.sessionId, turnCounter, maxSteps)
+    )
+    if (!updateStateIfActive(task, state)) return TurnOutcome.Terminal(AgentStatus.CANCELLED, "Task cancelled")
+
+    delay(80)
+    try {
+      sandboxManager.activeProvider.syncArtifacts(task.sessionId, workspaceDir, task.id)
+    } catch (e: Exception) {
+      Log.w("AgentEngine", "syncArtifacts failed during step verification (non-fatal)", e)
+    }
+    val freshArtifacts = artifactManager.syncWorkspace(task.id)
+    val verificationResult = verifyObjective(task, state.copy(artifacts = freshArtifacts))
+
+    // Prevent premature completion if required actionable steps remain uncompleted
+    val uncompletedRequiredSteps = planner.getActionableSteps().filter {
+      it.status == ActionExecutionStatus.PLANNED || it.status == ActionExecutionStatus.EXECUTING || it.status == ActionExecutionStatus.FAILED
+    }
+    val hasPendingActionableSteps = uncompletedRequiredSteps.isNotEmpty()
+
+    if (verificationResult.isSatisfied && !hasPendingActionableSteps) {
+      planner.setPhase(TaskPhase.COMPLETED)
+      val conclusionText = conclusion.ifBlank {
+        "Task completed successfully and verified."
+      }
+
+      val evItem = CompletionEvidenceItem(
+        type = "ASSERTION",
+        description = "Overall task objective verified successfully",
+        target = task.goal,
+        verified = true,
+        details = verificationResult.details
+      )
+      planner.recordEvidence(evItem)
+
+      val vStep = ExecutionStep(
+        id = "step_verify_t${turnCounter}_${task.id}",
+        stepNumber = stepCounterProvider(),
+        type = StepType.VERIFICATION,
+        title = "Objective Verified",
+        content = verificationResult.details,
+        actionStatus = ActionExecutionStatus.COMPLETED
+      )
+      val cStep = ExecutionStep(
+        id = "step_conclusion_${task.id}",
+        stepNumber = stepCounterProvider(),
+        type = StepType.CONCLUSION,
+        title = "Completed",
+        content = conclusionText,
+        actionStatus = ActionExecutionStatus.COMPLETED
+      )
+      val completedFeed = addOrUpdateStep(addOrUpdateStep(state.executionFeed, vStep), cStep)
+
+      artifactManager.cleanTemporaryFiles()
+      val finalArtifacts = artifactManager.syncWorkspace(task.id)
+
+      val finalPersistentTask = planner.toPersistentTask(
+        sessionId = task.sessionId,
+        turn = turnCounter,
+        maxTurns = maxSteps,
+        status = AgentStatus.COMPLETED,
+        conclusion = conclusionText
+      )
+      scratchpad.saveTask(finalPersistentTask)
+
+      scratchpad.saveCheckpoint(
+        AgentCheckpoint(
+          taskGoal = task.goal,
+          currentTurn = turnCounter,
+          completedSections = planner.completedDescriptions(),
+          pendingSections = planner.pendingDescriptions(),
+          planItems = state.plan,
+          artifactPaths = finalArtifacts.map { it.path },
+          totalFindingsCount = scratchpad.loadAllFindings().size,
+          status = "COMPLETED",
+          recoveryState = recoveryManager.exportStateJson(),
+          currentPhase = TaskPhase.COMPLETED.name,
+          persistentTaskJson = finalPersistentTask.toJsonString()
+        )
+      )
+
+      recordTaskCompletion(task, AgentStatus.COMPLETED, conclusionText, finalArtifacts)
+
+      val finalMessages = if (state.messages.any { it.role == MessageRole.ASSISTANT && it.content == conclusionText }) {
+        state.messages
+      } else {
+        state.messages + AgentMessage(role = MessageRole.ASSISTANT, content = conclusionText)
+      }
+
+      state = state.copy(
+        status = AgentStatus.COMPLETED,
+        currentAction = "Task completed and verified. Conversation active for further refinement.",
+        completionSummary = conclusionText,
+        verification = verificationResult,
+        artifacts = finalArtifacts,
+        taskHistory = _state.value.taskHistory,
+        executionFeed = completedFeed,
+        messages = finalMessages,
+        persistentTask = finalPersistentTask,
+        fiveStageRecord = state.fiveStageRecord.copy(conclusion = conclusionText),
+        canCancel = false
+      )
+      updateStateIfActive(task, state)
+      return TurnOutcome.Terminal(AgentStatus.COMPLETED, conclusionText)
+    } else {
+      val newFailures = consecutiveVerificationFailures + 1
+      onVerificationFailureIncremented(newFailures)
+
+      val rejectionDetails = if (hasPendingActionableSteps) {
+        val pendingStr = uncompletedRequiredSteps.joinToString("; ") { "#${it.stepNumber} [${it.status.name}] ${it.description}" }
+        "Active plan contains pending or incomplete steps: [$pendingStr]. All planned actions must be executed or updated before declaring completion."
+      } else {
+        verificationResult.details
+      }
+
+      planner.markCompletionRejected(rejectionDetails)
+      planner.setPhase(TaskPhase.EXECUTION)
+      val rejectionMsg = "Objective Verification Incomplete: $rejectionDetails. The task cannot be concluded until required actions and deliverables exist on disk."
+
+      if (newFailures >= 3) {
+        val isPartial = verificationResult.isPartial || verificationResult.verifiedArtifacts.isNotEmpty()
+        val finalStatus = if (isPartial) AgentStatus.PARTIAL_COMPLETION else AgentStatus.FAILED
+        val finalTitle = if (isPartial) "Partial Completion" else "Task Halted"
+        val finalContent = if (isPartial) {
+          "Partial Completion: Verified [${verificationResult.verifiedArtifacts.joinToString()}], but missing requirements: [${verificationResult.missingRequirements.joinToString()}]."
+        } else {
+          "Task halted: Deliverables could not be verified after 3 attempts. Details: $rejectionDetails"
+        }
+
+        val rejStep = ExecutionStep(
+          id = "step_verify_rej_t${turnCounter}_${task.id}",
+          stepNumber = stepCounterProvider(),
+          type = StepType.VERIFICATION,
+          title = "Verification Incomplete",
+          content = rejectionMsg,
+          actionStatus = ActionExecutionStatus.FAILED
+        )
+        val finalStep = ExecutionStep(
+          id = "step_conclusion_${task.id}",
+          stepNumber = stepCounterProvider(),
+          type = if (isPartial) StepType.CONCLUSION else StepType.ERROR,
+          title = finalTitle,
+          content = finalContent,
+          actionStatus = if (isPartial) ActionExecutionStatus.COMPLETED else ActionExecutionStatus.FAILED
+        )
+        val failureFeed = addOrUpdateStep(addOrUpdateStep(state.executionFeed, rejStep), finalStep)
+
+        val finalFailedPTask = planner.toPersistentTask(
+          sessionId = task.sessionId,
+          turn = turnCounter,
+          maxTurns = maxSteps,
+          status = finalStatus,
+          error = if (finalStatus == AgentStatus.FAILED) finalContent else null,
+          conclusion = finalContent
+        )
+        scratchpad.saveTask(finalFailedPTask)
+
+        scratchpad.saveCheckpoint(
+          AgentCheckpoint(
+            taskGoal = task.goal,
+            currentTurn = turnCounter,
+            completedSections = planner.completedDescriptions(),
+            pendingSections = planner.pendingDescriptions(),
+            planItems = state.plan,
+            artifactPaths = artifactManager.getArtifacts().map { it.path },
+            totalFindingsCount = scratchpad.loadAllFindings().size,
+            status = finalStatus.name,
+            recoveryState = recoveryManager.exportStateJson(),
+            currentPhase = if (isPartial) TaskPhase.COMPLETED.name else TaskPhase.FAILED.name,
+            persistentTaskJson = finalFailedPTask.toJsonString()
+          )
+        )
+
+        recordTaskCompletion(task, finalStatus, finalContent, artifactManager.getArtifacts())
+
+        state = state.copy(
+          status = finalStatus,
+          currentAction = finalContent,
+          error = if (!isPartial) "Verification incomplete: $rejectionDetails" else null,
+          completionSummary = if (isPartial) finalContent else null,
+          verification = verificationResult,
+          taskHistory = _state.value.taskHistory,
+          executionFeed = failureFeed,
+          persistentTask = finalFailedPTask,
+          canCancel = false
+        )
+        updateStateIfActive(task, state)
+        return TurnOutcome.Terminal(finalStatus, finalContent)
+      }
+
+      val rejStep = ExecutionStep(
+        id = "step_verify_rej_t${turnCounter}_${task.id}",
+        stepNumber = stepCounterProvider(),
+        type = StepType.VERIFICATION,
+        title = "Verification Incomplete",
+        content = rejectionMsg
+      )
+      val feed = addOrUpdateStep(state.executionFeed, rejStep)
+
+      val updatedMessages = state.messages + listOfNotNull(
+        if (state.messages.none { it.role == MessageRole.ASSISTANT && it.content == conclusion })
+          AgentMessage(role = MessageRole.ASSISTANT, content = conclusion)
+        else null,
+        if (state.messages.none { it.role == MessageRole.USER && it.content == rejectionMsg })
+          AgentMessage(role = MessageRole.USER, content = rejectionMsg)
+        else null
+      )
+
+      state = state.copy(
+        status = AgentStatus.PLANNING,
+        currentAction = "Verification rejected completion: ${verificationResult.details}",
+        messages = updatedMessages,
+        verification = verificationResult,
+        executionFeed = feed
+      )
+      updateStateIfActive(task, state)
+      return TurnOutcome.Continue
+    }
+  }
+
+  /**
+   * Central Autonomous Agent Execution Loop.
+   *
+   * Executes the strict 6-phase stateful cycle:
+   * 1. State & Context Hydration
+   * 2. Model Query & Action Formulation
+   * 3. Tool Call Validation & Dispatching
+   * 4. Result Normalization & Observation Return
+   * 5. Persistence & Reflection
+   * 6. Evaluation & State Transitions
+   */
   private suspend fun run(task: Task) {
     var stepCounter = _state.value.executionFeed.size
 
@@ -580,7 +1681,14 @@ class AgentEngine(
 
     val initialPlan = if (isResuming) existingCheckpoint!!.planItems else scratchpad.loadPlan()
     val planner = TaskPlanner(task.goal)
-    if (initialPlan.isNotEmpty()) {
+
+    val restoredPTask = if (isResuming && !existingCheckpoint?.persistentTaskJson.isNullOrBlank()) {
+      PersistentTask.fromJson(existingCheckpoint!!.persistentTaskJson!!)
+    } else null
+
+    if (restoredPTask != null) {
+      planner.restoreFromPersistentTask(restoredPTask)
+    } else if (initialPlan.isNotEmpty()) {
       planner.acceptModelPlan(initialPlan.joinToString("\n"))
       if (isResuming) {
         planner.restoreProgress(
@@ -588,6 +1696,14 @@ class AgentEngine(
           pending = existingCheckpoint?.pendingSections.orEmpty()
         )
       }
+    }
+
+    if (isResuming) {
+      existingCheckpoint?.recoveryState?.let {
+        recoveryManager.restoreStateJson(it)
+      }
+    } else {
+      recoveryManager.reset()
     }
 
     val baseExecutionFeed = if (_state.value.executionFeed.isNotEmpty()) {
@@ -615,17 +1731,27 @@ class AgentEngine(
       )
     }
 
+    val initialPersistentTask = planner.toPersistentTask(
+      sessionId = task.sessionId,
+      turn = if (isResuming) existingCheckpoint?.currentTurn ?: 0 else 0,
+      maxTurns = maxSteps
+    )
+
     var currentState = _state.value.copy(
       sessionId = task.sessionId,
-      task = task,
+      task = task.copy(
+        currentPhase = planner.getCurrentPhase(),
+        actionableSteps = planner.getActionableSteps()
+      ),
       status = AgentStatus.THINKING,
       currentAction = if (isResuming) "Resuming from checkpoint turn ${existingCheckpoint?.currentTurn ?: 0}..." else "Understanding task objective: '${task.goal}'",
       currentStep = if (isResuming) existingCheckpoint?.currentTurn ?: 0 else 0,
-      plan = initialPlan,
+      plan = planner.planDescriptions(),
       artifacts = artifactManager.getArtifacts(),
+      persistentTask = initialPersistentTask,
       fiveStageRecord = FiveStageRecord(
         intent = task.goal,
-        currentPlan = initialPlan,
+        currentPlan = planner.planDescriptions(),
         actions = _state.value.fiveStageRecord.actions,
         observations = _state.value.fiveStageRecord.observations
       ),
@@ -641,59 +1767,16 @@ class AgentEngine(
     var turnCounter = if (isResuming) existingCheckpoint?.currentTurn ?: 0 else 0
     var providerDropRetries = 0
     var consecutiveVerificationFailures = 0
-    // Loop guards: identical consecutive actions, empty decisions, fallback recovery probing
-    var lastActionSignature: String? = null
-    var consecutiveIdenticalActions = 0
     var consecutiveEmptyDecisions = 0
     var lastFallbackProbeTurn = Int.MIN_VALUE
-    val requiredOutputs = extractRequiredOutputs(task.goal)
     var expectedSandboxId = (sandboxProvider as? E2BSandboxProvider)?.getActiveSession(task.sessionId)?.sandboxId
 
-    // Proactively pre-sync imported documents and workspace input files into the microVM at /home/user/<displayName>
-    val activeSandbox = sandboxProvider
-    if (activeSandbox != null && activeSandbox.isRemote) {
-      try {
-        val syncedFiles = mutableListOf<String>()
-        val allDocs = documentService?.documents?.value ?: emptyList()
-        for (doc in allDocs) {
-          val localDocFile = documentService?.resolveDocumentFile(doc.id)
-            ?: File(workspaceDir, doc.displayName).takeIf { it.exists() }
-          if (localDocFile != null && localDocFile.isFile) {
-            val ok = activeSandbox.pushFileToRemote(task.sessionId, doc.displayName, localDocFile)
-            if (ok) syncedFiles.add(doc.displayName)
-          }
-        }
-        val allWorkspaceFiles = workspaceDir.walkTopDown()
-          .filter { f ->
-            f.isFile && !f.name.startsWith(".") &&
-              !f.relativeTo(workspaceDir).path.startsWith("documents/") &&
-              !f.relativeTo(workspaceDir).path.startsWith(".scratchpad/")
-          }
-          .toList()
-        for (f in allWorkspaceFiles) {
-          val relPath = f.relativeTo(workspaceDir).path.replace('\\', '/')
-          if (!syncedFiles.contains(relPath)) {
-            val ok = activeSandbox.pushFileToRemote(task.sessionId, relPath, f)
-            if (ok) syncedFiles.add(relPath)
-          }
-        }
-        if (syncedFiles.isNotEmpty()) {
-          val syncStep = ExecutionStep(
-            id = "step_sync_files_${task.id}",
-            stepNumber = ++stepCounter,
-            type = StepType.TOOL_EXECUTION,
-            title = "Placed Input Files in E2B Sandbox",
-            content = "Successfully uploaded ${syncedFiles.size} input file(s) into E2B Cloud Sandbox (/home/user):\n" +
-              syncedFiles.joinToString("\n") { "• /home/user/$it" }
-          )
-          currentState = currentState.copy(
-            executionFeed = addOrUpdateStep(currentState.executionFeed, syncStep)
-          )
-          updateStateIfActive(task, currentState)
-        }
-      } catch (_: Exception) {
-        // Best-effort pre-sync
-      }
+    // Pre-sync input documents and workspace input files into the microVM
+    syncSandboxInputFiles(task, expectedSandboxId) { syncStep ->
+      currentState = currentState.copy(
+        executionFeed = addOrUpdateStep(currentState.executionFeed, syncStep.copy(stepNumber = ++stepCounter))
+      )
+      updateStateIfActive(task, currentState)
     }
 
     try {
@@ -701,14 +1784,16 @@ class AgentEngine(
         turnCounter++
         currentCoroutineContext().ensureActive()
 
-        // Continuous Deliverable Verification & Feedback
+        // =========================================================================
+        // PHASE 1: HYDRATE STATE, CONTEXT & DELIVERABLES
+        // =========================================================================
         val deliverableReport = deliverableTracker.scanAndVerify(artifactManager)
         currentState = currentState.copy(
           trackedDeliverables = deliverableReport.deliverables,
           deliverableReport = deliverableReport
         )
 
-        // Periodic autonomous progress check (only for long runs with pending deliverables, without breaking execution)
+        // Periodic autonomous progress check for long runs
         if (turnCounter > 35 && turnCounter % 15 == 0 && deliverableReport.totalRequired > 0 && !deliverableReport.allSatisfied) {
           val progressMsg = "Autonomous Progress (Turn $turnCounter): ${deliverableReport.verifiedCount}/${deliverableReport.totalRequired} deliverables verified. Continuing workflow to complete: ${deliverableReport.pendingOrInvalidDetails}."
           currentState = currentState.copy(
@@ -719,7 +1804,6 @@ class AgentEngine(
           if (!updateStateIfActive(task, currentState)) return
         }
 
-        // 1. PLANNING & REASONING PHASE
         currentState = currentState.copy(
           status = if (currentState.status == AgentStatus.DELIVERABLE_PENDING) AgentStatus.DELIVERABLE_PENDING else AgentStatus.PLANNING,
           currentStep = turnCounter,
@@ -729,834 +1813,148 @@ class AgentEngine(
 
         val systemPrompt = buildSystemContext(task, currentState, planner, deliverableReport, turnCounter, maxSteps)
 
-        // While the built-in fallback engine is active, periodically probe the configured
-        // provider again and automatically restore it once it responds. This prevents a
-        // transient network blip from downgrading the remainder of a long task.
-        val isFallbackActive = activeProvider !== configuredProvider
-        val decision = if (isFallbackActive && turnCounter - lastFallbackProbeTurn >= FALLBACK_PROBE_INTERVAL_TURNS) {
+        // =========================================================================
+        // PHASE 2: ASK MODEL FOR NEXT ACTION OR INDEPENDENT BATCH
+        // =========================================================================
+        val queryResult = queryModelDecision(
+          task = task,
+          systemPrompt = systemPrompt,
+          messages = currentState.messages,
+          turnCounter = turnCounter,
+          lastFallbackProbeTurn = lastFallbackProbeTurn,
+          providerDropRetries = providerDropRetries
+        )
+        val decision = queryResult.decision
+        providerDropRetries = queryResult.updatedDropRetries
+
+        if (queryResult.restoredProviderStep) {
           lastFallbackProbeTurn = turnCounter
-          val probe = configuredProvider.decideNextAction(
-            systemPrompt = systemPrompt,
-            taskIntent = task.goal,
-            messages = currentState.messages,
-            tools = registry.getAvailableTools()
+          val restoredStep = ExecutionStep(
+            id = "step_provider_restored_${task.id}",
+            stepNumber = ++stepCounter,
+            type = StepType.OBSERVATION,
+            title = "Provider Connection Restored",
+            content = "Primary LLM endpoint recovered. Resuming configured provider '${configuredProvider.providerName}'."
           )
-          if (probe !is LLMDecision.ProviderError) {
-            activeProvider = configuredProvider
-            providerDropRetries = 0
-            val restoredStep = ExecutionStep(
-              id = "step_provider_restored_${task.id}",
-              stepNumber = ++stepCounter,
-              type = StepType.OBSERVATION,
-              title = "Provider Connection Restored",
-              content = "Primary LLM endpoint recovered. Resuming configured provider '${configuredProvider.providerName}'."
-            )
-            currentState = currentState.copy(
-              currentAction = "Primary LLM endpoint recovered. Resuming configured provider...",
-              executionFeed = addOrUpdateStep(currentState.executionFeed, restoredStep)
-            )
-            if (!updateStateIfActive(task, currentState)) return
-            probe
-          } else {
-            activeProvider.decideNextAction(
-              systemPrompt = systemPrompt,
-              taskIntent = task.goal,
-              messages = currentState.messages,
-              tools = registry.getAvailableTools()
-            )
-          }
-        } else {
-          activeProvider.decideNextAction(
-            systemPrompt = systemPrompt,
-            taskIntent = task.goal,
-            messages = currentState.messages,
-            tools = registry.getAvailableTools()
+          currentState = currentState.copy(
+            currentAction = "Primary LLM endpoint recovered. Resuming configured provider...",
+            executionFeed = addOrUpdateStep(currentState.executionFeed, restoredStep)
           )
+          if (!updateStateIfActive(task, currentState)) return
         }
 
         currentCoroutineContext().ensureActive()
 
-        when (decision) {
-          is LLMDecision.ExecuteTool -> {
-            // A successful decision resets consecutive provider-drop tracking.
-            providerDropRetries = 0
-            consecutiveEmptyDecisions = 0
-            val toolCalls = decision.toolCalls
-
-            if (toolCalls.isEmpty()) {
-              val rawThought = decision.thought.orEmpty()
-              val thoughtLower = rawThought.lowercase()
-              val seemsComplete = thoughtLower.contains("complete") ||
-                thoughtLower.contains("finished") ||
-                thoughtLower.contains("done") ||
-                thoughtLower.contains("conclude")
-
-              if (seemsComplete) {
-                // If thought explicitly conveys completion, verify objective
-                try {
-                  sandboxManager.activeProvider.syncArtifacts(task.sessionId, workspaceDir, task.id)
-                } catch (_: Exception) {}
-                val freshArtifacts = artifactManager.syncWorkspace(task.id)
-                val verificationResult = verifyObjective(task, currentState.copy(artifacts = freshArtifacts))
-                if (verificationResult.isSatisfied) {
-                  val conclusionText = rawThought.ifBlank { "Task completed successfully and verified." }
-                  val vStep = ExecutionStep(
-                    id = "step_verify_t${turnCounter}_${task.id}",
-                    stepNumber = ++stepCounter,
-                    type = StepType.VERIFICATION,
-                    title = "Objective Verified",
-                    content = verificationResult.details
-                  )
-                  val cStep = ExecutionStep(
-                    id = "step_conclusion_${task.id}",
-                    stepNumber = ++stepCounter,
-                    type = StepType.CONCLUSION,
-                    title = "Completed",
-                    content = conclusionText
-                  )
-                  val completedFeed = addOrUpdateStep(addOrUpdateStep(currentState.executionFeed, vStep), cStep)
-                  artifactManager.cleanTemporaryFiles()
-                  val finalArtifacts = artifactManager.syncWorkspace(task.id)
-                  scratchpad.saveCheckpoint(
-                    AgentCheckpoint(
-                      taskGoal = task.goal,
-                      currentTurn = turnCounter,
-                      completedSections = planner.completedDescriptions(),
-                      pendingSections = planner.pendingDescriptions(),
-                      planItems = currentState.plan,
-                      artifactPaths = finalArtifacts.map { it.path },
-                      totalFindingsCount = scratchpad.loadAllFindings().size,
-                      status = "COMPLETED"
-                    )
-                  )
-                  recordTaskCompletion(task, AgentStatus.COMPLETED, conclusionText, finalArtifacts)
-                  val finalMessages = if (currentState.messages.any { it.role == MessageRole.ASSISTANT && it.content == conclusionText }) {
-                    currentState.messages
-                  } else {
-                    currentState.messages + AgentMessage(role = MessageRole.ASSISTANT, content = conclusionText)
-                  }
-                  currentState = currentState.copy(
-                    status = AgentStatus.COMPLETED,
-                    currentAction = "Task completed and verified.",
-                    completionSummary = conclusionText,
-                    verification = verificationResult,
-                    artifacts = finalArtifacts,
-                    executionFeed = completedFeed,
-                    messages = finalMessages,
-                    fiveStageRecord = currentState.fiveStageRecord.copy(conclusion = conclusionText),
-                    canCancel = false
-                  )
-                  updateStateIfActive(task, currentState)
-                  return
-                }
-              }
-
-              consecutiveEmptyDecisions++
-              if (consecutiveEmptyDecisions >= MAX_CONSECUTIVE_EMPTY_DECISIONS) {
-                val haltMsg = "Provider produced no verified, actionable step for $consecutiveEmptyDecisions consecutive turns " +
-                  "(repeated responses without tool calls or with unverified completion claims). Halting to avoid an unproductive loop."
-                scratchpad.saveCheckpoint(
-                  AgentCheckpoint(
-                    taskGoal = task.goal,
-                    currentTurn = turnCounter,
-                    completedSections = planner.completedDescriptions(),
-                    pendingSections = planner.pendingDescriptions(),
-                    planItems = currentState.plan,
-                    artifactPaths = artifactManager.getArtifacts().map { it.path },
-                    totalFindingsCount = scratchpad.loadAllFindings().size,
-                    status = "FAILED"
-                  )
-                )
-                recordTaskCompletion(task, AgentStatus.FAILED, haltMsg, artifactManager.getArtifacts())
-                val haltStep = ExecutionStep(
-                  id = "step_empty_decisions_${task.id}",
-                  stepNumber = ++stepCounter,
-                  type = StepType.ERROR,
-                  title = "Unproductive Provider Loop",
-                  content = haltMsg
-                )
-                currentState = currentState.copy(
-                  status = AgentStatus.FAILED,
-                  currentAction = haltMsg,
-                  error = haltMsg,
-                  executionFeed = addOrUpdateStep(currentState.executionFeed, haltStep),
-                  canCancel = false
-                )
-                updateStateIfActive(task, currentState)
-                return
-              }
-
-              val guidance = "System Notice: The previous turn did not specify any tool calls. If your objective is achieved, conclude in plain text. Otherwise, invoke the next required tool call to make progress."
-              val guidanceMsg = AgentMessage(role = MessageRole.USER, content = guidance)
-              val guidanceMessages = if (currentState.messages.lastOrNull()?.content == guidance) {
-                currentState.messages
-              } else {
-                currentState.messages + guidanceMsg
-              }
-              currentState = currentState.copy(
-                status = AgentStatus.PLANNING,
-                currentAction = "Requesting next actionable step from model...",
-                messages = guidanceMessages
-              )
-              if (!updateStateIfActive(task, currentState)) return
-              continue
-            }
-
-            // Fix stale PLANNING status: immediately transition out of PLANNING into EXECUTING_TOOL
+        // 2A. Provider Error Handling
+        if (decision is LLMDecision.ProviderError) {
+          planner.markProviderFailure(decision.message)
+          if (providerDropRetries < 2) {
+            providerDropRetries++
+            val waitMs = (decision.retryAfterMs ?: 1500L).coerceIn(1500L, 30_000L)
+            val retryStep = ExecutionStep(
+              id = "step_retry_${providerDropRetries}_t${turnCounter}_${task.id}",
+              stepNumber = ++stepCounter,
+              type = StepType.OBSERVATION,
+              title = "Endpoint Drop Recovery ($providerDropRetries/2)",
+              content = "Endpoint drop: ${decision.message.take(160)}. Retrying automatically in ${waitMs / 1000}s..."
+            )
             currentState = currentState.copy(
-              status = AgentStatus.EXECUTING_TOOL,
-              currentAction = "Preparing to execute ${toolCalls.size} tool call(s)..."
+              currentAction = "Recovering from endpoint drop (attempt $providerDropRetries/2)...",
+              executionFeed = addOrUpdateStep(currentState.executionFeed, retryStep)
             )
             if (!updateStateIfActive(task, currentState)) return
-
-            // Update plan from model if provided
-            val updatedPlan = if (decision.plan != null) {
-              planner.acceptModelPlan(decision.plan)
-              val parsedLines = planner.planDescriptions()
-              scratchpad.savePlan(parsedLines)
-              parsedLines
-            } else currentState.plan
-
-            val rawThought = decision.thought
-            val latestObs = currentState.observations.lastOrNull()?.summary
-              ?: currentState.messages.lastOrNull { it.role == MessageRole.TOOL }?.content
-            val cleanedThought = if (!rawThought.isNullOrBlank()) {
-              dedupPipeline.process(rawThought, turnCounter, observationFingerprint = latestObs)
-            } else null
-
-            val thinkingStepId = "step_thinking_t${turnCounter}_${task.id}"
-            val feedWithThought = if (!cleanedThought.isNullOrBlank() && !cleanedThought.startsWith("[REASONING_DEDUP_HIT")) {
-              addOrUpdateStep(
-                currentState.executionFeed,
-                ExecutionStep(
-                  id = thinkingStepId,
-                  stepNumber = ++stepCounter,
-                  type = StepType.THINKING,
-                  title = "Reasoning",
-                  content = cleanedThought
-                )
-              )
-            } else currentState.executionFeed
-
+            delay(waitMs)
+            continue
+          } else if (providerDropRetries == 2) {
+            providerDropRetries++
+            val fallbackStep = ExecutionStep(
+              id = "step_fallback_${task.id}",
+              stepNumber = ++stepCounter,
+              type = StepType.OBSERVATION,
+              title = "Autonomous Fallback Engaged",
+              content = "LLM endpoint unavailable after retries. Switched to the built-in fallback reasoning engine; E2B Cloud sandbox execution is unchanged."
+            )
             currentState = currentState.copy(
-              plan = updatedPlan,
-              executionFeed = feedWithThought,
-              fiveStageRecord = currentState.fiveStageRecord.copy(currentPlan = updatedPlan)
+              currentAction = "Running via built-in fallback reasoning engine...",
+              executionFeed = addOrUpdateStep(currentState.executionFeed, fallbackStep)
             )
-
-            // Validate explicit cross-environment intent declaration
-            val crossEnvPlanError = planner.validateCrossEnvPlan(
-              planText = decision.plan ?: decision.thought,
-              toolCalls = toolCalls,
-              workspaceDir = workspaceDir,
-              isRemoteSandbox = sandboxProvider.isRemote
+            if (!updateStateIfActive(task, currentState)) return
+            activeProvider = AutonomousSandboxProvider()
+            delay(1000)
+            continue
+          } else {
+            val errStep = ExecutionStep(
+              id = "step_error_${task.id}",
+              stepNumber = ++stepCounter,
+              type = StepType.ERROR,
+              title = "Provider Failure",
+              content = decision.message
             )
-            if (crossEnvPlanError != null) {
-              val errorMsg = AgentMessage(
-                role = MessageRole.USER,
-                content = "$crossEnvPlanError\n\nPlease re-submit your plan with explicit plan.cross_env declaration: { action: 'transfer' | 'stay_in' }."
-              )
-              currentState = currentState.copy(
-                messages = currentState.messages + errorMsg,
-                currentAction = "Waiting for explicit cross-env intent declaration"
-              )
-              if (!updateStateIfActive(task, currentState)) return
-              continue
-            }
-
-            // Ensure immutable globally unique tool-call IDs: call_<taskId>_<iteration>_<randomId>
-            val validatedToolCalls = toolCalls.mapIndexed { idx, call ->
-              val normalizedCallId = if (call.callId.startsWith("call_")) {
-                call.callId
-              } else {
-                ToolCall.generateCallId(task.id, turnCounter * 10 + idx)
-              }
-              call.copy(callId = normalizedCallId)
-            }
-
-            // Append assistant messages for the batch, avoiding duplicate toolCallIds
-            val existingToolCallIds = currentState.messages.mapNotNull { it.toolCallId }.toSet()
-            val assistantToolMessages = validatedToolCalls.mapIndexed { index, call ->
-              AgentMessage(
-                role = MessageRole.ASSISTANT,
-                content = if (index == 0) {
-                  decision.thought ?: "Executing ${validatedToolCalls.size} requested tool call(s)."
-                } else "",
-                toolCallId = call.callId,
-                toolName = call.toolName,
-                toolArgs = call.arguments
-              )
-            }.filter { it.toolCallId == null || !existingToolCallIds.contains(it.toolCallId) }
-
-            if (assistantToolMessages.isNotEmpty()) {
-              currentState = currentState.copy(
-                messages = currentState.messages + assistantToolMessages
-              )
-              if (!updateStateIfActive(task, currentState)) return
-            }
-
-            delay(100)
-
-            // 2. DETERMINISTIC TOOL EXECUTION PHASE (With Multitasking & Concurrent Dispatch)
-            val isMultitasking = canExecuteConcurrently(validatedToolCalls)
-            if (isMultitasking) {
-              val runningStepIds = validatedToolCalls.map { "step_tool_${it.callId}" }
-              val currentFeed = currentState.executionFeed.toMutableList()
-
-              validatedToolCalls.forEachIndexed { idx, toolCall ->
-                currentFeed.add(
-                  ExecutionStep(
-                    id = runningStepIds[idx],
-                    stepNumber = ++stepCounter,
-                    type = StepType.TOOL_EXECUTION,
-                    title = "Executing [Concurrent]: ${toolCall.toolName}",
-                    content = formatArguments(toolCall.arguments),
-                    toolName = toolCall.toolName,
-                    toolCallId = toolCall.callId,
-                    toolStatus = ToolStatus.RUNNING.name,
-                    isCompleted = false
-                  )
-                )
-              }
-
-              currentState = currentState.copy(
-                status = AgentStatus.EXECUTING_TOOL,
-                currentAction = "Executing ${validatedToolCalls.size} operations concurrently (Multitasking)...",
-                executionFeed = currentFeed,
-                isMultitasking = true,
-                activeConcurrentTasks = validatedToolCalls.size
-              )
-              if (!updateStateIfActive(task, currentState)) return
-
-              planner.markMultitaskingStarted(validatedToolCalls.map { it.toolName })
-
-              val toolContext = ToolExecutionContext(
-                environmentType = ExecutionEnvironmentType.E2B_CLOUD,
-                backendName = sandboxProvider.name,
-                sessionId = task.sessionId,
-                taskId = task.id,
-                sandboxId = (sandboxProvider as? E2BSandboxProvider)?.getActiveSession(task.sessionId)?.sandboxId,
-                workspaceDir = workspaceDir,
-                workingDirectory = (registry.getTool("terminal") as? TerminalTool)?.getWorkingDirectory(task.sessionId) ?: "/home/user",
-                capabilities = setOf("shell", "process_execution")
-              )
-
-              val asyncDispatches = validatedToolCalls.map { call ->
-                scope.async(Dispatchers.IO) {
-                  val result = dispatcher.dispatch(call, task.id, toolContext)
-                  Pair(call, result)
-                }
-              }
-              val results = asyncDispatches.awaitAll()
-
-              var updatedFeed = currentState.executionFeed.toMutableList()
-              var updatedMessages = currentState.messages
-              var updatedToolExecutions = currentState.toolExecutions
-              var updatedObservations = currentState.observations
-              var updatedActions = currentState.fiveStageRecord.actions
-              var updatedObsStrings = currentState.fiveStageRecord.observations
-
-              results.forEachIndexed { idx, (call, pair) ->
-                val (toolResult, observation) = pair
-                if (toolResult.status == ToolStatus.SUCCEEDED && toolResult.output != null) {
-                  scratchpad.autoIngestFromToolOutput(call.toolName, call.arguments, toolResult.output)
-                }
-
-                updatedFeed = updatedFeed.map { item ->
-                  if (item.id == runningStepIds[idx]) {
-                    item.copy(
-                      toolStatus = toolResult.status.name,
-                      durationMs = toolResult.duration,
-                      exitCode = toolResult.exitCode,
-                      stdout = toolResult.stdout,
-                      stderr = toolResult.stderr,
-                      isCompleted = true
-                    )
-                  } else item
-                }.toMutableList()
-
-                val obsStepId = "step_obs_${call.callId}"
-                updatedFeed = addOrUpdateStep(
-                  updatedFeed,
-                  ExecutionStep(
-                    id = obsStepId,
-                    stepNumber = ++stepCounter,
-                    type = StepType.OBSERVATION,
-                    title = if (observation.isSuccess) "Observation (${toolResult.status.name})" else "Observation (${toolResult.errorType?.name ?: "FAILED"})",
-                    content = observation.summary,
-                    stdout = observation.stdout,
-                    stderr = observation.stderr
-                  )
-                ).toMutableList()
-
-                updatedActions = updatedActions + "Dispatched [Concurrent] '${call.toolName}' with ${formatArguments(call.arguments)}"
-                updatedObsStrings = updatedObsStrings + observation.summary
-                planner.recordToolResult(toolResult, observation.summary)
-
-                val reflection = planner.reflect(
-                  currentStep = turnCounter,
-                  toolName = call.toolName,
-                  toolArgs = call.arguments,
-                  result = toolResult,
-                  observationSummary = observation.summary,
-                  boundTodoId = call.arguments["todo_id"]?.toString()
-                )
-                if (reflection.transcriptWarning != null) {
-                  val refStepId = "step_reflect_${call.callId}"
-                  updatedFeed = addOrUpdateStep(
-                    updatedFeed,
-                    ExecutionStep(
-                      id = refStepId,
-                      stepNumber = ++stepCounter,
-                      type = StepType.OBSERVATION,
-                      title = "Planner Reflection",
-                      content = reflection.transcriptWarning
-                    )
-                  ).toMutableList()
-                }
-
-                val hasToolMsg = updatedMessages.any { it.role == MessageRole.TOOL && it.toolCallId == call.callId }
-                updatedMessages = if (hasToolMsg) {
-                  updatedMessages.map {
-                    if (it.role == MessageRole.TOOL && it.toolCallId == call.callId) {
-                      it.copy(content = observation.rawOutput)
-                    } else it
-                  }
-                } else {
-                  updatedMessages + AgentMessage(
-                    role = MessageRole.TOOL,
-                    content = observation.rawOutput,
-                    toolCallId = call.callId,
-                    toolName = call.toolName
-                  )
-                }
-
-                updatedToolExecutions = updatedToolExecutions + toolResult
-                updatedObservations = updatedObservations + observation
-              }
-
-              val updatedArtifacts = artifactManager.syncWorkspace(task.id)
-
-              // Progress tracking for anti-stagnation
-              val hasNewArtifact = updatedArtifacts.size > currentState.artifacts.size ||
-                updatedArtifacts.any { art -> currentState.artifacts.none { it.path == art.path && it.size == art.size } }
-              val isStateChanging = results.any { (call, pair) ->
-                registry.resolveToolName(call.toolName) in STATE_CHANGING_TOOLS && pair.first.isSuccess
-              }
-              val isInformative = results.any { (call, pair) ->
-                registry.resolveToolName(call.toolName) in INFORMATIVE_TOOLS && pair.first.isSuccess
-              }
-              if (hasNewArtifact || isStateChanging || isInformative) {
-                planner.recordProgress()
-                consecutiveVerificationFailures = 0
-              }
-
-              scratchpad.saveCheckpoint(
-                AgentCheckpoint(
-                  taskGoal = task.goal,
-                  currentTurn = turnCounter,
-                  completedSections = planner.completedDescriptions(),
-                  pendingSections = planner.pendingDescriptions(),
-                  planItems = planner.planDescriptions(),
-                  artifactPaths = updatedArtifacts.map { it.path },
-                  totalFindingsCount = scratchpad.loadAllFindings().size,
-                  status = "IN_PROGRESS"
-                )
-              )
-
-              currentState = currentState.copy(
-                status = AgentStatus.OBSERVING,
-                currentAction = "Completed concurrent execution of ${validatedToolCalls.size} operations.",
-                messages = updatedMessages,
-                toolExecutions = updatedToolExecutions,
-                observations = updatedObservations,
-                artifacts = updatedArtifacts,
-                executionFeed = updatedFeed,
-                plan = planner.planDescriptions(),
-                isMultitasking = false,
-                activeConcurrentTasks = 0,
-                fiveStageRecord = currentState.fiveStageRecord.copy(
-                  currentPlan = planner.planDescriptions(),
-                  actions = updatedActions,
-                  observations = updatedObsStrings
-                )
-              )
-              if (!updateStateIfActive(task, currentState)) return
-            } else {
-              // Standard sequential execution loop
-              for (toolCall in validatedToolCalls) {
-                currentCoroutineContext().ensureActive()
-
-                // Pre-execution sandbox identity verification
-                val e2b = sandboxProvider as? E2BSandboxProvider
-                if (e2b != null && e2b.isE2B) {
-                  val activeSess = e2b.getActiveSession(task.sessionId)
-                  val currentSbxId = activeSess?.sandboxId
-                  if (expectedSandboxId != null && (currentSbxId == null || currentSbxId != expectedSandboxId)) {
-                    val resetStep = ExecutionStep(
-                      stepNumber = ++stepCounter,
-                      type = StepType.SANDBOX_RESET,
-                      title = "SANDBOX_RESET Detected",
-                      content = "Sandbox identity mismatch detected: expected '$expectedSandboxId', found '${currentSbxId ?: "null"}'. Halting for re-provisioning and state sync to prevent state loss."
-                    )
-                    currentState = currentState.copy(
-                      status = AgentStatus.SANDBOX_RESET,
-                      currentAction = "Recovering from sandbox swap; synchronizing workspace...",
-                      executionFeed = currentState.executionFeed + resetStep
-                    )
-                    updateStateIfActive(task, currentState)
-
-                    val fresh = e2b.getOrCreateE2BSession(task.sessionId, task.id)
-                    expectedSandboxId = fresh.sandboxId
-                    try {
-                      e2b.syncArtifacts(task.sessionId, workspaceDir, task.id)
-                    } catch (_: Exception) {}
-                  } else if (expectedSandboxId == null && currentSbxId != null) {
-                    expectedSandboxId = currentSbxId
-                  }
-                }
-
-                // Deterministic loop guard: the 3rd+ consecutive identical action
-                // (same resolved tool + identical arguments) is skipped, and the model
-                // is told to pick a different path instead of looping.
-                val signature = actionSignature(toolCall)
-                if (signature == lastActionSignature) {
-                  consecutiveIdenticalActions++
-                } else {
-                  lastActionSignature = signature
-                  consecutiveIdenticalActions = 1
-                }
-                if (consecutiveIdenticalActions >= MAX_CONSECUTIVE_IDENTICAL_ACTIONS) {
-                  val loopMsg = "Loop guard: '${toolCall.toolName}' with identical arguments was repeated " +
-                    "$consecutiveIdenticalActions times consecutively and was skipped. " +
-                    "Choose a different action, different arguments, or conclude the task."
-                  planner.requestReplan(loopMsg)
-
-                  // If the model keeps repeating the same skipped action even after the
-                  // replan request, halt honestly instead of burning the whole turn budget.
-                  if (consecutiveIdenticalActions >= MAX_CONSECUTIVE_IDENTICAL_ACTIONS * 2) {
-                    val haltMsg = "Unproductive loop: '${toolCall.toolName}' with identical arguments was repeated " +
-                      "$consecutiveIdenticalActions times consecutively despite repeated skip notices. Halting."
-                    scratchpad.saveCheckpoint(
-                      AgentCheckpoint(
-                        taskGoal = task.goal,
-                        currentTurn = turnCounter,
-                        completedSections = planner.completedDescriptions(),
-                        pendingSections = planner.pendingDescriptions(),
-                        planItems = currentState.plan,
-                        artifactPaths = artifactManager.getArtifacts().map { it.path },
-                        totalFindingsCount = scratchpad.loadAllFindings().size,
-                        status = "FAILED"
-                      )
-                    )
-                    recordTaskCompletion(task, AgentStatus.FAILED, haltMsg, artifactManager.getArtifacts())
-                    val haltStep = ExecutionStep(
-                      id = "step_loopguard_halt_${task.id}",
-                      stepNumber = ++stepCounter,
-                      type = StepType.ERROR,
-                      title = "Unproductive Loop Detected",
-                      content = haltMsg
-                    )
-                    currentState = currentState.copy(
-                      status = AgentStatus.FAILED,
-                      currentAction = haltMsg,
-                      error = haltMsg,
-                      executionFeed = addOrUpdateStep(currentState.executionFeed, haltStep),
-                      canCancel = false
-                    )
-                    updateStateIfActive(task, currentState)
-                    return
-                  }
-
-                  val loopStep = ExecutionStep(
-                    id = "step_loopguard_${toolCall.callId}",
-                    stepNumber = ++stepCounter,
-                    type = StepType.OBSERVATION,
-                    title = "Loop Guard Triggered",
-                    content = loopMsg
-                  )
-                  val syntheticResult = ToolResult(
-                    callId = toolCall.callId,
-                    toolName = toolCall.toolName,
-                    status = ToolStatus.FAILED,
-                    arguments = toolCall.arguments,
-                    output = null,
-                    error = loopMsg,
-                    errorType = ToolErrorCode.INVALID_ARGUMENTS,
-                    duration = 0L
-                  )
-                  val syntheticObservation = Observation(
-                    callId = toolCall.callId,
-                    toolName = toolCall.toolName,
-                    status = ToolStatus.FAILED,
-                    isSuccess = false,
-                    inputsSummary = formatArguments(toolCall.arguments),
-                    result = null,
-                    error = loopMsg,
-                    errorType = ToolErrorCode.INVALID_ARGUMENTS,
-                    summary = loopMsg,
-                    rawOutput = loopMsg,
-                    executionContext = null
-                  )
-                  val loopMessages = if (currentState.messages.lastOrNull()?.content == loopMsg) {
-                    currentState.messages
-                  } else {
-                    currentState.messages + AgentMessage(role = MessageRole.USER, content = loopMsg)
-                  }
-                  currentState = currentState.copy(
-                    status = AgentStatus.OBSERVING,
-                    currentAction = "Loop guard: skipped repeated identical action '${toolCall.toolName}'.",
-                    messages = loopMessages,
-                    toolExecutions = currentState.toolExecutions + syntheticResult,
-                    observations = currentState.observations + syntheticObservation,
-                    executionFeed = addOrUpdateStep(currentState.executionFeed, loopStep)
-                  )
-                  if (!updateStateIfActive(task, currentState)) return
-                  break
-                }
-
-                val runningStepId = "step_tool_${toolCall.callId}"
-                val runningStep = ExecutionStep(
-                  id = runningStepId,
-                  stepNumber = ++stepCounter,
-                  type = StepType.TOOL_EXECUTION,
-                  title = "Executing: ${toolCall.toolName}",
-                  content = formatArguments(toolCall.arguments),
-                  toolName = toolCall.toolName,
-                  toolCallId = toolCall.callId,
-                  toolStatus = ToolStatus.RUNNING.name,
-                  isCompleted = false
-                )
-
-                currentState = currentState.copy(
-                  status = AgentStatus.EXECUTING_TOOL,
-                  currentAction = "Executing '${toolCall.toolName}'...",
-                  executionFeed = addOrUpdateStep(currentState.executionFeed, runningStep)
-                )
-                if (!updateStateIfActive(task, currentState)) return
-
-                delay(80)
-                planner.markToolStarted(toolCall.toolName)
-
-                val toolContext = ToolExecutionContext(
-                  environmentType = ExecutionEnvironmentType.E2B_CLOUD,
-                  backendName = sandboxProvider.name,
-                  sessionId = task.sessionId,
-                  taskId = task.id,
-                  sandboxId = (sandboxProvider as? E2BSandboxProvider)?.getActiveSession(task.sessionId)?.sandboxId,
-                  workspaceDir = workspaceDir,
-                  workingDirectory = (registry.getTool("terminal") as? TerminalTool)?.getWorkingDirectory(task.sessionId) ?: "/home/user",
-                  capabilities = setOf("shell", "process_execution")
-                )
-
-                val (toolResult, observation) = dispatcher.dispatch(toolCall, task.id, toolContext)
-
-                if (toolResult.status == ToolStatus.SUCCEEDED && toolResult.output != null) {
-                  scratchpad.autoIngestFromToolOutput(toolCall.toolName, toolCall.arguments, toolResult.output)
-                }
-
-                delay(80)
-
-                // Update execution feed step with authoritative execution outcomes
-                val feedWithResult = currentState.executionFeed.map { item ->
-                  if (item.id == runningStepId) {
-                    item.copy(
-                      toolStatus = toolResult.status.name,
-                      durationMs = toolResult.duration,
-                      exitCode = toolResult.exitCode,
-                      stdout = toolResult.stdout,
-                      stderr = toolResult.stderr,
-                      isCompleted = true
-                    )
-                  } else item
-                }
-
-                val obsStepId = "step_obs_${toolCall.callId}"
-                val obsStep = ExecutionStep(
-                  id = obsStepId,
-                  stepNumber = ++stepCounter,
-                  type = StepType.OBSERVATION,
-                  title = if (observation.isSuccess) "Observation (${toolResult.status.name})" else "Observation (${toolResult.errorType?.name ?: "FAILED"})",
-                  content = observation.summary,
-                  stdout = observation.stdout,
-                  stderr = observation.stderr
-                )
-                val updatedFeed = addOrUpdateStep(feedWithResult, obsStep)
-
-                val updatedActions = currentState.fiveStageRecord.actions +
-                  "Dispatched '${toolCall.toolName}' with ${formatArguments(toolCall.arguments)}"
-                val updatedObservations = currentState.fiveStageRecord.observations +
-                  observation.summary
-
-                planner.recordToolResult(toolResult, observation.summary)
-
-                // Post-tool reflection
-                val reflection = planner.reflect(
-                  currentStep = turnCounter,
-                  toolName = toolCall.toolName,
-                  toolArgs = toolCall.arguments,
-                  result = toolResult,
-                  observationSummary = observation.summary,
-                  boundTodoId = toolCall.arguments["todo_id"]?.toString()
-                )
-                val finalFeed = if (reflection.transcriptWarning != null) {
-                  val refStepId = "step_reflect_${toolCall.callId}"
-                  addOrUpdateStep(
-                    updatedFeed,
-                    ExecutionStep(
-                      id = refStepId,
-                      stepNumber = ++stepCounter,
-                      type = StepType.OBSERVATION,
-                      title = "Planner Reflection",
-                      content = reflection.transcriptWarning
-                    )
-                  )
-                } else updatedFeed
-
-                // Real filesystem artifact sync
-                val updatedArtifacts = artifactManager.syncWorkspace(task.id)
-
-                // Progress tracking for anti-stagnation
-                val hasNewArtifact = updatedArtifacts.size > currentState.artifacts.size ||
-                  updatedArtifacts.any { art -> currentState.artifacts.none { it.path == art.path && it.size == art.size } }
-                val resolvedToolName = registry.resolveToolName(toolCall.toolName)
-                val isStateChanging = resolvedToolName in STATE_CHANGING_TOOLS
-                val isInformative = resolvedToolName in INFORMATIVE_TOOLS
-                if (toolResult.isSuccess && (hasNewArtifact || isStateChanging || isInformative)) {
-                  planner.recordProgress()
-                  consecutiveVerificationFailures = 0
-                }
-
-                // Checkpoint persistence
-                scratchpad.saveCheckpoint(
-                  AgentCheckpoint(
-                    taskGoal = task.goal,
-                    currentTurn = turnCounter,
-                    completedSections = planner.completedDescriptions(),
-                    pendingSections = planner.pendingDescriptions(),
-                    planItems = planner.planDescriptions(),
-                    artifactPaths = updatedArtifacts.map { it.path },
-                    totalFindingsCount = scratchpad.loadAllFindings().size,
-                    status = "IN_PROGRESS"
-                  )
-                )
-
-                val hasToolMsg = currentState.messages.any { it.role == MessageRole.TOOL && it.toolCallId == toolCall.callId }
-                val updatedMessages = if (hasToolMsg) {
-                  currentState.messages.map {
-                    if (it.role == MessageRole.TOOL && it.toolCallId == toolCall.callId) {
-                      it.copy(content = observation.rawOutput)
-                    } else it
-                  }
-                } else {
-                  currentState.messages + AgentMessage(
-                    role = MessageRole.TOOL,
-                    content = observation.rawOutput,
-                    toolCallId = toolCall.callId,
-                    toolName = toolCall.toolName
-                  )
-                }
-
-                currentState = currentState.copy(
-                  status = AgentStatus.OBSERVING,
-                  currentAction = "Observed result: ${toolCall.toolName} -> ${toolResult.status}",
-                  messages = updatedMessages,
-                  toolExecutions = currentState.toolExecutions + toolResult,
-                  observations = currentState.observations + observation,
-                  artifacts = updatedArtifacts,
-                  executionFeed = finalFeed,
-                  plan = planner.planDescriptions(),
-                  fiveStageRecord = currentState.fiveStageRecord.copy(
-                    currentPlan = planner.planDescriptions(),
-                    actions = updatedActions,
-                    observations = updatedObservations
-                  )
-                )
-                if (!updateStateIfActive(task, currentState)) return
-
-                if (toolResult.status == ToolStatus.FAILED || toolResult.status == ToolStatus.CANCELLED) {
-                  // Halt batch on failure or cancellation to allow model/agent to react immediately
-                  break
-                }
-              }
-            }
-
-            // Post-batch: Check if replanning is required due to planner request or stagnation
-            if (planner.hasReplanRequest() || planner.isStagnant()) {
-              val replanReason = planner.getReplanReason() ?: if (planner.isStagnant()) {
-                "Stagnation detected: ${planner.getNoProgressCount()} turns without measurable progress."
-              } else "Plan adjustment required based on recent observations."
-              planner.clearReplanReason()
-
-              val replanStepId = "step_replan_t${turnCounter}_${task.id}"
-              val replanStep = ExecutionStep(
-                id = replanStepId,
-                stepNumber = ++stepCounter,
-                type = StepType.REPLANNING,
-                title = "Replanning Required",
-                content = replanReason
-              )
-              val replanNotice = "System Notice (Replanning Required): $replanReason\n" +
-                "Please reconsider your approach, update the plan, and select a different action to make progress."
-              val replanMsg = AgentMessage(
-                role = MessageRole.USER,
-                content = replanNotice
-              )
-              val replanMessages = if (currentState.messages.lastOrNull()?.content == replanNotice) {
-                currentState.messages
-              } else {
-                currentState.messages + replanMsg
-              }
-              currentState = currentState.copy(
-                status = AgentStatus.REPLANNING,
-                currentAction = "Replanning: $replanReason",
-                messages = replanMessages,
-                executionFeed = addOrUpdateStep(currentState.executionFeed, replanStep)
-              )
-              if (!updateStateIfActive(task, currentState)) return
-            }
+            recordTaskCompletion(task, AgentStatus.FAILED, decision.message, artifactManager.getArtifacts())
+            currentState = currentState.copy(
+              status = AgentStatus.FAILED,
+              currentAction = "Failed with provider error",
+              error = decision.message,
+              taskHistory = _state.value.taskHistory,
+              executionFeed = addOrUpdateStep(currentState.executionFeed, errStep),
+              canCancel = false
+            )
+            updateStateIfActive(task, currentState)
+            return
           }
+        }
 
-          is LLMDecision.Complete -> {
-            providerDropRetries = 0
-            // 3. OBJECTIVE VERIFICATION & SELF-AUDIT
-            currentState = currentState.copy(
-              status = AgentStatus.VERIFYING,
-              currentAction = "Authoritatively verifying objective satisfaction against filesystem..."
-            )
-            if (!updateStateIfActive(task, currentState)) return
+        // 2B. Explicit Completion Claim Handling
+        if (decision is LLMDecision.Complete) {
+          providerDropRetries = 0
+          val outcome = evaluateCompletion(
+            task = task,
+            conclusion = decision.conclusion,
+            turnCounter = turnCounter,
+            currentState = currentState,
+            planner = planner,
+            consecutiveVerificationFailures = consecutiveVerificationFailures,
+            stepCounterProvider = { ++stepCounter },
+            onVerificationFailureIncremented = { consecutiveVerificationFailures = it }
+          )
+          when (outcome) {
+            is TurnOutcome.Terminal -> return
+            is TurnOutcome.Continue -> continue
+            is TurnOutcome.ReplanningRequired -> continue
+          }
+        }
 
-            delay(80)
-            try {
-              sandboxManager.activeProvider.syncArtifacts(task.sessionId, workspaceDir, task.id)
-            } catch (_: Exception) {}
-            val freshArtifacts = artifactManager.syncWorkspace(task.id)
-            val verificationResult = verifyObjective(task, currentState.copy(artifacts = freshArtifacts))
+        // 2C. Execute Tool Handling
+        if (decision is LLMDecision.ExecuteTool) {
+          providerDropRetries = 0
+          val toolCalls = decision.toolCalls
 
-            if (verificationResult.isSatisfied) {
-              val conclusionText = decision.conclusion.ifBlank {
-                "Task completed successfully and verified."
-              }
+          if (toolCalls.isEmpty()) {
+            val rawThought = decision.thought.orEmpty()
+            val thoughtLower = rawThought.lowercase()
+            val seemsComplete = thoughtLower.contains("complete") ||
+              thoughtLower.contains("finished") ||
+              thoughtLower.contains("done") ||
+              thoughtLower.contains("conclude")
 
-              val vStep = ExecutionStep(
-                id = "step_verify_t${turnCounter}_${task.id}",
-                stepNumber = ++stepCounter,
-                type = StepType.VERIFICATION,
-                title = "Objective Verified",
-                content = verificationResult.details
+            if (seemsComplete) {
+              val outcome = evaluateCompletion(
+                task = task,
+                conclusion = rawThought.ifBlank { "Task completed successfully and verified." },
+                turnCounter = turnCounter,
+                currentState = currentState,
+                planner = planner,
+                consecutiveVerificationFailures = consecutiveVerificationFailures,
+                stepCounterProvider = { ++stepCounter },
+                onVerificationFailureIncremented = { consecutiveVerificationFailures = it }
               )
-              val cStep = ExecutionStep(
-                id = "step_conclusion_${task.id}",
-                stepNumber = ++stepCounter,
-                type = StepType.CONCLUSION,
-                title = "Completed",
-                content = conclusionText
-              )
-              val completedFeed = addOrUpdateStep(addOrUpdateStep(currentState.executionFeed, vStep), cStep)
+              if (outcome is TurnOutcome.Terminal) return
+              continue
+            }
 
-              artifactManager.cleanTemporaryFiles()
-              val finalArtifacts = artifactManager.syncWorkspace(task.id)
-
+            consecutiveEmptyDecisions++
+            if (consecutiveEmptyDecisions >= MAX_CONSECUTIVE_EMPTY_DECISIONS) {
+              val haltMsg = "Provider produced no verified, actionable step for $consecutiveEmptyDecisions consecutive turns. Halting."
               scratchpad.saveCheckpoint(
                 AgentCheckpoint(
                   taskGoal = task.goal,
@@ -1564,184 +1962,250 @@ class AgentEngine(
                   completedSections = planner.completedDescriptions(),
                   pendingSections = planner.pendingDescriptions(),
                   planItems = currentState.plan,
-                  artifactPaths = finalArtifacts.map { it.path },
+                  artifactPaths = artifactManager.getArtifacts().map { it.path },
                   totalFindingsCount = scratchpad.loadAllFindings().size,
-                  status = "COMPLETED"
+                  status = "FAILED",
+                  recoveryState = recoveryManager.exportStateJson()
                 )
               )
-
-              recordTaskCompletion(task, AgentStatus.COMPLETED, conclusionText, finalArtifacts)
-
-              val finalMessages = if (currentState.messages.any { it.role == MessageRole.ASSISTANT && it.content == conclusionText }) {
-                currentState.messages
-              } else {
-                currentState.messages + AgentMessage(
-                  role = MessageRole.ASSISTANT,
-                  content = conclusionText
-                )
-              }
-
+              recordTaskCompletion(task, AgentStatus.FAILED, haltMsg, artifactManager.getArtifacts())
+              val haltStep = ExecutionStep(
+                id = "step_empty_decisions_${task.id}",
+                stepNumber = ++stepCounter,
+                type = StepType.ERROR,
+                title = "Unproductive Provider Loop",
+                content = haltMsg
+              )
               currentState = currentState.copy(
-                status = AgentStatus.COMPLETED,
-                currentAction = "Task completed and verified. Conversation active for further refinement.",
-                completionSummary = conclusionText,
-                verification = verificationResult,
-                artifacts = finalArtifacts,
-                taskHistory = _state.value.taskHistory,
-                executionFeed = completedFeed,
-                messages = finalMessages,
-                fiveStageRecord = currentState.fiveStageRecord.copy(conclusion = conclusionText),
+                status = AgentStatus.FAILED,
+                currentAction = haltMsg,
+                error = haltMsg,
+                executionFeed = addOrUpdateStep(currentState.executionFeed, haltStep),
                 canCancel = false
               )
               updateStateIfActive(task, currentState)
               return
+            }
+
+            val guidance = "System Notice: The previous turn did not specify any tool calls. If your objective is achieved, conclude in plain text. Otherwise, invoke the next required tool call to make progress."
+            val guidanceMsg = AgentMessage(role = MessageRole.USER, content = guidance)
+            val guidanceMessages = if (currentState.messages.lastOrNull()?.content == guidance) {
+              currentState.messages
             } else {
-              consecutiveVerificationFailures++
-              planner.markCompletionRejected(verificationResult.details)
-              val rejectionMsg = "Objective Verification Incomplete: ${verificationResult.details}. The task cannot be concluded until the required deliverables exist on disk."
+              currentState.messages + guidanceMsg
+            }
+            currentState = currentState.copy(
+              status = AgentStatus.PLANNING,
+              currentAction = "Requesting next actionable step from model...",
+              messages = guidanceMessages
+            )
+            if (!updateStateIfActive(task, currentState)) return
+            continue
+          }
 
-              if (consecutiveVerificationFailures >= 3) {
-                val isPartial = verificationResult.isPartial || verificationResult.verifiedArtifacts.isNotEmpty()
-                val finalStatus = if (isPartial) AgentStatus.PARTIAL_COMPLETION else AgentStatus.FAILED
-                val finalTitle = if (isPartial) "Partial Completion" else "Task Halted"
-                val finalContent = if (isPartial) {
-                  "Partial Completion: Verified [${verificationResult.verifiedArtifacts.joinToString()}], but missing requirements: [${verificationResult.missingRequirements.joinToString()}]."
-                } else {
-                  "Task halted: Deliverables could not be verified after 3 attempts. Details: ${verificationResult.details}"
-                }
+          consecutiveEmptyDecisions = 0
 
-                val rejStep = ExecutionStep(
-                  id = "step_verify_rej_t${turnCounter}_${task.id}",
-                  stepNumber = ++stepCounter,
-                  type = StepType.VERIFICATION,
-                  title = "Verification Incomplete",
-                  content = rejectionMsg
-                )
-                val finalStep = ExecutionStep(
-                  id = "step_conclusion_${task.id}",
-                  stepNumber = ++stepCounter,
-                  type = if (isPartial) StepType.CONCLUSION else StepType.ERROR,
-                  title = finalTitle,
-                  content = finalContent
-                )
-                val failureFeed = addOrUpdateStep(addOrUpdateStep(currentState.executionFeed, rejStep), finalStep)
+          val updatedPlan = if (decision.plan != null) {
+            planner.acceptModelPlan(decision.plan)
+            val parsedLines = planner.planDescriptions()
+            scratchpad.savePlan(parsedLines)
+            parsedLines
+          } else currentState.plan
 
-                recordTaskCompletion(task, finalStatus, finalContent, artifactManager.getArtifacts())
+          val currentPTask = planner.toPersistentTask(task.sessionId, turnCounter, maxSteps)
+          scratchpad.saveTask(currentPTask)
 
-                currentState = currentState.copy(
-                  status = finalStatus,
-                  currentAction = finalContent,
-                  error = if (!isPartial) "Verification incomplete: ${verificationResult.details}" else null,
-                  completionSummary = if (isPartial) finalContent else null,
-                  verification = verificationResult,
-                  taskHistory = _state.value.taskHistory,
-                  executionFeed = failureFeed,
-                  canCancel = false
-                )
-                updateStateIfActive(task, currentState)
-                return
-              }
+          val rawThought = decision.thought
+          val latestObs = currentState.observations.lastOrNull()?.summary
+            ?: currentState.messages.lastOrNull { it.role == MessageRole.TOOL }?.content
+          val cleanedThought = if (!rawThought.isNullOrBlank()) {
+            dedupPipeline.process(rawThought, turnCounter, observationFingerprint = latestObs)
+          } else null
 
-              val rejStep = ExecutionStep(
-                id = "step_verify_rej_t${turnCounter}_${task.id}",
+          val thinkingStepId = "step_thinking_t${turnCounter}_${task.id}"
+          val feedWithThought = if (!cleanedThought.isNullOrBlank() && !cleanedThought.startsWith("[REASONING_DEDUP_HIT")) {
+            addOrUpdateStep(
+              currentState.executionFeed,
+              ExecutionStep(
+                id = thinkingStepId,
                 stepNumber = ++stepCounter,
-                type = StepType.VERIFICATION,
-                title = "Verification Incomplete",
-                content = rejectionMsg
+                type = StepType.THINKING,
+                title = "Reasoning",
+                content = cleanedThought
               )
-              val feed = addOrUpdateStep(currentState.executionFeed, rejStep)
+            )
+          } else currentState.executionFeed
 
-              val updatedMessages = currentState.messages + listOfNotNull(
-                if (currentState.messages.none { it.role == MessageRole.ASSISTANT && it.content == decision.conclusion })
-                  AgentMessage(role = MessageRole.ASSISTANT, content = decision.conclusion)
-                else null,
-                if (currentState.messages.none { it.role == MessageRole.USER && it.content == rejectionMsg })
-                  AgentMessage(role = MessageRole.USER, content = rejectionMsg)
-                else null
-              )
+          currentState = currentState.copy(
+            plan = updatedPlan,
+            persistentTask = currentPTask,
+            executionFeed = feedWithThought,
+            fiveStageRecord = currentState.fiveStageRecord.copy(currentPlan = updatedPlan)
+          )
 
-              currentState = currentState.copy(
-                status = AgentStatus.PLANNING,
-                currentAction = "Verification rejected completion: ${verificationResult.details}",
-                messages = updatedMessages,
-                verification = verificationResult,
-                executionFeed = feed
-              )
-              if (!updateStateIfActive(task, currentState)) return
+          // =========================================================================
+          // PHASE 3: TOOL CALL VALIDATION & DISPATCHING
+          // =========================================================================
+          val validatedToolCalls = toolCalls.mapIndexed { idx, call ->
+            val normalizedCallId = if (call.callId.startsWith("call_")) {
+              call.callId
+            } else {
+              ToolCall.generateCallId(task.id, turnCounter * 10 + idx)
+            }
+            call.copy(callId = normalizedCallId)
+          }
+
+          val existingToolCallIds = currentState.messages.mapNotNull { it.toolCallId }.toSet()
+          val assistantToolMessages = validatedToolCalls.mapIndexed { index, call ->
+            AgentMessage(
+              role = MessageRole.ASSISTANT,
+              content = if (index == 0) {
+                decision.thought ?: "Executing ${validatedToolCalls.size} requested tool call(s)."
+              } else "",
+              toolCallId = call.callId,
+              toolName = call.toolName,
+              toolArgs = call.arguments
+            )
+          }.filter { it.toolCallId == null || !existingToolCallIds.contains(it.toolCallId) }
+
+          if (assistantToolMessages.isNotEmpty()) {
+            currentState = currentState.copy(
+              messages = currentState.messages + assistantToolMessages
+            )
+            if (!updateStateIfActive(task, currentState)) return
+          }
+
+          delay(100)
+
+          // Bind validated tool calls to actionable steps and mark DISPATCHED
+          val currentActionableSteps = planner.getActionableSteps()
+          validatedToolCalls.forEach { call ->
+            val matchingStep = currentActionableSteps.firstOrNull {
+              it.toolCallId == call.callId || (it.assignedTool == call.toolName && it.status == ActionExecutionStatus.PLANNED)
+            } ?: currentActionableSteps.firstOrNull { it.status == ActionExecutionStatus.PLANNED }
+
+            if (matchingStep != null) {
+              planner.markStepDispatched(matchingStep.id, call.callId, call.toolName)
             }
           }
 
-          is LLMDecision.ProviderError -> {
-            planner.markProviderFailure(decision.message)
-            if (providerDropRetries < 2) {
-              providerDropRetries++
-              // Honor provider-requested cooldowns (e.g. HTTP 429 Retry-After) within a sane cap.
-              val waitMs = (decision.retryAfterMs ?: 1500L).coerceIn(1500L, 30_000L)
-              val retryStepId = "step_retry_${providerDropRetries}_t${turnCounter}_${task.id}"
-              val retryStep = ExecutionStep(
-                id = retryStepId,
-                stepNumber = ++stepCounter,
-                type = StepType.OBSERVATION,
-                title = "Endpoint Drop Recovery ($providerDropRetries/2)",
-                content = "Endpoint drop: ${decision.message.take(160)}. Retrying automatically in ${waitMs / 1000}s..."
-              )
-              val retryFeed = addOrUpdateStep(currentState.executionFeed, retryStep)
-              currentState = currentState.copy(
-                currentAction = "Recovering from endpoint drop (attempt $providerDropRetries/2)...",
-                executionFeed = retryFeed
-              )
-              if (!updateStateIfActive(task, currentState)) return
-              delay(waitMs)
-              continue
-            } else if (providerDropRetries == 2) {
-              providerDropRetries++
-              val fallbackStepId = "step_fallback_${task.id}"
-              val fallbackStep = ExecutionStep(
-                id = fallbackStepId,
-                stepNumber = ++stepCounter,
-                type = StepType.OBSERVATION,
-                title = "Autonomous Fallback Engaged",
-                content = "LLM endpoint unavailable after retries. Switched to the built-in fallback reasoning engine; E2B Cloud sandbox execution is unchanged."
-              )
-              val fallbackFeed = addOrUpdateStep(currentState.executionFeed, fallbackStep)
-              currentState = currentState.copy(
-                currentAction = "Running via built-in fallback reasoning engine...",
-                executionFeed = fallbackFeed
-              )
-              if (!updateStateIfActive(task, currentState)) return
-              activeProvider = AutonomousSandboxProvider()
-              delay(1000)
-              continue
-            }
+          val dispatchResult = dispatchToolCallsBatch(
+            task = task,
+            turnCounter = turnCounter,
+            validatedToolCalls = validatedToolCalls,
+            currentState = currentState,
+            currentSandboxId = expectedSandboxId,
+            planner = planner,
+            stepCounterProvider = { ++stepCounter }
+          )
 
-            val errorStepId = "step_error_${task.id}"
-            val errStep = ExecutionStep(
-              id = errorStepId,
+          if (dispatchResult.resetSandboxStep != null) {
+            currentState = currentState.copy(
+              status = AgentStatus.SANDBOX_RESET,
+              currentAction = "Recovering from sandbox swap; synchronizing workspace...",
+              executionFeed = currentState.executionFeed + dispatchResult.resetSandboxStep
+            )
+            updateStateIfActive(task, currentState)
+          }
+
+          if (dispatchResult.fatalHaltMessage != null) {
+            scratchpad.saveCheckpoint(
+              AgentCheckpoint(
+                taskGoal = task.goal,
+                currentTurn = turnCounter,
+                completedSections = planner.completedDescriptions(),
+                pendingSections = planner.pendingDescriptions(),
+                planItems = currentState.plan,
+                artifactPaths = artifactManager.getArtifacts().map { it.path },
+                totalFindingsCount = scratchpad.loadAllFindings().size,
+                status = "FAILED",
+                recoveryState = recoveryManager.exportStateJson()
+              )
+            )
+            recordTaskCompletion(task, AgentStatus.FAILED, dispatchResult.fatalHaltMessage, artifactManager.getArtifacts())
+            val haltStep = ExecutionStep(
+              id = "step_loopguard_halt_${task.id}",
               stepNumber = ++stepCounter,
               type = StepType.ERROR,
-              title = "Provider Failure",
-              content = decision.message
+              title = "Unproductive Loop Detected",
+              content = dispatchResult.fatalHaltMessage
             )
-            val feed = addOrUpdateStep(currentState.executionFeed, errStep)
-            recordTaskCompletion(task, AgentStatus.FAILED, decision.message, artifactManager.getArtifacts())
             currentState = currentState.copy(
               status = AgentStatus.FAILED,
-              currentAction = "Failed with provider error",
-              error = decision.message,
-              taskHistory = _state.value.taskHistory,
-              executionFeed = feed,
+              currentAction = dispatchResult.fatalHaltMessage,
+              error = dispatchResult.fatalHaltMessage,
+              executionFeed = addOrUpdateStep(currentState.executionFeed, haltStep),
               canCancel = false
             )
             updateStateIfActive(task, currentState)
             return
           }
+
+          // =========================================================================
+          // PHASES 4 & 5: NORMALIZE RESULTS, RETURN OBSERVATIONS & PERSIST
+          // =========================================================================
+          currentState = processExecutedResultsAndReflect(
+            task = task,
+            turnCounter = turnCounter,
+            results = dispatchResult.results,
+            currentState = currentState,
+            planner = planner,
+            stepCounterProvider = { ++stepCounter }
+          )
+          if (!updateStateIfActive(task, currentState)) return
+
+          // =========================================================================
+          // PHASE 6: EVALUATE OUTCOME (REPLANNING / STAGNATION)
+          // =========================================================================
+          val isStagnantLoop = recoveryManager.loopDetector.getZeroProgressStreak() >= 3
+          val isIneffectiveStep = planner.isStepIneffective()
+          if (planner.hasReplanRequest() || planner.isStagnant() || isStagnantLoop || isIneffectiveStep) {
+            val replanReason = planner.getReplanReason() ?: when {
+              isStagnantLoop -> "Zero-progress loop detected: ${recoveryManager.loopDetector.getZeroProgressStreak()} consecutive operations produced no state delta or new information."
+              isIneffectiveStep -> "Ineffective plan step: Active step attempted repeatedly without progress. Alternative strategy required."
+              planner.isStagnant() -> "Stagnation detected: ${planner.getNoProgressCount()} turns without measurable progress."
+              else -> "Plan adjustment required based on recent observations."
+            }
+            planner.clearReplanReason()
+
+            val replanStep = ExecutionStep(
+              id = "step_replan_t${turnCounter}_${task.id}",
+              stepNumber = ++stepCounter,
+              type = StepType.REPLANNING,
+              title = "Replanning Required",
+              content = replanReason,
+              recoveryStrategy = RecoveryStrategy.REVISE_PLAN.name
+            )
+            val replanNotice = "System Notice (Replanning Required): $replanReason\n" +
+              "Please reconsider your approach, update the plan, and select a different action to make progress."
+            val replanMsg = AgentMessage(
+              role = MessageRole.USER,
+              content = replanNotice
+            )
+            val replanMessages = if (currentState.messages.lastOrNull()?.content == replanNotice) {
+              currentState.messages
+            } else {
+              currentState.messages + replanMsg
+            }
+            currentState = currentState.copy(
+              status = AgentStatus.REPLANNING,
+              currentAction = "Replanning: $replanReason",
+              messages = replanMessages,
+              executionFeed = addOrUpdateStep(currentState.executionFeed, replanStep)
+            )
+            if (!updateStateIfActive(task, currentState)) return
+          }
         }
       }
 
-      // Before failing unconditionally, authoritatively check if the target deliverable exists and is valid on disk
+      // =========================================================================
+      // TURN BUDGET EXHAUSTED: DETERMINISTIC TERMINAL STATE RESOLUTION
+      // =========================================================================
       try {
         sandboxManager.activeProvider.syncArtifacts(task.sessionId, workspaceDir, task.id)
-      } catch (_: Exception) {}
+      } catch (e: Exception) {
+        Log.w("AgentEngine", "syncArtifacts failed during final verification (non-fatal)", e)
+      }
       val finalVerification = verifyObjective(task, currentState)
       if (finalVerification.isSatisfied) {
         val autoConclusion = "Objective authoritatively verified on disk (${finalVerification.verifiedArtifacts.joinToString()}) upon reaching step budget."
@@ -1757,7 +2221,8 @@ class AgentEngine(
             planItems = currentState.plan,
             artifactPaths = finalArtifacts.map { it.path },
             totalFindingsCount = scratchpad.loadAllFindings().size,
-            status = "COMPLETED"
+            status = "COMPLETED",
+            recoveryState = recoveryManager.exportStateJson()
           )
         )
 
@@ -1819,7 +2284,8 @@ class AgentEngine(
             planItems = currentState.plan,
             artifactPaths = finalArtifacts.map { it.path },
             totalFindingsCount = scratchpad.loadAllFindings().size,
-            status = "PARTIAL_COMPLETION"
+            status = "PARTIAL_COMPLETION",
+            recoveryState = recoveryManager.exportStateJson()
           )
         )
 
@@ -1864,101 +2330,70 @@ class AgentEngine(
       }
 
       val finalReport = deliverableTracker.scanAndVerify(artifactManager)
-      if (maxSteps < 500) {
-        // Explicitly bounded test harness budget reached
-        val budgetMsg = "Execution cycle completed ($turnCounter turns). Status: ${finalReport.pendingOrInvalidDetails}"
-        val feed = addOrUpdateStep(
-          currentState.executionFeed,
-          ExecutionStep(
-            id = "step_turn_limit_${task.id}",
-            stepNumber = ++stepCounter,
-            type = StepType.OBSERVATION,
-            title = "Execution Budget Reached",
-            content = budgetMsg
-          )
-        )
-        recordTaskCompletion(task, AgentStatus.FAILED, budgetMsg, artifactManager.getArtifacts())
-        currentState = currentState.copy(
-          status = AgentStatus.FAILED,
-          currentAction = budgetMsg,
-          error = budgetMsg,
-          taskHistory = _state.value.taskHistory,
-          executionFeed = feed,
-          canCancel = false
-        )
-        updateStateIfActive(task, currentState)
-      } else {
-        // Hard turn budget exhausted: conclude honestly in a real terminal state.
-        // (Previously this reported DELIVERABLE_PENDING with canCancel=true while the
-        // run loop had already ended, leaving the UI and foreground service waiting forever.)
-        val exhaustedMsg = when {
-          finalReport.allSatisfied ->
-            "Objective authoritatively verified on disk (${finalReport.verifiedNames.joinToString()})."
-          finalReport.verifiedCount > 0 ->
-            "Turn budget exhausted (${turnCounter} turns) with verified progress " +
-              "${finalReport.verifiedCount}/${finalReport.totalRequired}. Pending: ${finalReport.pendingOrInvalidDetails}"
-          else ->
-            "Turn budget exhausted (${turnCounter} turns) without verified deliverables. Pending: ${finalReport.pendingOrInvalidDetails}"
-        }
-        val finalStatus = when {
-          finalReport.allSatisfied -> AgentStatus.COMPLETED
-          finalReport.verifiedCount > 0 -> AgentStatus.PARTIAL_COMPLETION
-          else -> AgentStatus.FAILED
-        }
-        val finalTitle = when (finalStatus) {
-          AgentStatus.COMPLETED -> "Completed"
-          AgentStatus.PARTIAL_COMPLETION -> "Partial Completion"
-          else -> "Turn Budget Exhausted"
-        }
-        val finalArtifacts = artifactManager.getArtifacts()
-
-        scratchpad.saveCheckpoint(
-          AgentCheckpoint(
-            taskGoal = task.goal,
-            currentTurn = turnCounter,
-            completedSections = planner.completedDescriptions(),
-            pendingSections = planner.pendingDescriptions(),
-            planItems = currentState.plan,
-            artifactPaths = finalArtifacts.map { it.path },
-            totalFindingsCount = scratchpad.loadAllFindings().size,
-            status = finalStatus.name
-          )
-        )
-
-        recordTaskCompletion(task, finalStatus, exhaustedMsg, finalArtifacts)
-
-        val budgetStep = ExecutionStep(
-          id = "step_turn_budget_${task.id}",
-          stepNumber = ++stepCounter,
-          type = if (finalStatus == AgentStatus.COMPLETED) StepType.CONCLUSION else StepType.ERROR,
-          title = finalTitle,
-          content = exhaustedMsg
-        )
-        val finalMessages = if (currentState.messages.any { it.role == MessageRole.ASSISTANT && it.content == exhaustedMsg }) {
-          currentState.messages
-        } else {
-          currentState.messages + AgentMessage(role = MessageRole.ASSISTANT, content = exhaustedMsg)
-        }
-        currentState = currentState.copy(
-          status = finalStatus,
-          currentAction = exhaustedMsg,
-          error = if (finalStatus == AgentStatus.FAILED) exhaustedMsg else null,
-          completionSummary = if (finalStatus != AgentStatus.FAILED) exhaustedMsg else null,
-          verification = finalVerification,
-          artifacts = finalArtifacts,
-          taskHistory = _state.value.taskHistory,
-          executionFeed = addOrUpdateStep(currentState.executionFeed, budgetStep),
-          messages = finalMessages,
-          canCancel = false
-        )
-        updateStateIfActive(task, currentState)
+      val exhaustedMsg = when {
+        finalReport.allSatisfied ->
+          "Objective authoritatively verified on disk (${finalReport.verifiedNames.joinToString()})."
+        finalReport.verifiedCount > 0 ->
+          "Turn budget exhausted (${turnCounter} turns) with verified progress " +
+            "${finalReport.verifiedCount}/${finalReport.totalRequired}. Pending: ${finalReport.pendingOrInvalidDetails}"
+        else ->
+          "Turn budget exhausted (${turnCounter} turns) without verified deliverables. Pending: ${finalReport.pendingOrInvalidDetails}"
       }
+      val finalStatus = when {
+        finalReport.allSatisfied -> AgentStatus.COMPLETED
+        finalReport.verifiedCount > 0 -> AgentStatus.PARTIAL_COMPLETION
+        else -> AgentStatus.FAILED
+      }
+      val finalTitle = when (finalStatus) {
+        AgentStatus.COMPLETED -> "Completed"
+        AgentStatus.PARTIAL_COMPLETION -> "Partial Completion"
+        else -> "Turn Budget Exhausted"
+      }
+      val finalArtifacts = artifactManager.getArtifacts()
+
+      scratchpad.saveCheckpoint(
+        AgentCheckpoint(
+          taskGoal = task.goal,
+          currentTurn = turnCounter,
+          completedSections = planner.completedDescriptions(),
+          pendingSections = planner.pendingDescriptions(),
+          planItems = currentState.plan,
+          artifactPaths = finalArtifacts.map { it.path },
+          totalFindingsCount = scratchpad.loadAllFindings().size,
+          status = finalStatus.name,
+          recoveryState = recoveryManager.exportStateJson()
+        )
+      )
+
+      recordTaskCompletion(task, finalStatus, exhaustedMsg, finalArtifacts)
+
+      val budgetStep = ExecutionStep(
+        id = "step_turn_budget_${task.id}",
+        stepNumber = ++stepCounter,
+        type = if (finalStatus == AgentStatus.COMPLETED) StepType.CONCLUSION else StepType.ERROR,
+        title = finalTitle,
+        content = exhaustedMsg
+      )
+      val finalMessages = if (currentState.messages.any { it.role == MessageRole.ASSISTANT && it.content == exhaustedMsg }) {
+        currentState.messages
+      } else {
+        currentState.messages + AgentMessage(role = MessageRole.ASSISTANT, content = exhaustedMsg)
+      }
+      currentState = currentState.copy(
+        status = finalStatus,
+        currentAction = exhaustedMsg,
+        error = if (finalStatus == AgentStatus.FAILED) exhaustedMsg else null,
+        completionSummary = if (finalStatus != AgentStatus.FAILED) exhaustedMsg else null,
+        verification = finalVerification,
+        artifacts = finalArtifacts,
+        taskHistory = _state.value.taskHistory,
+        executionFeed = addOrUpdateStep(currentState.executionFeed, budgetStep),
+        messages = finalMessages,
+        canCancel = false
+      )
+      updateStateIfActive(task, currentState)
 
     } catch (ce: CancellationException) {
-      // Cancellation may arrive after the user already started another task or after the
-      // task reached a terminal state. Only a run that still owns the authoritative state
-      // may record the cancellation, so a stale callback can never overwrite newer state
-      // or persist a CANCELLED checkpoint over a fresh session's progress.
       val stillOwnsState = synchronized(this) { _state.value.task?.id == task.id }
       if (stillOwnsState) {
         scratchpad.saveCheckpoint(
@@ -1970,7 +2405,8 @@ class AgentEngine(
             planItems = currentState.plan,
             artifactPaths = artifactManager.getArtifacts().map { it.path },
             totalFindingsCount = scratchpad.loadAllFindings().size,
-            status = "CANCELLED"
+            status = "CANCELLED",
+            recoveryState = recoveryManager.exportStateJson()
           )
         )
 
@@ -2003,6 +2439,7 @@ class AgentEngine(
     } catch (t: Throwable) {
       if (t is CancellationException) throw t
       val errorMsg = t.message ?: t.javaClass.simpleName
+      Log.e("AgentEngine", "Fatal execution fault in task ${task.id}", t)
       val feed = currentState.executionFeed + ExecutionStep(
         stepNumber = ++stepCounter,
         type = StepType.ERROR,
@@ -2353,20 +2790,7 @@ class AgentEngine(
     return args.entries.joinToString(", ") { "${it.key}: ${it.value}" }
   }
 
-  /**
-   * Stable identity of an action for loop detection: resolved tool name plus
-   * deterministically ordered arguments.
-   */
-  private fun actionSignature(call: ToolCall): String {
-    val resolvedName = registry.resolveToolName(call.toolName)
-    val args = call.arguments.entries.sortedBy { it.key }.joinToString("|") { "${it.key}=${it.value}" }
-    return "$resolvedName($args)"
-  }
-
   companion object {
-    /** The 3rd+ consecutive identical action is skipped by the loop guard. */
-    private const val MAX_CONSECUTIVE_IDENTICAL_ACTIONS = 3
-
     /** Consecutive turns without any tool call or completion before the run halts honestly. */
     private const val MAX_CONSECUTIVE_EMPTY_DECISIONS = 6
 
@@ -2375,7 +2799,7 @@ class AgentEngine(
 
     /** Checkpoint statuses from which a same-goal task may restore plan progress on resume. */
     private val RESUMABLE_CHECKPOINT_STATUSES = setOf(
-      "IN_PROGRESS", "CANCELLED", "FAILED", "PARTIAL_COMPLETION"
+      "IN_PROGRESS", "PAUSED", "CANCELLED", "FAILED", "PARTIAL_COMPLETION"
     )
 
     /** Tools whose successful execution changes persistent workspace state. */
@@ -2422,6 +2846,42 @@ class AgentEngine(
   }
 
   /**
+   * Pauses active execution gracefully, saving state to allow resuming without losing work or replaying side effects.
+   */
+  fun pauseTask() {
+    val job = activeJob
+    val currentTask = _state.value.task
+    if (job != null && job.isActive) {
+      if (currentTask != null) {
+        val pTask = _state.value.persistentTask ?: currentTask.toPersistentTask(_state.value.currentStep)
+        scratchpad.saveTask(pTask)
+        scratchpad.saveCheckpoint(
+          AgentCheckpoint(
+            taskGoal = currentTask.goal,
+            currentTurn = _state.value.currentStep,
+            completedSections = _state.value.plan,
+            planItems = _state.value.plan,
+            artifactPaths = artifactManager.getArtifacts().map { it.path },
+            totalFindingsCount = scratchpad.loadAllFindings().size,
+            status = "PAUSED",
+            recoveryState = recoveryManager.exportStateJson(),
+            currentPhase = pTask.currentPhase.name,
+            persistentTaskJson = pTask.toJsonString()
+          )
+        )
+        recordTaskCompletion(currentTask, AgentStatus.CANCELLED, "Task paused by user. Work preserved.", artifactManager.getArtifacts())
+        _state.value = _state.value.copy(
+          status = AgentStatus.CANCELLED,
+          currentAction = "Task paused by user. Work preserved.",
+          taskHistory = _state.value.taskHistory,
+          canCancel = false
+        )
+      }
+      job.cancel()
+    }
+  }
+
+  /**
    * Stops active execution immediately.
    */
   fun cancel() {
@@ -2429,6 +2889,8 @@ class AgentEngine(
     val currentTask = _state.value.task
     if (job != null && job.isActive) {
       if (currentTask != null) {
+        val pTask = _state.value.persistentTask ?: currentTask.toPersistentTask(_state.value.currentStep)
+        scratchpad.saveTask(pTask)
         scratchpad.saveCheckpoint(
           AgentCheckpoint(
             taskGoal = currentTask.goal,
@@ -2436,7 +2898,10 @@ class AgentEngine(
             planItems = _state.value.plan,
             artifactPaths = artifactManager.getArtifacts().map { it.path },
             totalFindingsCount = scratchpad.loadAllFindings().size,
-            status = "CANCELLED"
+            status = "CANCELLED",
+            recoveryState = recoveryManager.exportStateJson(),
+            currentPhase = pTask.currentPhase.name,
+            persistentTaskJson = pTask.toJsonString()
           )
         )
         recordTaskCompletion(currentTask, AgentStatus.CANCELLED, "Execution stopped by user.", artifactManager.getArtifacts())

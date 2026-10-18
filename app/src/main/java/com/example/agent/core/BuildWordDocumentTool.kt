@@ -1,5 +1,6 @@
 package com.example.agent.core
 
+import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -28,7 +29,8 @@ class BuildWordDocumentTool(
         name = "path",
         type = "string",
         description = "Workspace-relative output file path ending in .docx (e.g., 'reports/market_analysis.docx').",
-        required = true
+        required = true,
+        aliases = listOf("file", "filePath", "file_path", "target")
       ),
       ToolParameter(
         name = "title",
@@ -40,7 +42,8 @@ class BuildWordDocumentTool(
         name = "markdown",
         type = "string",
         description = "Optional complete Markdown report content. When provided, automatically compiles Markdown headings, tables, lists, callouts, and text into authentic OpenXML elements.",
-        required = false
+        required = false,
+        aliases = listOf("content", "text", "body")
       ),
       ToolParameter(
         name = "sections",
@@ -380,6 +383,7 @@ class BuildWordDocumentTool(
         exitCode = 0
       )
     } catch (e: Exception) {
+      if (e is CancellationException) throw e
       return ToolResult(
         callId = callId,
         toolName = name,

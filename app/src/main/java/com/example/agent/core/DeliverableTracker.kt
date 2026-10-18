@@ -70,21 +70,24 @@ class DeliverableTracker(
 
     // 1. Explicit expected deliverable
     if (!task.expectedArtifact.isNullOrBlank()) {
-      val clean = task.expectedArtifact.trim().removePrefix("./").removePrefix("/")
-      registerDeliverable(
-        path = clean,
-        description = "Explicit Expected Deliverable",
-        required = true
-      )
-      return
+      val clean = PathSecurity.toCanonicalRelativePath(workspaceDir, task.expectedArtifact)
+      if (clean.isNotBlank()) {
+        registerDeliverable(
+          path = clean,
+          description = "Explicit Expected Deliverable",
+          required = true
+        )
+        return
+      }
     }
 
     // 2. Extract deliverables from user goal
     val inferred = extractDeliverablesFromText(task.goal)
     for (name in inferred) {
-      if (!deliverablesMap.containsKey(name)) {
+      val clean = PathSecurity.toCanonicalRelativePath(workspaceDir, name)
+      if (clean.isNotBlank() && !deliverablesMap.containsKey(clean)) {
         registerDeliverable(
-          path = name,
+          path = clean,
           description = "Deliverable requested in objective",
           required = true
         )
@@ -100,7 +103,7 @@ class DeliverableTracker(
     description: String = "",
     required: Boolean = true
   ): TrackedDeliverable {
-    val clean = path.trim().removePrefix("./").removePrefix("/")
+    val clean = PathSecurity.toCanonicalRelativePath(workspaceDir, path)
     val name = File(clean).name
     val item = TrackedDeliverable(
       path = clean,
@@ -152,7 +155,7 @@ class DeliverableTracker(
         } else {
           val validation = ArtifactValidatorRegistry.validateExistingFile(targetFile)
           if (validation.isValid) {
-            val relPath = PathSecurity.getRelativePath(workspaceDir, targetFile)
+            val relPath = PathSecurity.toCanonicalRelativePath(workspaceDir, PathSecurity.getRelativePath(workspaceDir, targetFile))
             deliverablesMap[path] = item.copy(
               path = relPath,
               status = DeliverableStatus.VERIFIED,
@@ -187,11 +190,15 @@ class DeliverableTracker(
           !file.name.endsWith(".part") &&
           file.parentFile?.name != ".git" &&
           file.parentFile?.name != ".sessions" &&
+          file.parentFile?.name != ".observations" &&
+          file.parentFile?.name != ".artifacts" &&
+          file.parentFile?.name != ".mcp_data" &&
+          file.parentFile?.name != "notes" &&
           file.parentFile?.name != "bin" &&
           file.parentFile?.name != "tmp"
       }
       .forEach { file ->
-        val rel = PathSecurity.getRelativePath(workspaceDir, file)
+        val rel = PathSecurity.toCanonicalRelativePath(workspaceDir, PathSecurity.getRelativePath(workspaceDir, file))
         val ext = file.extension.lowercase(Locale.ROOT)
         // High-value deliverable extensions
         if (ext in listOf("md", "docx", "xlsx", "xls", "pdf", "csv", "json", "jsonl", "html", "py", "sh", "txt")) {
