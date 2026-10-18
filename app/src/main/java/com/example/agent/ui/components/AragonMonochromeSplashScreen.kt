@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -368,15 +369,14 @@ fun AragonMonochromeSplashScreen(
     Column(
       modifier = Modifier
         .fillMaxSize()
-        .padding(horizontal = 24.dp, vertical = 32.dp),
+        .safeDrawingPadding()
+        .padding(horizontal = 24.dp, vertical = 20.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.SpaceBetween
     ) {
       // Top Status Bar
       Row(
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(top = 16.dp),
+        modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
       ) {

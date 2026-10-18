@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
@@ -300,6 +301,7 @@ fun AboutAragonScreen(
     AragonActionButton(
       text = "SETTINGS & KEYS CONFIGURATION",
       onClick = onOpenSettings,
+      modifier = Modifier.fillMaxWidth(),
       variant = AragonButtonVariant.PRIMARY,
       height = 36.dp,
       testTag = "about_open_settings_direct_btn"
@@ -317,7 +319,6 @@ fun AboutAragonScreen(
       ),
       modifier = Modifier
         .fillMaxWidth()
-        .clip(RoundedCornerShape(12.dp))
         .clickable(
           role = androidx.compose.ui.semantics.Role.Button,
           onClickLabel = if (isDevUnlocked) "Open Settings & Configuration" else "Build info"
@@ -456,7 +457,8 @@ private fun DiagnosticRow(label: String, value: String) {
       text = label,
       style = MaterialTheme.typography.labelSmall,
       color = AmoledTextMuted,
-      fontSize = 11.sp
+      fontSize = 11.sp,
+      modifier = Modifier.padding(end = 8.dp)
     )
     Text(
       text = value,
@@ -464,7 +466,10 @@ private fun DiagnosticRow(label: String, value: String) {
       fontWeight = FontWeight.Medium,
       color = AmoledTextPrimary,
       fontSize = 11.sp,
-      maxLines = 1
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      textAlign = TextAlign.End,
+      modifier = Modifier.weight(1f, fill = false)
     )
   }
 }

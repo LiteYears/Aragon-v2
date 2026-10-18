@@ -88,6 +88,7 @@ fun DocumentsDialog(
       Column(
         modifier = Modifier
           .fillMaxWidth()
+          .verticalScroll(scrollState)
           .padding(16.dp)
       ) {
         Row(
@@ -127,10 +128,7 @@ fun DocumentsDialog(
           )
         } else {
           Column(
-            modifier = Modifier
-              .fillMaxWidth()
-              .heightIn(max = 420.dp)
-              .verticalScroll(scrollState),
+            modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp)
           ) {
             documents.forEachIndexed { index, doc ->

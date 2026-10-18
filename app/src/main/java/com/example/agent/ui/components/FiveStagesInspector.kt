@@ -1,5 +1,6 @@
 package com.example.agent.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.agent.core.FiveStageRecord
@@ -153,11 +155,10 @@ private fun StageCard(
   content: List<String>
 ) {
   Surface(
-    modifier = Modifier
-      .fillMaxWidth()
-      .clip(RoundedCornerShape(10.dp))
-      .border(1.dp, AmoledBorderSubtle, RoundedCornerShape(10.dp)),
-    color = AmoledSurfaceElevated
+    shape = RoundedCornerShape(10.dp),
+    color = AmoledSurfaceElevated,
+    border = BorderStroke(1.dp, AmoledBorderSubtle),
+    modifier = Modifier.fillMaxWidth()
   ) {
     Column(modifier = Modifier.padding(14.dp)) {
       Row(
@@ -171,31 +172,33 @@ private fun StageCard(
           modifier = Modifier.weight(1f)
         ) {
           // Pure text squircle badge
-          Box(
-            modifier = Modifier
-              .size(28.dp)
-              .clip(RoundedCornerShape(6.dp))
-              .background(Color(0xFF181818))
-              .border(1.dp, AmoledBorder, RoundedCornerShape(6.dp)),
-            contentAlignment = Alignment.Center
+          Surface(
+            shape = RoundedCornerShape(6.dp),
+            color = Color(0xFF181818),
+            border = BorderStroke(1.dp, AmoledBorder),
+            modifier = Modifier.size(28.dp)
           ) {
-            Text(
-              text = stageTag,
-              style = MaterialTheme.typography.labelSmall,
-              fontFamily = JetBrainsMonoFontFamily,
-              fontWeight = FontWeight.Bold,
-              fontSize = 8.sp,
-              color = AmoledActionPrimary
-            )
+            Box(contentAlignment = Alignment.Center) {
+              Text(
+                text = stageTag,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = JetBrainsMonoFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 8.sp,
+                color = AmoledActionPrimary
+              )
+            }
           }
 
-          Column {
+          Column(modifier = Modifier.weight(1f, fill = false)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
               Text(
                 text = "$stageNumber. $stageName",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
-                color = AmoledTextPrimary
+                color = AmoledTextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
               )
               Spacer(modifier = Modifier.width(8.dp))
               Text(
@@ -209,7 +212,9 @@ private fun StageCard(
             Text(
               text = subtitle,
               style = MaterialTheme.typography.labelSmall,
-              color = AmoledTextMuted
+              color = AmoledTextMuted,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis
             )
           }
         }
@@ -223,31 +228,33 @@ private fun StageCard(
 
       Spacer(modifier = Modifier.height(10.dp))
 
-      Column(
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = Modifier
-          .fillMaxWidth()
-          .clip(RoundedCornerShape(8.dp))
-          .background(Color(0xFF0C0C0C))
-          .border(1.dp, AmoledBorderSubtle, RoundedCornerShape(8.dp))
-          .padding(10.dp)
+      Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = Color(0xFF0C0C0C),
+        border = BorderStroke(1.dp, AmoledBorderSubtle),
+        modifier = Modifier.fillMaxWidth()
       ) {
-        for ((idx, item) in content.withIndex()) {
-          Row(modifier = Modifier.fillMaxWidth()) {
-            if (content.size > 1) {
+        Column(
+          verticalArrangement = Arrangement.spacedBy(6.dp),
+          modifier = Modifier.padding(10.dp)
+        ) {
+          for ((idx, item) in content.withIndex()) {
+            Row(modifier = Modifier.fillMaxWidth()) {
+              if (content.size > 1) {
+                Text(
+                  text = "${idx + 1}. ",
+                  style = MaterialTheme.typography.bodySmall,
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontWeight = FontWeight.SemiBold,
+                  color = AmoledTextMuted
+                )
+              }
               Text(
-                text = "${idx + 1}. ",
+                text = item,
                 style = MaterialTheme.typography.bodySmall,
-                fontFamily = JetBrainsMonoFontFamily,
-                fontWeight = FontWeight.SemiBold,
-                color = AmoledTextMuted
+                color = AmoledTextSecondary
               )
             }
-            Text(
-              text = item,
-              style = MaterialTheme.typography.bodySmall,
-              color = AmoledTextSecondary
-            )
           }
         }
       }

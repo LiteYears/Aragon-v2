@@ -1,5 +1,6 @@
 package com.example.agent.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -38,6 +39,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -80,17 +82,17 @@ fun ArtifactItem(
   val timeStr = dateFormat.format(Date(artifact.lastModified))
 
   Surface(
+    shape = RoundedCornerShape(10.dp),
+    color = AmoledSurfaceElevated,
+    border = BorderStroke(1.dp, AmoledBorderSubtle),
     modifier = modifier
       .fillMaxWidth()
       .padding(horizontal = 14.dp, vertical = 4.dp)
-      .clip(RoundedCornerShape(10.dp))
-      .border(1.dp, AmoledBorderSubtle, RoundedCornerShape(10.dp))
       .clickable(
         role = androidx.compose.ui.semantics.Role.Button,
         onClickLabel = "Inspect ${artifact.name}"
       ) { onOpenPreview(artifact) }
-      .testTag("artifact_card_${artifact.name}"),
-    color = AmoledSurfaceElevated
+      .testTag("artifact_card_${artifact.name}")
   ) {
     Row(
       modifier = Modifier
@@ -102,7 +104,7 @@ fun ArtifactItem(
       Surface(
         shape = RoundedCornerShape(6.dp),
         color = extColor.copy(alpha = 0.12f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, extColor.copy(alpha = 0.4f)),
+        border = BorderStroke(1.dp, extColor.copy(alpha = 0.4f)),
         modifier = Modifier.size(38.dp)
       ) {
         Box(contentAlignment = Alignment.Center) {
@@ -126,11 +128,14 @@ fun ArtifactItem(
           fontFamily = JetBrainsMonoFontFamily,
           fontWeight = FontWeight.Medium,
           fontSize = 13.sp,
-          color = AmoledTextPrimary
+          color = AmoledTextPrimary,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
         )
 
         Spacer(modifier = Modifier.height(2.dp))
         Row(
+          modifier = Modifier.horizontalScroll(rememberScrollState()),
           horizontalArrangement = Arrangement.spacedBy(6.dp),
           verticalAlignment = Alignment.CenterVertically
         ) {

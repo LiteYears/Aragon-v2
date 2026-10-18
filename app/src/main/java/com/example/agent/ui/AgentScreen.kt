@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -656,7 +657,7 @@ fun AgentScreen(
                     )
 
                     // MCP ecosystem capsule button
-                    val activeMcpCount = mcpServers.count { it.enabled }
+                    val activeMcpCount = remember(mcpServers) { mcpServers.count { it.enabled } }
                     AragonFeedButton(
                       text = "MCP",
                       onClick = { showMcpDialog = true },
@@ -677,7 +678,6 @@ fun AgentScreen(
                       border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
                       modifier = Modifier
                         .tactilePress(modelInteractionSource)
-                        .clip(RoundedCornerShape(5.dp))
                         .clickable(
                           interactionSource = modelInteractionSource,
                           indication = ripple(color = AmoledActionPrimary.copy(alpha = 0.2f)),
@@ -703,7 +703,8 @@ fun AgentScreen(
                           fontFamily = JetBrainsMonoFontFamily,
                           fontSize = 9.sp,
                           color = AmoledIconGreyLight,
-                          maxLines = 1
+                          maxLines = 1,
+                          overflow = TextOverflow.Ellipsis
                         )
                         Spacer(modifier = Modifier.width(3.dp))
                         Text(
@@ -733,7 +734,9 @@ fun AgentScreen(
                         text = "${inputText.length}c · ~${(inputText.length / 4).coerceAtLeast(1)}t",
                         fontFamily = JetBrainsMonoFontFamily,
                         fontSize = 9.sp,
-                        color = AmoledTextMuted
+                        color = AmoledTextMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                       )
 
                       AragonFeedButton(
@@ -752,7 +755,6 @@ fun AgentScreen(
                         border = androidx.compose.foundation.BorderStroke(1.dp, AmoledStatusError.copy(alpha = 0.7f)),
                         modifier = Modifier
                           .tactilePress(stopInteraction)
-                          .clip(RoundedCornerShape(8.dp))
                           .clickable(
                             interactionSource = stopInteraction,
                             indication = ripple(color = AmoledStatusError.copy(alpha = 0.3f)),
@@ -800,7 +802,6 @@ fun AgentScreen(
                         ),
                         modifier = Modifier
                           .tactilePress(execInteraction)
-                          .clip(RoundedCornerShape(8.dp))
                           .clickable(
                             interactionSource = execInteraction,
                             indication = ripple(color = AmoledActionPrimary.copy(alpha = 0.25f)),
@@ -892,16 +893,12 @@ fun AgentScreen(
               if (providerType == ProviderType.NVIDIA_NIM && nvidiaModel != NvidiaNimConfig.DEFAULT_MODEL) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                  OutlinedButton(
+                  AragonActionButton(
+                    text = "Retry with Flagship GLM 5.3",
                     onClick = { viewModel.retryWithDefaultModel() },
-                    shape = RoundedCornerShape(6.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledTextPrimary),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                    modifier = Modifier.height(26.dp)
-                  ) {
-                    Text("Retry with Flagship GLM 5.3", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp)
-                  }
+                    height = 26.dp,
+                    testTag = "retry_default_model_btn"
+                  )
                 }
               }
             }
@@ -941,16 +938,13 @@ fun AgentScreen(
                   fontSize = 11.sp
                 )
               }
-              OutlinedButton(
+              AragonActionButton(
+                text = "DISMISS",
                 onClick = { viewModel.dismissDeprecatedModelAlert() },
-                shape = RoundedCornerShape(6.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, AmoledStatusWarning.copy(alpha = 0.4f)),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledStatusWarning),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                modifier = Modifier.height(24.dp)
-              ) {
-                Text("DISMISS", fontSize = 8.sp, fontFamily = JetBrainsMonoFontFamily)
-              }
+                variant = AragonButtonVariant.PRIMARY,
+                height = 24.dp,
+                testTag = "dismiss_deprecated_alert_btn"
+              )
             }
           }
         }
@@ -1056,30 +1050,6 @@ fun AgentScreen(
                 )
               }
             } else {
-              val telemetry = remember(state.executionFeed, state.status) {
-                viewModel.computeRunTelemetry()
-              }
-
-              val filterCounts = remember(state.executionFeed) {
-                mapOf(
-                  FeedFilter.ALL to state.executionFeed.size,
-                  FeedFilter.TOOLS to state.executionFeed.count { it.type == StepType.TOOL_CALL || it.type == StepType.TOOL_EXECUTION },
-                  FeedFilter.REASONING to state.executionFeed.count { it.type == StepType.THINKING || it.type == StepType.PLAN || it.type == StepType.CONCLUSION },
-                  FeedFilter.OUTPUTS to state.executionFeed.count { !it.stdout.isNullOrBlank() || !it.stderr.isNullOrBlank() || it.type == StepType.OBSERVATION },
-                  FeedFilter.ERRORS to state.executionFeed.count { it.type == StepType.ERROR || (it.exitCode != null && it.exitCode != 0) }
-                )
-              }
-
-              val filteredFeed = remember(state.executionFeed, activeFeedFilter) {
-                when (activeFeedFilter) {
-                  FeedFilter.ALL -> state.executionFeed
-                  FeedFilter.TOOLS -> state.executionFeed.filter { it.type == StepType.TOOL_CALL || it.type == StepType.TOOL_EXECUTION }
-                  FeedFilter.REASONING -> state.executionFeed.filter { it.type == StepType.THINKING || it.type == StepType.PLAN || it.type == StepType.CONCLUSION }
-                  FeedFilter.OUTPUTS -> state.executionFeed.filter { !it.stdout.isNullOrBlank() || !it.stderr.isNullOrBlank() || it.type == StepType.OBSERVATION }
-                  FeedFilter.ERRORS -> state.executionFeed.filter { it.type == StepType.ERROR || (it.exitCode != null && it.exitCode != 0) }
-                }
-              }
-
               Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.TopCenter
@@ -1687,7 +1657,6 @@ fun PremiumTabBar(
           modifier = Modifier
             .weight(1f)
             .tactilePress(interactionSource)
-            .clip(RoundedCornerShape(6.dp))
             .clickable(
               interactionSource = interactionSource,
               indication = ripple(color = AmoledActionPrimary.copy(alpha = 0.2f)),
@@ -1700,7 +1669,9 @@ fun PremiumTabBar(
             .testTag("tab_${tab.name.lowercase()}")
         ) {
           Box(
-            modifier = Modifier.minimumInteractiveComponentSize(),
+            modifier = Modifier
+              .fillMaxWidth()
+              .heightIn(min = 34.dp),
             contentAlignment = Alignment.Center
           ) {
             Row(
@@ -1715,7 +1686,8 @@ fun PremiumTabBar(
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                 color = contentColor,
                 fontSize = 10.5.sp,
-                maxLines = 1
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
               )
               if (badge != null) {
                 Spacer(modifier = Modifier.width(3.dp))
@@ -1782,6 +1754,7 @@ fun AgentTopHeader(
       modifier = Modifier
         .fillMaxWidth()
         .statusBarsPadding()
+        .displayCutoutPadding()
         .padding(horizontal = 12.dp, vertical = 7.dp)
     ) {
       Row(
@@ -1810,8 +1783,13 @@ fun AgentTopHeader(
           StatusPill(status = status)
         }
 
+        Spacer(modifier = Modifier.width(8.dp))
+
         // RIGHT-ALIGNED ACTIONS: MCP, DOCS, STATS, COPY ALL, STOP, MENU
         Row(
+          modifier = Modifier
+            .weight(1f, fill = false)
+            .horizontalScroll(rememberScrollState()),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
@@ -2485,6 +2463,7 @@ fun ModelSelectorDialog(
         AragonActionButton(
           text = "CONFIGURE KEYS & SANDBOX (SETTINGS)",
           onClick = onOpenDeveloperSettings,
+          modifier = Modifier.fillMaxWidth(),
           variant = AragonButtonVariant.PRIMARY,
           height = 34.dp,
           testTag = "model_dialog_dev_settings_btn"
@@ -3521,7 +3500,12 @@ fun TaskHistoryCard(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
       ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+          modifier = Modifier
+            .weight(1f, fill = false)
+            .horizontalScroll(rememberScrollState()),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
           Text(
             text = statusLabel,
             style = MaterialTheme.typography.labelSmall,
@@ -3566,6 +3550,8 @@ fun TaskHistoryCard(
             )
           }
         }
+
+        Spacer(modifier = Modifier.width(6.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
           AragonActionButton(

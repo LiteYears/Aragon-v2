@@ -708,6 +708,8 @@ fun WorkspaceMinimalCommandHeader(
           )
         }
 
+        Spacer(modifier = Modifier.width(6.dp))
+
         // Quick UP & Refresh
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
           if (segments.isNotEmpty()) {
@@ -961,13 +963,13 @@ fun DirectoryItemRow(
   var showDirMenu by remember { mutableStateOf(false) }
 
   Surface(
+    shape = RoundedCornerShape(6.dp),
+    color = AmoledSurfaceElevated,
+    border = BorderStroke(1.dp, AmoledBorderSubtle),
     modifier = Modifier
       .fillMaxWidth()
-      .clip(RoundedCornerShape(6.dp))
-      .border(1.dp, AmoledBorderSubtle, RoundedCornerShape(6.dp))
       .clickable(role = Role.Button, onClickLabel = "Open directory ${item.name}", onClick = onClick)
-      .testTag("dir_row_${item.name}"),
-    color = AmoledSurfaceElevated
+      .testTag("dir_row_${item.name}")
   ) {
     Row(
       modifier = Modifier
@@ -1106,17 +1108,16 @@ fun FileItemRow(
   var showFileMenu by remember { mutableStateOf(false) }
 
   Surface(
+    shape = RoundedCornerShape(6.dp),
+    color = AmoledSurfaceElevated,
+    border = BorderStroke(
+      1.dp,
+      if (item.isDeliverable) AmoledStatusSuccess.copy(alpha = 0.5f) else AmoledBorderSubtle
+    ),
     modifier = Modifier
       .fillMaxWidth()
-      .clip(RoundedCornerShape(6.dp))
-      .border(
-        1.dp,
-        if (item.isDeliverable) AmoledStatusSuccess.copy(alpha = 0.5f) else AmoledBorderSubtle,
-        RoundedCornerShape(6.dp)
-      )
       .clickable(role = Role.Button, onClickLabel = "Inspect file ${item.name}", onClick = onClick)
-      .testTag("file_row_${item.name}"),
-    color = AmoledSurfaceElevated
+      .testTag("file_row_${item.name}")
   ) {
     Row(
       modifier = Modifier
@@ -1301,13 +1302,13 @@ fun DirectoryGridCard(
   onDelete: () -> Unit
 ) {
   Surface(
+    shape = RoundedCornerShape(6.dp),
+    color = AmoledSurfaceElevated,
+    border = BorderStroke(1.dp, AmoledBorderSubtle),
     modifier = Modifier
       .fillMaxWidth()
-      .clip(RoundedCornerShape(6.dp))
-      .border(1.dp, AmoledBorderSubtle, RoundedCornerShape(6.dp))
       .clickable(onClick = onClick)
-      .testTag("dir_grid_${item.name}"),
-    color = AmoledSurfaceElevated
+      .testTag("dir_grid_${item.name}")
   ) {
     Column(modifier = Modifier.padding(8.dp)) {
       Row(
@@ -1387,17 +1388,16 @@ fun FileGridCard(
   val extColor = getArtifactExtensionColor(item.name)
 
   Surface(
+    shape = RoundedCornerShape(6.dp),
+    color = AmoledSurfaceElevated,
+    border = BorderStroke(
+      1.dp,
+      if (item.isDeliverable) AmoledStatusSuccess.copy(alpha = 0.5f) else AmoledBorderSubtle
+    ),
     modifier = Modifier
       .fillMaxWidth()
-      .clip(RoundedCornerShape(6.dp))
-      .border(
-        1.dp,
-        if (item.isDeliverable) AmoledStatusSuccess.copy(alpha = 0.5f) else AmoledBorderSubtle,
-        RoundedCornerShape(6.dp)
-      )
       .clickable(onClick = onClick)
-      .testTag("file_grid_${item.name}"),
-    color = AmoledSurfaceElevated
+      .testTag("file_grid_${item.name}")
   ) {
     Column(modifier = Modifier.padding(8.dp)) {
       Row(
@@ -1454,7 +1454,9 @@ fun FileGridCard(
       Spacer(modifier = Modifier.height(8.dp))
 
       Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+          .fillMaxWidth()
+          .horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
       ) {
         AragonActionButton(

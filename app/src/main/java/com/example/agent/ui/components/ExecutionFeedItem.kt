@@ -43,6 +43,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -362,14 +363,16 @@ fun ToolCallBoxView(
             }
           }
 
-          Column(modifier = Modifier.padding(end = 4.dp)) {
+          Column(modifier = Modifier.weight(1f, fill = false).padding(end = 4.dp)) {
             Text(
               text = formatToolDisplayName(step.toolName ?: step.title),
               style = MaterialTheme.typography.labelMedium,
               fontFamily = InterFontFamily,
               fontWeight = FontWeight.SemiBold,
               fontSize = 12.sp,
-              color = AmoledTextPrimary
+              color = AmoledTextPrimary,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis
             )
             val rawName = step.toolName
             if (!rawName.isNullOrBlank() && formatToolDisplayName(rawName) != rawName) {
@@ -378,7 +381,9 @@ fun ToolCallBoxView(
                 style = MaterialTheme.typography.labelSmall,
                 fontFamily = JetBrainsMonoFontFamily,
                 fontSize = 9.sp,
-                color = AmoledIconGreyDark
+                color = AmoledIconGreyDark,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
               )
             }
           }
@@ -416,7 +421,6 @@ fun ToolCallBoxView(
           }
         }
 
-        // RIGHT: Status badge ("OK", "RUN", "ERR", etc.), [VIEW] toggle, and [COPY] button
         // RIGHT: Status badge ("OK", "RUN", "ERR", etc.), [VIEW]/[HIDE] toggle, and [COPY] button
         Row(
           verticalAlignment = Alignment.CenterVertically,
@@ -744,13 +748,13 @@ fun formatToolDisplayName(toolName: String?): String {
 }
 
 sealed class MarkdownBlock {
-  data class Heading(val text: String, val level: Int) : MarkdownBlock()
+  data class Heading(val text: String, val level: Int, val parsedText: AnnotatedString = parseInlineMarkdown(text)) : MarkdownBlock()
   data class CodeBlock(val language: String, val code: String) : MarkdownBlock()
-  data class BulletItem(val text: String) : MarkdownBlock()
-  data class NumberedItem(val number: String, val text: String) : MarkdownBlock()
-  data class Blockquote(val text: String) : MarkdownBlock()
+  data class BulletItem(val text: String, val parsedText: AnnotatedString = parseInlineMarkdown(text)) : MarkdownBlock()
+  data class NumberedItem(val number: String, val text: String, val parsedText: AnnotatedString = parseInlineMarkdown(text)) : MarkdownBlock()
+  data class Blockquote(val text: String, val parsedText: AnnotatedString = parseInlineMarkdown(text)) : MarkdownBlock()
   object Divider : MarkdownBlock()
-  data class Paragraph(val text: String) : MarkdownBlock()
+  data class Paragraph(val text: String, val parsedText: AnnotatedString = parseInlineMarkdown(text)) : MarkdownBlock()
 }
 
 fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
@@ -1014,7 +1018,7 @@ fun StreamingTextContent(
           }
           Column(modifier = Modifier.padding(top = if (idx > 0) 6.dp else 0.dp)) {
             Text(
-              text = parseInlineMarkdown(block.text),
+              text = block.parsedText,
               style = MaterialTheme.typography.titleSmall,
               fontFamily = InterFontFamily,
               fontWeight = FontWeight.Bold,
@@ -1052,7 +1056,7 @@ fun StreamingTextContent(
               )
               Spacer(modifier = Modifier.width(8.dp))
               Text(
-                text = parseInlineMarkdown(block.text),
+                text = block.parsedText,
                 style = MaterialTheme.typography.bodySmall.copy(
                   fontStyle = FontStyle.Italic,
                   color = AmoledTextSecondary,
@@ -1138,7 +1142,7 @@ fun StreamingTextContent(
               modifier = Modifier.padding(end = 6.dp)
             )
             Text(
-              text = parseInlineMarkdown(block.text),
+              text = block.parsedText,
               style = MaterialTheme.typography.bodyMedium,
               fontFamily = InterFontFamily,
               color = AmoledTextPrimary,
@@ -1162,7 +1166,7 @@ fun StreamingTextContent(
               modifier = Modifier.padding(end = 6.dp, top = 2.dp)
             )
             Text(
-              text = parseInlineMarkdown(block.text),
+              text = block.parsedText,
               style = MaterialTheme.typography.bodyMedium,
               fontFamily = InterFontFamily,
               color = AmoledTextPrimary,
@@ -1174,7 +1178,7 @@ fun StreamingTextContent(
 
         is MarkdownBlock.Paragraph -> {
           Text(
-            text = parseInlineMarkdown(block.text + if (isLastBlock && isStreaming) " █" else ""),
+            text = if (isLastBlock && isStreaming) parseInlineMarkdown(block.text + " █") else block.parsedText,
             style = MaterialTheme.typography.bodyMedium,
             fontFamily = InterFontFamily,
             color = AmoledTextPrimary,

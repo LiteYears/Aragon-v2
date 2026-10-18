@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -390,7 +391,6 @@ private fun TypographyNavigationCard(
     modifier = Modifier
       .fillMaxWidth()
       .tactilePress(interactionSource)
-      .clip(RoundedCornerShape(10.dp))
       .clickable(
         interactionSource = interactionSource,
         indication = ripple(color = AmoledActionPrimary.copy(alpha = 0.2f)),
@@ -427,7 +427,7 @@ private fun TypographyNavigationCard(
           )
         }
 
-        Column {
+        Column(modifier = Modifier.weight(1f, fill = false)) {
           Text(
             text = title,
             style = MaterialTheme.typography.titleSmall,
@@ -435,7 +435,9 @@ private fun TypographyNavigationCard(
             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
             fontSize = 11.5.sp,
             letterSpacing = 0.5.sp,
-            color = if (isSelected) AmoledActionPrimary else AmoledTextPrimary
+            color = if (isSelected) AmoledActionPrimary else AmoledTextPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
           )
           Text(
             text = subtitle,
@@ -443,7 +445,8 @@ private fun TypographyNavigationCard(
             fontFamily = InterFontFamily,
             fontSize = 10.sp,
             color = AmoledTextMuted,
-            maxLines = 1
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
           )
         }
       }
@@ -490,7 +493,6 @@ private fun TypographyToolCard(
     border = BorderStroke(1.dp, Color(0xFF1F1F24)),
     modifier = modifier
       .tactilePress(interactionSource)
-      .clip(RoundedCornerShape(10.dp))
       .clickable(
         interactionSource = interactionSource,
         indication = ripple(color = AmoledActionPrimary.copy(alpha = 0.2f)),
@@ -534,7 +536,8 @@ private fun TypographyToolCard(
         fontSize = 11.5.sp,
         fontWeight = FontWeight.SemiBold,
         color = AmoledTextPrimary,
-        maxLines = 1
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
       )
     }
   }

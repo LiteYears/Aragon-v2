@@ -39,6 +39,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -157,43 +158,37 @@ fun AragonFeedButton(
   val borderAnimated by animateColorAsState(targetValue = targetBorder, animationSpec = tween(120), label = "feed_btn_border")
   val textAnimated by animateColorAsState(targetValue = targetText, animationSpec = tween(120), label = "feed_btn_text")
 
-  Box(
-    modifier = Modifier.minimumInteractiveComponentSize(),
-    contentAlignment = Alignment.Center
+  Surface(
+    shape = shape,
+    color = bgAnimated,
+    border = BorderStroke(1.dp, borderAnimated),
+    modifier = modifier
+      .tactilePress(interactionSource)
+      .clickable(
+        interactionSource = interactionSource,
+        indication = ripple(color = AmoledActionPrimary.copy(alpha = 0.25f)),
+        enabled = enabled,
+        role = Role.Button,
+        onClick = onClick
+      )
+      .testTag(testTag)
   ) {
-    Surface(
-      shape = shape,
-      color = bgAnimated,
-      border = BorderStroke(1.dp, borderAnimated),
-      modifier = modifier
-        .tactilePress(interactionSource)
-        .clip(shape)
-        .clickable(
-          interactionSource = interactionSource,
-          indication = ripple(color = AmoledActionPrimary.copy(alpha = 0.25f)),
-          enabled = enabled,
-          role = Role.Button,
-          onClick = onClick
-        )
-        .testTag(testTag)
+    Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier
+        .height(22.dp)
+        .padding(horizontal = 7.dp)
     ) {
-      Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-          .height(24.dp)
-          .padding(horizontal = 7.dp)
-      ) {
-        Text(
-          text = text,
-          style = MaterialTheme.typography.labelSmall,
-          fontFamily = JetBrainsMonoFontFamily,
-          fontWeight = if (isActive || variant == AragonButtonVariant.PRIMARY) FontWeight.Bold else FontWeight.Medium,
-          fontSize = 9.sp,
-          letterSpacing = 0.5.sp,
-          color = textAnimated,
-          maxLines = 1
-        )
-      }
+      Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        fontFamily = JetBrainsMonoFontFamily,
+        fontWeight = if (isActive || variant == AragonButtonVariant.PRIMARY) FontWeight.Bold else FontWeight.Medium,
+        fontSize = 9.sp,
+        letterSpacing = 0.5.sp,
+        color = textAnimated,
+        maxLines = 1
+      )
     }
   }
 }
@@ -235,60 +230,54 @@ fun AragonFeedCopyButton(
   val borderAnimated by animateColorAsState(targetValue = targetBorder, animationSpec = tween(140), label = "copy_border")
   val colorAnimated by animateColorAsState(targetValue = targetColor, animationSpec = tween(140), label = "copy_color")
 
-  Box(
-    modifier = Modifier.minimumInteractiveComponentSize(),
-    contentAlignment = Alignment.Center
-  ) {
-    Surface(
-      shape = shape,
-      color = bgAnimated,
-      border = BorderStroke(1.dp, borderAnimated),
-      modifier = modifier
-        .tactilePress(interactionSource)
-        .clip(shape)
-        .clickable(
-          interactionSource = interactionSource,
-          indication = ripple(color = AmoledStatusSuccess.copy(alpha = 0.3f)),
-          role = Role.Button,
-          onClickLabel = "Copy text"
-        ) {
-          try {
-            val stringToCopy = textProvider?.invoke() ?: textToCopy
-            if (stringToCopy.isNotBlank()) {
-              val safeContent = if (stringToCopy.length > 250_000) {
-                stringToCopy.take(250_000) + "\n\n... [TRUNCATED FOR CLIPBOARD SIZE LIMIT] ..."
-              } else {
-                stringToCopy
-              }
-              clipboardManager.setText(AnnotatedString(safeContent))
-              hasCopied = true
-            }
-          } catch (e: Throwable) {
-            android.util.Log.e("AragonCopyButton", "Failed to copy text", e)
-          }
-        }
-        .testTag(testTag)
-        .semantics {
-          contentDescription = if (hasCopied) "Copied to clipboard" else "Copy $displayLabel"
-        }
-    ) {
-      Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-          .height(24.dp)
-          .padding(horizontal = 7.dp)
+  Surface(
+    shape = shape,
+    color = bgAnimated,
+    border = BorderStroke(1.dp, borderAnimated),
+    modifier = modifier
+      .tactilePress(interactionSource)
+      .clickable(
+        interactionSource = interactionSource,
+        indication = ripple(color = AmoledStatusSuccess.copy(alpha = 0.3f)),
+        role = Role.Button,
+        onClickLabel = "Copy text"
       ) {
-        Text(
-          text = displayLabel,
-          style = MaterialTheme.typography.labelSmall,
-          fontFamily = JetBrainsMonoFontFamily,
-          fontWeight = if (hasCopied) FontWeight.Bold else FontWeight.SemiBold,
-          fontSize = 9.sp,
-          letterSpacing = 0.5.sp,
-          color = colorAnimated,
-          maxLines = 1
-        )
+        try {
+          val stringToCopy = textProvider?.invoke() ?: textToCopy
+          if (stringToCopy.isNotBlank()) {
+            val safeContent = if (stringToCopy.length > 250_000) {
+              stringToCopy.take(250_000) + "\n\n... [TRUNCATED FOR CLIPBOARD SIZE LIMIT] ..."
+            } else {
+              stringToCopy
+            }
+            clipboardManager.setText(AnnotatedString(safeContent))
+            hasCopied = true
+          }
+        } catch (e: Throwable) {
+          android.util.Log.e("AragonCopyButton", "Failed to copy text", e)
+        }
       }
+      .testTag(testTag)
+      .semantics {
+        contentDescription = if (hasCopied) "Copied to clipboard" else "Copy $displayLabel"
+      }
+  ) {
+    Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier
+        .height(22.dp)
+        .padding(horizontal = 7.dp)
+    ) {
+      Text(
+        text = displayLabel,
+        style = MaterialTheme.typography.labelSmall,
+        fontFamily = JetBrainsMonoFontFamily,
+        fontWeight = if (hasCopied) FontWeight.Bold else FontWeight.SemiBold,
+        fontSize = 9.sp,
+        letterSpacing = 0.5.sp,
+        color = colorAnimated,
+        maxLines = 1
+      )
     }
   }
 }
@@ -445,32 +434,27 @@ fun AragonHeaderButton(
     else -> AmoledIconGreyLight
   }
 
-  Box(
-    modifier = Modifier.minimumInteractiveComponentSize(),
-    contentAlignment = Alignment.Center
+  Surface(
+    shape = shape,
+    color = bg,
+    border = BorderStroke(1.dp, border),
+    modifier = modifier
+      .tactilePress(interactionSource)
+      .clickable(
+        interactionSource = interactionSource,
+        indication = ripple(color = textColor.copy(alpha = 0.25f)),
+        enabled = enabled,
+        role = Role.Button,
+        onClick = onClick
+      )
+      .testTag(testTag)
   ) {
-    Surface(
-      shape = shape,
-      color = bg,
-      border = BorderStroke(1.dp, border),
-      modifier = modifier
-        .tactilePress(interactionSource)
-        .clip(shape)
-        .clickable(
-          interactionSource = interactionSource,
-          indication = ripple(color = textColor.copy(alpha = 0.25f)),
-          enabled = enabled,
-          role = Role.Button,
-          onClick = onClick
-        )
-        .testTag(testTag)
+    Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier
+        .height(28.dp)
+        .padding(horizontal = 9.dp)
     ) {
-      Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-          .height(28.dp)
-          .padding(horizontal = 9.dp)
-      ) {
       Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
@@ -482,7 +466,8 @@ fun AragonHeaderButton(
           fontWeight = if (variant == AragonButtonVariant.PRIMARY || variant == AragonButtonVariant.DANGER) FontWeight.Bold else FontWeight.SemiBold,
           fontSize = 10.sp,
           color = textColor,
-          maxLines = 1
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
         )
         if (badge != null) {
           Spacer(modifier = Modifier.width(4.dp))
@@ -504,7 +489,6 @@ fun AragonHeaderButton(
       }
     }
   }
-}
 }
 
 /**
@@ -537,56 +521,51 @@ fun AragonHeaderCopyButton(
   val targetBorder = if (hasCopied) AmoledStatusSuccess.copy(alpha = 0.6f) else AmoledBorderSubtle
   val targetColor = if (hasCopied) AmoledStatusSuccess else AmoledIconGreyLight
 
-  Box(
-    modifier = Modifier.minimumInteractiveComponentSize(),
-    contentAlignment = Alignment.Center
-  ) {
-    Surface(
-      shape = shape,
-      color = targetBg,
-      border = BorderStroke(1.dp, targetBorder),
-      modifier = modifier
-        .tactilePress(interactionSource)
-        .clip(shape)
-        .clickable(
-          interactionSource = interactionSource,
-          indication = ripple(color = AmoledStatusSuccess.copy(alpha = 0.3f)),
-          role = Role.Button,
-          onClickLabel = "Copy log"
-        ) {
-          try {
-            val stringToCopy = textProvider?.invoke() ?: textToCopy
-            if (stringToCopy.isNotBlank()) {
-              val safeContent = if (stringToCopy.length > 250_000) {
-                stringToCopy.take(250_000) + "\n\n... [TRUNCATED FOR CLIPBOARD SIZE LIMIT] ..."
-              } else {
-                stringToCopy
-              }
-              clipboardManager.setText(AnnotatedString(safeContent))
-              hasCopied = true
-            }
-          } catch (e: Throwable) {
-            android.util.Log.e("AragonHeaderCopyButton", "Failed to copy transcript", e)
-          }
-        }
-        .testTag(testTag)
-    ) {
-      Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-          .height(28.dp)
-          .padding(horizontal = 9.dp)
+  Surface(
+    shape = shape,
+    color = targetBg,
+    border = BorderStroke(1.dp, targetBorder),
+    modifier = modifier
+      .tactilePress(interactionSource)
+      .clickable(
+        interactionSource = interactionSource,
+        indication = ripple(color = AmoledStatusSuccess.copy(alpha = 0.3f)),
+        role = Role.Button,
+        onClickLabel = "Copy log"
       ) {
-        Text(
-          text = displayLabel,
-          style = MaterialTheme.typography.labelSmall,
-          fontFamily = JetBrainsMonoFontFamily,
-          fontWeight = if (hasCopied) FontWeight.Bold else FontWeight.SemiBold,
-          fontSize = 10.sp,
-          color = targetColor,
-          maxLines = 1
-        )
+        try {
+          val stringToCopy = textProvider?.invoke() ?: textToCopy
+          if (stringToCopy.isNotBlank()) {
+            val safeContent = if (stringToCopy.length > 250_000) {
+              stringToCopy.take(250_000) + "\n\n... [TRUNCATED FOR CLIPBOARD SIZE LIMIT] ..."
+            } else {
+              stringToCopy
+            }
+            clipboardManager.setText(AnnotatedString(safeContent))
+            hasCopied = true
+          }
+        } catch (e: Throwable) {
+          android.util.Log.e("AragonHeaderCopyButton", "Failed to copy transcript", e)
+        }
       }
+      .testTag(testTag)
+  ) {
+    Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier
+        .height(28.dp)
+        .padding(horizontal = 9.dp)
+    ) {
+      Text(
+        text = displayLabel,
+        style = MaterialTheme.typography.labelSmall,
+        fontFamily = JetBrainsMonoFontFamily,
+        fontWeight = if (hasCopied) FontWeight.Bold else FontWeight.SemiBold,
+        fontSize = 10.sp,
+        color = targetColor,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+      )
     }
   }
 }
@@ -633,42 +612,37 @@ fun AragonActionButton(
     else -> AmoledTextPrimary
   }
 
-  Box(
-    modifier = Modifier.minimumInteractiveComponentSize(),
-    contentAlignment = Alignment.Center
+  Surface(
+    shape = shape,
+    color = bg,
+    border = BorderStroke(1.dp, border),
+    modifier = modifier
+      .tactilePress(interactionSource)
+      .clickable(
+        interactionSource = interactionSource,
+        indication = ripple(color = textColor.copy(alpha = 0.25f)),
+        enabled = enabled,
+        role = Role.Button,
+        onClick = onClick
+      )
+      .testTag(testTag)
   ) {
-    Surface(
-      shape = shape,
-      color = bg,
-      border = BorderStroke(1.dp, border),
-      modifier = modifier
-        .tactilePress(interactionSource)
-        .clip(shape)
-        .clickable(
-          interactionSource = interactionSource,
-          indication = ripple(color = textColor.copy(alpha = 0.25f)),
-          enabled = enabled,
-          role = Role.Button,
-          onClick = onClick
-        )
-        .testTag(testTag)
+    Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier
+        .height(height)
+        .padding(horizontal = 10.dp)
     ) {
-      Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-          .height(height)
-          .padding(horizontal = 10.dp)
-      ) {
-        Text(
-          text = text,
-          style = MaterialTheme.typography.labelSmall,
-          fontFamily = JetBrainsMonoFontFamily,
-          fontWeight = FontWeight.SemiBold,
-          fontSize = 9.5.sp,
-          color = textColor,
-          maxLines = 1
-        )
-      }
+      Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        fontFamily = JetBrainsMonoFontFamily,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 9.5.sp,
+        color = textColor,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+      )
     }
   }
 }

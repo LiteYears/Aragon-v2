@@ -457,7 +457,6 @@ private fun PolicyCard(
     ),
     modifier = Modifier
       .fillMaxWidth()
-      .clip(RoundedCornerShape(10.dp))
       .clickable { onClick() }
   ) {
     Column(modifier = Modifier.padding(12.dp)) {
@@ -807,7 +806,8 @@ private fun TelemetryMetricCard(
         fontSize = 8.sp,
         fontWeight = FontWeight.Bold,
         color = AmoledTextMuted,
-        maxLines = 1
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
       )
       Spacer(modifier = Modifier.height(2.dp))
       Text(
@@ -816,7 +816,8 @@ private fun TelemetryMetricCard(
         fontSize = 11.sp,
         fontWeight = FontWeight.Bold,
         color = AmoledTextPrimary,
-        maxLines = 1
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
       )
     }
   }

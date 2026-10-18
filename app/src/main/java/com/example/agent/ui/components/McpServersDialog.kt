@@ -197,19 +197,28 @@ fun McpServersDialog(
                   fontFamily = JetBrainsMonoFontFamily,
                   fontSize = 12.5.sp,
                   letterSpacing = 0.5.sp,
-                  color = AmoledTextPrimary
+                  color = AmoledTextPrimary,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis
                 )
                 Text(
                   text = "${servers.size} servers · ${discoveredTools.size} tools · ${discoveredResources.size} resources",
                   style = MaterialTheme.typography.labelSmall,
                   fontFamily = InterFontFamily,
                   color = AmoledTextMuted,
-                  fontSize = 10.sp
+                  fontSize = 10.sp,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis
                 )
               }
             }
 
+            Spacer(modifier = Modifier.width(8.dp))
+
             Row(
+              modifier = Modifier
+                .weight(1f, fill = false)
+                .horizontalScroll(rememberScrollState()),
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
