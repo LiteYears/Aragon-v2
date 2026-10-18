@@ -636,11 +636,45 @@ class EnvironmentCapabilityManager(
         recoveryGuidance = "Requires sudo or cap_net_raw privileges. If permission is denied, use curl or python socket probes."
       )
     )
+    register(
+      CapabilityDefinition(
+        id = "sys.lsof",
+        name = "lsof Open Files / Sockets",
+        category = CapabilityCategory.SYSTEM_UTILITIES,
+        description = "List open files, active sockets, and network ports.",
+        strategy = ProvisioningStrategy.SYSTEM_APT,
+        requiredExecutables = listOf("lsof"),
+        requiredSystemPackages = listOf("lsof"),
+        minMemoryMb = 20,
+        minDiskMb = 20,
+        requiresSudo = true,
+        verificationCommand = "lsof -v 2>&1 | head -n 1",
+        recoveryGuidance = "Optional utility. Run 'sudo apt-get install -y lsof' or use /proc/[pid]/fd or 'ss -tulpn'."
+      )
+    )
+    register(
+      CapabilityDefinition(
+        id = "sys.nmap",
+        name = "Nmap Network Scanner",
+        category = CapabilityCategory.SYSTEM_UTILITIES,
+        description = "Network exploration tool and security scanner.",
+        strategy = ProvisioningStrategy.SYSTEM_APT,
+        requiredExecutables = listOf("nmap"),
+        requiredSystemPackages = listOf("nmap"),
+        minMemoryMb = 40,
+        minDiskMb = 50,
+        requiresSudo = true,
+        verificationCommand = "nmap --version 2>&1 | head -n 1",
+        recoveryGuidance = "Optional utility. Run 'sudo apt-get install -y nmap' only if explicitly requested."
+      )
+    )
   }
 
   fun register(definition: CapabilityDefinition) {
     registry[definition.id] = definition
   }
+
+  suspend fun inspectSandbox(sessionId: String): SandboxResourceSnapshot = inspectResources(sessionId)
 
   /**
    * Stage 1: Inspect sandbox OS, architecture, memory, disk, package managers, and virtual environment.
@@ -676,7 +710,7 @@ os_rel = ''
 try:
     with open('/etc/os-release') as f:
         for line in f:
-            if line.startswith('PRETTY_NAME='): os_rel = line.split('=', 1)[1].strip('\"\'\n')
+            if line.startswith('PRETTY_NAME='): os_rel = line.split('=', 1)[1].replace(chr(34), '').replace(chr(39), '').strip()
 except Exception: pass
 
 user = os.environ.get('USER', run('whoami'))

@@ -20,18 +20,27 @@ object PathSecurity {
     if (workspaceDir == null || workspaceDir.path.isBlank()) {
       throw IllegalArgumentException("Missing workspace configuration: workspace directory is not configured.")
     }
+    // Canonicalize path: strip leading and repeated workspace/ or home/user/ aliases
     var clean = path.trim().replace('\\', '/')
-    if (clean == "/home/user" || clean == "/workspace") {
-      clean = "."
-    } else if (clean.startsWith("/home/user/")) {
-      clean = clean.removePrefix("/home/user/")
-    } else if (clean.startsWith("/workspace/")) {
-      clean = clean.removePrefix("/workspace/")
-    } else if (clean == "/tmp") {
-      clean = "tmp"
-    } else if (clean.startsWith("/tmp/")) {
-      clean = "tmp/" + clean.removePrefix("/tmp/")
+    while (clean.startsWith("./")) {
+      clean = clean.removePrefix("./").trim()
     }
+    var changed = true
+    while (changed) {
+      val prev = clean
+      when {
+        clean == "/home/user" || clean == "home/user" || clean == "/workspace" || clean == "workspace" -> clean = "."
+        clean.startsWith("/home/user/") -> clean = clean.removePrefix("/home/user/")
+        clean.startsWith("home/user/") -> clean = clean.removePrefix("home/user/")
+        clean.startsWith("/workspace/") -> clean = clean.removePrefix("/workspace/")
+        clean.startsWith("workspace/") -> clean = clean.removePrefix("workspace/")
+        clean == "/tmp" -> clean = "tmp"
+        clean.startsWith("/tmp/") -> clean = "tmp/" + clean.removePrefix("/tmp/")
+        clean.startsWith("./") -> clean = clean.removePrefix("./")
+      }
+      changed = (clean != prev)
+    }
+    if (clean.isBlank()) clean = "."
 
     val wsCanonical = try {
       workspaceDir.canonicalFile
@@ -72,6 +81,20 @@ object PathSecurity {
     val base = workspaceDir.canonicalFile
     val target = file.canonicalFile
     return if (target == base) "." else target.path.removePrefix(base.path).removePrefix(File.separator)
+  }
+
+  fun isSymbolicLink(file: File): Boolean {
+    return try {
+      java.nio.file.Files.isSymbolicLink(file.toPath())
+    } catch (_: Throwable) {
+      false
+    }
+  }
+
+  fun isProtectedSystemFile(fileName: String): Boolean {
+    val lower = fileName.lowercase()
+    return lower == "data.db" || lower == "data.db-wal" || lower == "data.db-shm" ||
+      lower == "data.db-journal" || lower == ".mcp_data" || lower.startsWith("data.db")
   }
 }
 
@@ -142,7 +165,46 @@ class ListDirectoryTool(
         )
       }
       val sessionId = sessionIdProvider()
-      val cmd = "python3 -c \"import os, json; target = '$pathStr'; (print(json.dumps({'error': 'Directory not found', 'exists': False})) if not os.path.exists(target) else print(json.dumps({'exists': True, 'path': target, 'entries': [{'name': f, 'isDirectory': os.path.isdir(os.path.join(target, f)), 'sizeBytes': os.path.getsize(os.path.join(target, f)) if os.path.isfile(os.path.join(target, f)) else 0} for f in os.listdir(target)]})))\""
+      val resolvedLocal = try { PathSecurity.resolveSafe(workspaceDir, pathStr) } catch (_: Exception) { File(workspaceDir, ".") }
+      val cleanRel = PathSecurity.getRelativePath(workspaceDir, resolvedLocal)
+      val cmd = """
+python3 -c "import os, json, sys
+
+p = '$cleanRel'
+target = '/home/user' if (p == '.' or not p) else (p if os.path.isabs(p) else os.path.join('/home/user', p))
+if not os.path.exists(target):
+    print(json.dumps({'error': 'Directory not found', 'exists': False}))
+    sys.exit(0)
+
+recursive = ${if (recursive) "True" else "False"}
+max_entries = $maxEntries
+entries = []
+
+ignored = {'venv', '.venv', 'node_modules', '__pycache__', '.git', 'workspace'}
+
+if not recursive:
+    for f in sorted(os.listdir(target))[:max_entries]:
+        full = os.path.join(target, f)
+        is_link = os.path.islink(full)
+        is_dir = os.path.isdir(full) and not is_link
+        size = os.path.getsize(full) if (os.path.isfile(full) and not is_link) else 0
+        entries.append({'name': f, 'isDirectory': is_dir, 'isSymlink': is_link, 'sizeBytes': size})
+else:
+    for root, dirs, files in os.walk(target, followlinks=False):
+        dirs[:] = [d for d in dirs if d not in ignored and not d.startswith('.') and not os.path.islink(os.path.join(root, d))]
+        for f in files:
+            if f.startswith('.'): continue
+            full = os.path.join(root, f)
+            is_link = os.path.islink(full)
+            rel = os.path.relpath(full, target)
+            size = os.path.getsize(full) if (os.path.isfile(full) and not is_link) else 0
+            entries.append({'name': rel, 'isDirectory': False, 'isSymlink': is_link, 'sizeBytes': size})
+            if len(entries) >= max_entries: break
+        if len(entries) >= max_entries: break
+
+print(json.dumps({'exists': True, 'path': target, 'entries': entries}))
+"
+""".trimIndent()
       val req = RunCommandRequest.builder().command(cmd).timeout(java.time.Duration.ofSeconds(15)).build()
       val exec = provider.executeCommand(sessionId, req)
       val duration = System.currentTimeMillis() - startTime
@@ -287,8 +349,9 @@ class ReadFileTool(
 
       try {
         // Authoritative read from the E2B microVM (/home/user)
-        val cleanPath = pathStr.removePrefix("./").removePrefix("/")
-        val cmd = "python3 -c \"import os, sys; p = '$cleanPath'; sys.exit(2) if not os.path.exists(p) else None; lines = open(p, 'r', errors='replace').readlines(); start = max(0, $offset - 1); [sys.stdout.write(f'{i}: {line}') for i, line in enumerate(lines[start:start+${limit ?: 500}], start=start+1)]\""
+        val resolved = PathSecurity.resolveSafe(workspaceDir, pathStr)
+        val cleanPath = PathSecurity.getRelativePath(workspaceDir, resolved)
+        val cmd = "python3 -c \"import os, sys; p = '$cleanPath'; target = p if os.path.isabs(p) else os.path.join('/home/user', p); (sys.exit(3) if (os.path.islink(target) and not os.path.realpath(target).startswith('/home/user')) else None) if os.path.islink(target) else None; sys.exit(2) if not os.path.exists(target) else None; lines = open(target, 'r', errors='replace').readlines(); start = max(0, $offset - 1); [sys.stdout.write(f'{i}: {line}') for i, line in enumerate(lines[start:start+${limit ?: 500}], start=start+1)]\""
         val req = RunCommandRequest.builder().command(cmd).timeout(java.time.Duration.ofSeconds(15)).build()
         val exec = provider.executeCommand(sessionId, req)
         val duration = System.currentTimeMillis() - startTime
@@ -1744,6 +1807,19 @@ class DeleteFileTool(
             exitCode = 1
           )
         }
+        if (PathSecurity.isProtectedSystemFile(file.name)) {
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.FAILED,
+            arguments = arguments,
+            output = null,
+            error = "Protected database file '${file.name}' cannot be deleted via workspace tools.",
+            errorType = ToolErrorCode.PERMISSION_DENIED,
+            duration = System.currentTimeMillis() - startTime,
+            exitCode = 1
+          )
+        }
         if (file.isDirectory) {
           return@withContext ToolResult(
             callId = callId,
@@ -1870,6 +1946,51 @@ class MoveFileTool(
           )
         }
 
+        val srcCanonical = srcFile.canonicalFile
+        val dstCanonical = dstFile.canonicalFile
+
+        if (srcCanonical == dstCanonical) {
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.FAILED,
+            arguments = arguments,
+            output = null,
+            error = "Source and destination resolve to the identical path: '$src'",
+            errorType = ToolErrorCode.INVALID_ARGUMENTS,
+            duration = System.currentTimeMillis() - startTime,
+            exitCode = 1
+          )
+        }
+
+        if (srcCanonical.isDirectory && (dstCanonical.path == srcCanonical.path || dstCanonical.path.startsWith(srcCanonical.path + File.separator))) {
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.FAILED,
+            arguments = arguments,
+            output = null,
+            error = "Recursion error: Cannot move directory into itself or its descendant subdirectory ('$src' -> '$dst').",
+            errorType = ToolErrorCode.PATH_NOT_ALLOWED,
+            duration = System.currentTimeMillis() - startTime,
+            exitCode = 1
+          )
+        }
+
+        if (PathSecurity.isProtectedSystemFile(srcCanonical.name)) {
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.FAILED,
+            arguments = arguments,
+            output = null,
+            error = "Protected database file '${srcCanonical.name}' cannot be moved.",
+            errorType = ToolErrorCode.PERMISSION_DENIED,
+            duration = System.currentTimeMillis() - startTime,
+            exitCode = 1
+          )
+        }
+
         dstFile.parentFile?.mkdirs()
         val success = srcFile.renameTo(dstFile)
         if (!success) {
@@ -1971,6 +2092,51 @@ class CopyFileTool(
             output = null,
             error = "Source '$src' does not exist.",
             errorType = ToolErrorCode.SANDBOX_ERROR,
+            duration = System.currentTimeMillis() - startTime,
+            exitCode = 1
+          )
+        }
+
+        val srcCanonical = srcFile.canonicalFile
+        val dstCanonical = dstFile.canonicalFile
+
+        if (srcCanonical == dstCanonical) {
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.FAILED,
+            arguments = arguments,
+            output = null,
+            error = "Source and destination resolve to the identical path: '$src'",
+            errorType = ToolErrorCode.INVALID_ARGUMENTS,
+            duration = System.currentTimeMillis() - startTime,
+            exitCode = 1
+          )
+        }
+
+        if (srcCanonical.isDirectory && (dstCanonical.path == srcCanonical.path || dstCanonical.path.startsWith(srcCanonical.path + File.separator))) {
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.FAILED,
+            arguments = arguments,
+            output = null,
+            error = "Recursion error: Cannot copy directory into itself or its descendant subdirectory ('$src' -> '$dst').",
+            errorType = ToolErrorCode.PATH_NOT_ALLOWED,
+            duration = System.currentTimeMillis() - startTime,
+            exitCode = 1
+          )
+        }
+
+        if (PathSecurity.isProtectedSystemFile(srcCanonical.name)) {
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.FAILED,
+            arguments = arguments,
+            output = null,
+            error = "Protected database file '${srcCanonical.name}' cannot be copied directly.",
+            errorType = ToolErrorCode.PERMISSION_DENIED,
             duration = System.currentTimeMillis() - startTime,
             exitCode = 1
           )
@@ -2135,6 +2301,32 @@ class DeleteDirectoryTool(
 
       try {
         val dir = PathSecurity.resolveSafe(workspaceDir, pathStr)
+        if (dir.canonicalFile == workspaceDir.canonicalFile) {
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.FAILED,
+            arguments = arguments,
+            output = null,
+            error = "Cannot delete the sandbox workspace root directory. Specify a subdirectory within the workspace.",
+            errorType = ToolErrorCode.PERMISSION_DENIED,
+            duration = System.currentTimeMillis() - startTime,
+            exitCode = 1
+          )
+        }
+        if (PathSecurity.isProtectedSystemFile(dir.name)) {
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.FAILED,
+            arguments = arguments,
+            output = null,
+            error = "Protected system directory '${dir.name}' cannot be deleted.",
+            errorType = ToolErrorCode.PERMISSION_DENIED,
+            duration = System.currentTimeMillis() - startTime,
+            exitCode = 1
+          )
+        }
         if (!dir.exists()) {
           return@withContext ToolResult(
             callId = callId,

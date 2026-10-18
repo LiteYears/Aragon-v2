@@ -120,6 +120,8 @@ data class E2BDiagnosticReport(
   val timeoutState: Boolean,
   val providerErrorDetails: String? = null,
   val isAuthenticE2B: Boolean,
+  val remoteMemTotalMb: Int = 0,
+  val remoteMemAvailMb: Int = 0,
   val timestamp: Long = System.currentTimeMillis()
 ) {
   fun toFormattedAuditText(): String {
@@ -140,6 +142,14 @@ data class E2BDiagnosticReport(
       appendLine("Working Directory: $workingDir")
       appendLine("Operating System: $osRelease")
       appendLine("Kernel: $kernel")
+      if (remoteMemTotalMb > 0) {
+        appendLine("MicroVM System RAM: Available ${remoteMemAvailMb}MB / Total ${remoteMemTotalMb}MB")
+      }
+      val rt = Runtime.getRuntime()
+      val usedHeap = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024)
+      val committedHeap = rt.totalMemory() / (1024 * 1024)
+      val maxHeap = rt.maxMemory() / (1024 * 1024)
+      appendLine("Android Client App Heap: Used ${usedHeap}MB / Committed ${committedHeap}MB / Max ${maxHeap}MB (Local ART, distinct from MicroVM RAM)")
       appendLine("Diagnostic Marker: $diagnosticMarker")
       appendLine("Marker Written: $markerWritten")
       appendLine("Marker Read Back: $markerReadBack")
@@ -1028,10 +1038,32 @@ class E2BSandboxProvider(
 
   /**
    * Pushes a local workspace file up into the active E2B MicroVM (/home/user/$relPath).
+   * Strips repeated workspace/ prefixes and protects active SQLite databases.
    */
   override suspend fun pushFileToRemote(sessionId: String, relPath: String, file: File): Boolean {
     if (!file.exists() || !file.isFile) return false
-    val cleanRelPath = relPath.trim().removePrefix("./")
+    val lowerName = file.name.lowercase()
+    if (lowerName == "data.db" || lowerName.endsWith(".db") || lowerName.endsWith(".db-wal") || lowerName.endsWith(".db-shm") || lowerName.endsWith(".db-journal")) {
+      // Do not push SQLite databases into the microVM to avoid corrupting active connections
+      return false
+    }
+
+    var cleanRelPath = relPath.trim().replace('\\', '/')
+    while (cleanRelPath.startsWith("./")) cleanRelPath = cleanRelPath.removePrefix("./").trim()
+    var changed = true
+    while (changed) {
+      val prev = cleanRelPath
+      when {
+        cleanRelPath.startsWith("/home/user/") -> cleanRelPath = cleanRelPath.removePrefix("/home/user/")
+        cleanRelPath.startsWith("home/user/") -> cleanRelPath = cleanRelPath.removePrefix("home/user/")
+        cleanRelPath.startsWith("/workspace/") -> cleanRelPath = cleanRelPath.removePrefix("/workspace/")
+        cleanRelPath.startsWith("workspace/") -> cleanRelPath = cleanRelPath.removePrefix("workspace/")
+        cleanRelPath.startsWith("/") -> cleanRelPath = cleanRelPath.removePrefix("/")
+      }
+      changed = (cleanRelPath != prev)
+    }
+    if (cleanRelPath.isBlank()) cleanRelPath = file.name
+
     return try {
       val fileBytes = file.readBytes()
       val chunkSize = 40 * 1024 // 40KB chunk -> ~54KB base64, comfortably below Linux ARG_MAX
@@ -1050,9 +1082,7 @@ class E2BSandboxProvider(
         val exec = executeCommand(sessionId, req)
         if (exec.exitCode != 0) return false
       }
-      // Also ensure symlinked or copied into /home/user/workspace/ so paths in both /home/user and workspace resolve immediately
-      val linkCmd = "python3 -c \"import os; os.makedirs('/home/user/workspace', exist_ok=True); p = '$cleanRelPath'; src = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('/')); rel = os.path.relpath(src, '/home/user') if src.startswith('/home/user/') else os.path.basename(src); dst = os.path.join('/home/user/workspace', rel); os.makedirs(os.path.dirname(dst), exist_ok=True); (os.path.exists(dst) or os.symlink(src, dst)) if src != dst and not os.path.exists(dst) else None\""
-      executeCommand(sessionId, RunCommandRequest.builder().command(linkCmd).timeout(java.time.Duration.ofSeconds(10)).build())
+      // Note: We deliberately do NOT create recursive symlinks or duplicate directories into /home/user/workspace/
       true
     } catch (_: Exception) {
       false
@@ -1060,10 +1090,22 @@ class E2BSandboxProvider(
   }
 
   override suspend fun pullFileFromRemote(sessionId: String, remotePath: String, destFile: File): Boolean {
-    val cleanPath = remotePath.trim()
+    var cleanPath = remotePath.trim().replace('\\', '/')
+    while (cleanPath.startsWith("./")) cleanPath = cleanPath.removePrefix("./").trim()
+    var changed = true
+    while (changed) {
+      val prev = cleanPath
+      when {
+        cleanPath.startsWith("/home/user/") -> cleanPath = cleanPath.removePrefix("/home/user/")
+        cleanPath.startsWith("home/user/") -> cleanPath = cleanPath.removePrefix("home/user/")
+        cleanPath.startsWith("/workspace/") -> cleanPath = cleanPath.removePrefix("/workspace/")
+        cleanPath.startsWith("workspace/") -> cleanPath = cleanPath.removePrefix("workspace/")
+      }
+      changed = (cleanPath != prev)
+    }
     if (cleanPath.isBlank()) return false
     return try {
-      val pullCmd = "python3 -c \"import os, base64; p = '$cleanPath'; target = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('./').removeprefix('/')); (not os.path.exists(target) and os.path.exists(os.path.join('/home/user/workspace', p.removeprefix('./').removeprefix('/')))) and (target := os.path.join('/home/user/workspace', p.removeprefix('./').removeprefix('/'))); print(base64.b64encode(open(target, 'rb').read()).decode('ascii') if os.path.exists(target) and os.path.isfile(target) else 'FILE_NOT_FOUND')\""
+      val pullCmd = "python3 -c \"import os, base64; p = '$cleanPath'; target = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('/')); print(base64.b64encode(open(target, 'rb').read()).decode('ascii') if (os.path.exists(target) and os.path.isfile(target) and not os.path.islink(target)) else 'FILE_NOT_FOUND')\""
       val req = RunCommandRequest.builder()
         .command(pullCmd)
         .timeout(java.time.Duration.ofSeconds(15))
@@ -1084,10 +1126,22 @@ class E2BSandboxProvider(
   }
 
   override suspend fun fileExistsInRemote(sessionId: String, remotePath: String): Boolean {
-    val cleanPath = remotePath.trim()
+    var cleanPath = remotePath.trim().replace('\\', '/')
+    while (cleanPath.startsWith("./")) cleanPath = cleanPath.removePrefix("./").trim()
+    var changed = true
+    while (changed) {
+      val prev = cleanPath
+      when {
+        cleanPath.startsWith("/home/user/") -> cleanPath = cleanPath.removePrefix("/home/user/")
+        cleanPath.startsWith("home/user/") -> cleanPath = cleanPath.removePrefix("home/user/")
+        cleanPath.startsWith("/workspace/") -> cleanPath = cleanPath.removePrefix("/workspace/")
+        cleanPath.startsWith("workspace/") -> cleanPath = cleanPath.removePrefix("workspace/")
+      }
+      changed = (cleanPath != prev)
+    }
     if (cleanPath.isBlank()) return false
     return try {
-      val checkCmd = "python3 -c \"import os, sys; p = '$cleanPath'; target = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('./').removeprefix('/')); (not os.path.exists(target) and os.path.exists(os.path.join('/home/user/workspace', p.removeprefix('./').removeprefix('/')))) and (target := os.path.join('/home/user/workspace', p.removeprefix('./').removeprefix('/'))); sys.exit(0 if os.path.exists(target) else 1)\""
+      val checkCmd = "python3 -c \"import os, sys; p = '$cleanPath'; target = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('/')); sys.exit(0 if os.path.exists(target) else 1)\""
       val req = RunCommandRequest.builder()
         .command(checkCmd)
         .timeout(java.time.Duration.ofSeconds(10))
@@ -1102,6 +1156,7 @@ class E2BSandboxProvider(
   /**
    * Synchronizes files generated in the E2B microVM with Aragon's local workspace storage.
    * Discovers newly created deliverable files atomically, decodes and persists them.
+   * Prevents recursion into 'workspace', ignores symlinks to outside roots, and protects SQLite databases.
    */
   override suspend fun syncArtifacts(sessionId: String, targetDir: File, taskId: String?): List<Artifact> {
     targetDir.mkdirs()
@@ -1114,19 +1169,45 @@ class E2BSandboxProvider(
       if (effectiveKey.isNotBlank() && effectiveKey != "MY_E2B_API_KEY") {
         try {
           // Fast, atomic discovery script returning JSON map of relative path -> base64 content
+          // Recursion & symlink isolated: strictly avoids traversing 'workspace', 'venv', '.git', etc.
+          // Never reads active database files (*.db, *.db-wal, *.db-shm, *.db-journal).
           val discoveryCmd = """
 python3 -c "import os, json, base64
+
 res = {}
-for root, _, files in os.walk('/home/user'):
+root_base = '/home/user'
+ignored_dirs = {'workspace', 'bin', 'lib', 'tmp', '__pycache__', 'node_modules', 'venv', '.venv', '.git', '.cache', '.config', '.local'}
+ignored_exts = {'.db', '.db-wal', '.db-shm', '.db-journal', '.pyc', '.so', '.a'}
+ignored_files = {'data.db', 'data.db-wal', 'data.db-shm', 'data.db-journal'}
+
+for root, dirs, files in os.walk(root_base, followlinks=False):
+    dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.startswith('.') and not os.path.islink(os.path.join(root, d))]
     for f in files:
-        if not f.startswith('.') and not any(p in root for p in ['/bin', '/lib', '/tmp', '/.', '__pycache__', 'node_modules', 'venv', '.venv']):
-            full = os.path.join(root, f)
-            p = os.path.relpath(full, '/home/user')
+        if f.startswith('.') or f in ignored_files:
+            continue
+        _, ext = os.path.splitext(f)
+        if ext.lower() in ignored_exts:
+            continue
+        full = os.path.join(root, f)
+        if os.path.islink(full):
             try:
-                if os.path.isfile(full) and os.path.getsize(full) < 10000000:
-                    with open(full, 'rb') as fp:
-                        res[p] = base64.b64encode(fp.read()).decode('ascii')
-            except Exception: pass
+                target_real = os.path.realpath(full)
+                if not target_real.startswith(root_base + '/') and target_real != root_base:
+                    continue
+                if not os.path.isfile(target_real):
+                    continue
+            except Exception:
+                continue
+        try:
+            if os.path.isfile(full) and not os.path.islink(full) and os.path.getsize(full) < 10000000:
+                p = os.path.relpath(full, root_base)
+                while p.startswith('workspace/'):
+                    p = p[len('workspace/'):]
+                with open(full, 'rb') as fp:
+                    res[p] = base64.b64encode(fp.read()).decode('ascii')
+        except Exception:
+            pass
+
 print('___ARAGON_SYNC_START___' + json.dumps(res) + '___ARAGON_SYNC_END___')
 "
           """.trimIndent()
@@ -1142,16 +1223,24 @@ print('___ARAGON_SYNC_START___' + json.dumps(res) + '___ARAGON_SYNC_END___')
             val jsonStr = out.substringAfter("___ARAGON_SYNC_START___").substringBefore("___ARAGON_SYNC_END___")
             val jsonMap = JSONObject(jsonStr)
             val keys = jsonMap.keys()
+            val wsCanonical = targetDir.canonicalFile
+            val wsPrefix = if (wsCanonical.path.endsWith(File.separator)) wsCanonical.path else wsCanonical.path + File.separator
+
             while (keys.hasNext()) {
               val relPath = keys.next()
+              if (relPath.startsWith("data.db") || relPath.endsWith(".db") || relPath.endsWith(".db-wal") || relPath.endsWith(".db-shm") || relPath.endsWith(".db-journal")) {
+                continue
+              }
               val b64 = jsonMap.optString(relPath, "")
               if (b64.isNotBlank()) {
-                val destFile = File(targetDir, relPath)
-                destFile.parentFile?.mkdirs()
-                try {
-                  val bytes = java.util.Base64.getDecoder().decode(b64)
-                  destFile.writeBytes(bytes)
-                } catch (_: Exception) {}
+                val destFile = PathSecurity.resolveSafe(targetDir, relPath)
+                if (destFile.canonicalFile.path.startsWith(wsPrefix) || destFile.canonicalFile == wsCanonical) {
+                  destFile.parentFile?.mkdirs()
+                  try {
+                    val bytes = java.util.Base64.getDecoder().decode(b64)
+                    destFile.writeBytes(bytes)
+                  } catch (_: Exception) {}
+                }
               }
             }
           }
@@ -1245,8 +1334,8 @@ print('___ARAGON_SYNC_START___' + json.dumps(res) + '___ARAGON_SYNC_END___')
       )
     }
 
-    // 2. Harmless Identity Probe command execution
-    val probeCmd = "echo -n 'USER='; whoami; echo -n 'UID='; id -u; echo -n 'HOST='; hostname; echo -n 'PWD='; pwd; echo -n 'UNAME='; uname -srm; if [ -f /etc/os-release ]; then grep -E '^(PRETTY_NAME|ID)=' /etc/os-release; fi"
+    // 2. Harmless Identity Probe command execution with memory inspection
+    val probeCmd = "echo -n 'USER='; whoami; echo -n 'UID='; id -u; echo -n 'HOST='; hostname; echo -n 'PWD='; pwd; echo -n 'UNAME='; uname -srm; if [ -f /etc/os-release ]; then grep -E '^(PRETTY_NAME|ID)=' /etc/os-release; fi; if [ -f /proc/meminfo ]; then echo -n 'MEM_TOTAL='; grep MemTotal /proc/meminfo | awk '{print \$2}'; echo -n 'MEM_AVAIL='; grep MemAvailable /proc/meminfo | awk '{print \$2}'; fi"
     val probeReq = RunCommandRequest.builder()
       .command(probeCmd)
       .timeout(java.time.Duration.ofSeconds(15))
@@ -1262,6 +1351,8 @@ print('___ARAGON_SYNC_START___' + json.dumps(res) + '___ARAGON_SYNC_END___')
     var parsedPwd = "unknown"
     var parsedKernel = "unknown"
     var parsedOs = "unknown"
+    var parsedMemTotal = 0
+    var parsedMemAvail = 0
 
     for (line in probeOut.lines()) {
       when {
@@ -1270,6 +1361,14 @@ print('___ARAGON_SYNC_START___' + json.dumps(res) + '___ARAGON_SYNC_END___')
         line.startsWith("PWD=") -> parsedPwd = line.removePrefix("PWD=").trim()
         line.startsWith("UNAME=") -> parsedKernel = line.removePrefix("UNAME=").trim()
         line.startsWith("PRETTY_NAME=") -> parsedOs = line.removePrefix("PRETTY_NAME=").removeSurrounding("\"").trim()
+        line.startsWith("MEM_TOTAL=") -> {
+          val kb = line.removePrefix("MEM_TOTAL=").trim().toLongOrNull() ?: 0L
+          parsedMemTotal = (kb / 1024).toInt()
+        }
+        line.startsWith("MEM_AVAIL=") -> {
+          val kb = line.removePrefix("MEM_AVAIL=").trim().toLongOrNull() ?: 0L
+          parsedMemAvail = (kb / 1024).toInt()
+        }
       }
     }
 
@@ -1329,7 +1428,9 @@ print('___ARAGON_SYNC_START___' + json.dumps(res) + '___ARAGON_SYNC_END___')
       durationMs = System.currentTimeMillis() - t0,
       timeoutState = probeExit == -1,
       providerErrorDetails = if (probeExit != 0) probeErr else null,
-      isAuthenticE2B = isAuthenticE2B
+      isAuthenticE2B = isAuthenticE2B,
+      remoteMemTotalMb = parsedMemTotal,
+      remoteMemAvailMb = parsedMemAvail
     )
   }
 

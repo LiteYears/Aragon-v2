@@ -297,7 +297,13 @@ class TerminalTool(
         }
         if (errorType != null) {
           put("errorType", errorType.code)
-          put("recoveryHint", errorType.recoveryHint)
+          val hint = if (errorType == ToolErrorCode.COMMAND_NOT_FOUND) {
+            val missing = structuredError?.metadata?.get("missing_binary") ?: "command"
+            "Command '$missing' is not installed in the E2B microVM. Check available tools with 'check_tools' or provision it with 'environment_capability' if supported."
+          } else {
+            errorType.recoveryHint
+          }
+          put("recoveryHint", hint)
         }
         if (structuredError != null) {
           put("classifiedError", structuredError.errorClass.code)

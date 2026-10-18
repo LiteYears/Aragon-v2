@@ -123,19 +123,33 @@ class ArtifactManager(
     }
     toRemove.forEach { registeredArtifacts.remove(it) }
 
-    // Scan directory for valid deliverable files, ignoring internal/session metadata
+    // Scan directory for valid deliverable files, ignoring internal/session metadata and active databases
     workspaceDir.walkTopDown()
       .maxDepth(5)
       .filter { file ->
+        val name = file.name.lowercase()
+        val parentName = file.parentFile?.name.orEmpty().lowercase()
+        val isLink = try { java.nio.file.Files.isSymbolicLink(file.toPath()) } catch (_: Throwable) { false }
         file.isFile &&
-          !file.name.startsWith(".tmp_") &&
-          !file.name.startsWith(".e2b_session") &&
-          !file.name.startsWith(".sessions") &&
-          !file.name.startsWith(".git") &&
-          file.parentFile?.name != ".git" &&
-          file.parentFile?.name != ".sessions" &&
-          file.parentFile?.name != "bin" &&
-          file.parentFile?.name != "tmp"
+          !isLink &&
+          !name.startsWith(".tmp_") &&
+          !name.startsWith(".e2b_session") &&
+          !name.startsWith(".sessions") &&
+          !name.startsWith(".git") &&
+          !name.endsWith(".db") &&
+          !name.endsWith(".db-wal") &&
+          !name.endsWith(".db-shm") &&
+          !name.endsWith(".db-journal") &&
+          name != "data.db" &&
+          parentName != ".git" &&
+          parentName != ".sessions" &&
+          parentName != ".mcp_data" &&
+          parentName != "workspace" &&
+          parentName != "venv" &&
+          parentName != ".venv" &&
+          parentName != "node_modules" &&
+          parentName != "bin" &&
+          parentName != "tmp"
       }
       .forEach { file ->
         val rel = getRelativePath(file)
@@ -215,7 +229,12 @@ class ArtifactManager(
     registeredArtifacts.clear()
     if (workspaceDir.exists()) {
       workspaceDir.listFiles()?.forEach { file ->
-        if (file.name != "bin" && file.name != "tmp" && file.name != "lib" && !file.name.startsWith(".e2b_session") && !file.name.startsWith(".sessions")) {
+        val name = file.name.lowercase()
+        val isProtected = name == "bin" || name == "tmp" || name == "lib" ||
+          name.startsWith(".e2b_session") || name.startsWith(".sessions") ||
+          name == "data.db" || name.startsWith("data.db-") || name == ".mcp_data" ||
+          name.endsWith(".db") || name.endsWith(".db-wal") || name.endsWith(".db-shm") || name.endsWith(".db-journal")
+        if (!isProtected) {
           file.deleteRecursively()
         }
       }

@@ -2453,14 +2453,29 @@ class InternalMcpTransport(
     when (name) {
       "get_system_info" -> {
         val runtime = Runtime.getRuntime()
+        val heapUsedMb = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
+        val heapCommittedMb = runtime.totalMemory() / (1024 * 1024)
+        val heapMaxMb = runtime.maxMemory() / (1024 * 1024)
+        val heapFreeInCommittedMb = runtime.freeMemory() / (1024 * 1024)
+
         val info = JSONObject().apply {
+          put("environment_scope", "android_client_process")
+          put("note", "JVM metrics reflect the local Android client application ART heap, NOT the remote E2B microVM runtime.")
           put("os_version", "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
           put("device_model", "${Build.MANUFACTURER} ${Build.MODEL}")
           put("cpu_cores", runtime.availableProcessors())
-          put("jvm_free_memory_mb", runtime.freeMemory() / (1024 * 1024))
-          put("jvm_total_memory_mb", runtime.totalMemory() / (1024 * 1024))
-          put("jvm_max_memory_mb", runtime.maxMemory() / (1024 * 1024))
           put("active_threads", Thread.activeCount())
+          put("android_client_jvm_heap", JSONObject().apply {
+            put("heap_used_mb", heapUsedMb)
+            put("heap_committed_mb", heapCommittedMb)
+            put("heap_max_mb", heapMaxMb)
+            put("heap_free_in_committed_mb", heapFreeInCommittedMb)
+          })
+          put("jvm_used_memory_mb", heapUsedMb)
+          put("jvm_committed_memory_mb", heapCommittedMb)
+          put("jvm_free_memory_mb", heapFreeInCommittedMb)
+          put("jvm_total_memory_mb", heapCommittedMb)
+          put("jvm_max_memory_mb", heapMaxMb)
         }
         return buildToolSuccessResult(info.toString(2))
       }
@@ -2468,14 +2483,34 @@ class InternalMcpTransport(
         var fileCount = 0
         var dirCount = 0
         var totalBytes = 0L
-        workspaceDir.walkTopDown().forEach { f ->
-          if (f.isFile) {
-            fileCount++
-            totalBytes += f.length()
-          } else if (f.isDirectory && f != workspaceDir) {
-            dirCount++
+        val visited = mutableSetOf<String>()
+        val maxDepth = 10
+
+        fun safeWalk(dir: File, currentDepth: Int) {
+          if (currentDepth > maxDepth) return
+          val canonicalPath = try { dir.canonicalPath } catch (_: Exception) { dir.absolutePath }
+          if (!visited.add(canonicalPath)) return // Prevent circular traversal loops
+
+          dir.listFiles()?.forEach { f ->
+            val isLink = try { java.nio.file.Files.isSymbolicLink(f.toPath()) } catch (_: Throwable) { false }
+            if (!isLink) {
+              if (f.isFile) {
+                val fname = f.name.lowercase()
+                if (fname != "data.db" && !fname.startsWith("data.db-") && !fname.endsWith(".db") && !fname.endsWith(".db-journal")) {
+                  fileCount++
+                  totalBytes += f.length()
+                }
+              } else if (f.isDirectory && f.name != ".git" && f.name != ".sessions" && f.name != ".mcp_data" && f.name != "workspace") {
+                dirCount++
+                safeWalk(f, currentDepth + 1)
+              }
+            }
           }
         }
+        if (workspaceDir.exists()) {
+          safeWalk(workspaceDir, 0)
+        }
+
         val summary = JSONObject().apply {
           put("workspace_path", workspaceDir.absolutePath)
           put("total_files", fileCount)

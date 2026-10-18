@@ -1,6 +1,5 @@
 package com.example.agent.core
 
-import com.alibaba.opensandbox.sandbox.domain.models.execd.executions.CommandStatus
 import com.alibaba.opensandbox.sandbox.domain.models.execd.executions.RunCommandRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -796,7 +795,7 @@ class E2BCapabilitySmokeSuite(
     }
 
     val freshSessionId = "fresh_recovery_" + UUID.randomUUID().toString().take(6)
-    val baseline = capabilityManager.inspectSandbox(freshSessionId)
+    val baseline = capabilityManager.inspectResources(freshSessionId)
 
     return if (baseline.totalMemoryMb > 0 && baseline.pythonVersion.isNotBlank()) {
       ScenarioResult(
@@ -825,16 +824,16 @@ class E2BCapabilitySmokeSuite(
   private suspend fun runRawCommand(sessionId: String, cmd: String, timeoutSec: Long = 30): Pair<Int, String> {
     val provider = sandboxProvider ?: return Pair(-1, "SandboxProvider is null")
     return try {
-      val req = RunCommandRequest(
-        command = cmd,
-        cwd = "/home/user",
-        timeout = Duration.ofSeconds(timeoutSec)
-      )
+      val req = RunCommandRequest.builder()
+        .command(cmd)
+        .workingDirectory("/home/user")
+        .timeout(Duration.ofSeconds(timeoutSec))
+        .build()
       val execution = provider.executeCommand(sessionId, req)
-      val stdout = execution.messages.filter { it.type == "stdout" }.joinToString("\n") { it.content }
-      val stderr = execution.messages.filter { it.type == "stderr" }.joinToString("\n") { it.content }
+      val stdout = execution.stdoutText()
+      val stderr = execution.stderrText()
       val combined = if (stdout.isNotBlank()) stdout else stderr
-      val code = execution.exitCode ?: if (execution.status == CommandStatus.COMPLETED) 0 else 1
+      val code = execution.exitCode ?: if (execution.error == null) 0 else 1
       Pair(code, combined)
     } catch (e: Exception) {
       Pair(-1, "Exception: ${e.message}")
