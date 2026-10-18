@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -90,6 +91,18 @@ fun ExecutionFeedItem(
 
   val isActive = !step.isCompleted || step.toolStatus == ToolStatus.RUNNING.name
 
+  if (isObjective) {
+    Box(
+      modifier = modifier
+        .fillMaxWidth()
+        .testTag("step_item_${step.stepNumber}")
+        .padding(horizontal = 14.dp, vertical = 6.dp)
+    ) {
+      TaskObjectiveView(step = step)
+    }
+    return
+  }
+
   Row(
     modifier = modifier
       .fillMaxWidth()
@@ -138,9 +151,6 @@ fun ExecutionFeedItem(
             step = step,
             isActive = isActive
           )
-        }
-        isObjective -> {
-          TaskObjectiveView(step = step)
         }
         else -> {
           ObservationStepView(step = step)
@@ -520,63 +530,54 @@ fun ToolCallBoxView(
   }
 }
 
-/**
- * Task Objective View:
- * Renders the user-assigned task goal with [TASK] badge and [COPY] on the RIGHT.
- */
 @Composable
 fun TaskObjectiveView(step: ExecutionStep) {
-  Surface(
-    shape = RoundedCornerShape(10.dp),
-    color = Color(0xFF141414),
-    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
-    modifier = Modifier.fillMaxWidth()
+  Box(
+    modifier = Modifier.fillMaxWidth(),
+    contentAlignment = Alignment.CenterEnd
   ) {
-    Column(modifier = Modifier.padding(10.dp)) {
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        Text(
-          text = "USER OBJECTIVE",
-          style = MaterialTheme.typography.labelSmall,
-          fontFamily = JetBrainsMonoFontFamily,
-          fontWeight = FontWeight.Bold,
-          fontSize = 9.sp,
-          letterSpacing = 1.sp,
-          color = AmoledActionPrimary
-        )
-
-        // BADGE AND ACTIONS ON THE RIGHT
+    Surface(
+      shape = RoundedCornerShape(16.dp),
+      color = Color(0xFF1E1E24),
+      border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2E2E38)),
+      modifier = Modifier
+        .widthIn(max = 560.dp)
+        .testTag("task_objective_bubble")
+    ) {
+      Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
         Row(
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(6.dp)
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
         ) {
-          AragonStepBadge(
-            stepNumber = step.stepNumber,
-            type = step.type,
-            toolStatus = step.toolStatus,
-            isActive = false
+          Text(
+            text = "YOU",
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = JetBrainsMonoFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 9.sp,
+            color = AmoledTextMuted
           )
 
           AragonFeedCopyButton(
             textToCopy = step.content,
             label = "COPY",
-            testTag = "copy_task_objective"
+            tint = AmoledIconGreyDark,
+            testTag = "copy_task_objective_${step.stepNumber}"
           )
         }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Text(
+          text = step.content,
+          style = MaterialTheme.typography.bodyMedium,
+          fontFamily = InterFontFamily,
+          color = AmoledTextPrimary,
+          fontSize = 14.sp,
+          lineHeight = 20.sp
+        )
       }
-
-      Spacer(modifier = Modifier.height(4.dp))
-
-      Text(
-        text = step.content,
-        style = MaterialTheme.typography.bodyMedium,
-        fontFamily = InterFontFamily,
-        color = AmoledTextPrimary,
-        lineHeight = 18.sp
-      )
     }
   }
 }
@@ -965,24 +966,50 @@ fun StreamingTextContent(
   isCompleted: Boolean,
   modifier: Modifier = Modifier
 ) {
-  var displayedCharCount by remember(fullText, isCompleted) {
-    mutableIntStateOf(if (isCompleted || fullText.length < 30) fullText.length else (fullText.length / 3).coerceAtLeast(10))
+  // Precompute word boundaries (character positions immediately following each word)
+  val wordEndIndices = remember(fullText) {
+    val indices = mutableListOf<Int>()
+    var inWord = false
+    for (i in fullText.indices) {
+      if (!fullText[i].isWhitespace()) {
+        inWord = true
+      } else if (inWord) {
+        indices.add(i)
+        inWord = false
+      }
+    }
+    if (inWord) {
+      indices.add(fullText.length)
+    }
+    indices
   }
 
-  LaunchedEffect(fullText, isCompleted) {
-    if (isCompleted) {
-      displayedCharCount = fullText.length
-    } else if (displayedCharCount < fullText.length) {
-      val step = ((fullText.length - displayedCharCount) / 6).coerceAtLeast(3)
-      while (displayedCharCount < fullText.length) {
-        delay(20)
-        displayedCharCount = (displayedCharCount + step).coerceAtMost(fullText.length)
+  // If already completed when first loaded, display all words immediately to prevent re-streaming old history.
+  // When active or freshly streaming, reveal word by word.
+  var displayedWordCount by remember(isCompleted && fullText.isNotEmpty()) {
+    mutableIntStateOf(if (isCompleted || fullText.length < 25) wordEndIndices.size else 0)
+  }
+
+  LaunchedEffect(wordEndIndices.size, isCompleted) {
+    if (isCompleted && displayedWordCount >= wordEndIndices.size) {
+      displayedWordCount = wordEndIndices.size
+    } else {
+      // Chatty word-by-word streaming cadence (35ms per word: natural, readable, lively pace)
+      while (displayedWordCount < wordEndIndices.size) {
+        delay(35L)
+        displayedWordCount++
       }
     }
   }
 
-  val isStreaming = !isCompleted && displayedCharCount < fullText.length
-  val visibleText = fullText.take(displayedCharCount)
+  val isStreaming = !isCompleted || displayedWordCount < wordEndIndices.size
+  val visibleCharCount = if (displayedWordCount >= wordEndIndices.size) {
+    fullText.length
+  } else {
+    wordEndIndices.getOrElse(displayedWordCount) { fullText.length }
+  }
+
+  val visibleText = fullText.take(visibleCharCount)
   val blocks = remember(visibleText) { parseMarkdownBlocks(visibleText) }
 
   if (blocks.isEmpty()) {

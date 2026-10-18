@@ -66,11 +66,23 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Power
+import androidx.compose.material.icons.filled.UnfoldMore
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -311,6 +323,10 @@ fun AgentScreen(
   var showMcpDialog by rememberSaveable { mutableStateOf(false) }
   var showNavMenu by rememberSaveable { mutableStateOf(false) }
   var showFilterDialog by rememberSaveable { mutableStateOf(false) }
+  var showStagesDialog by rememberSaveable { mutableStateOf(false) }
+  var showFilesDialog by rememberSaveable { mutableStateOf(false) }
+  var showHistoryDialog by rememberSaveable { mutableStateOf(false) }
+  var showSuggestions by rememberSaveable { mutableStateOf(true) }
   var activeFeedFilter by rememberSaveable { mutableStateOf(FeedFilter.ALL) }
 
   val mcpServers by viewModel.mcpServers.collectAsStateWithLifecycle()
@@ -347,10 +363,20 @@ fun AgentScreen(
     }
   }
 
-  // Intercept back navigation when viewing an artifact preview, subfolder, or secondary tabs
-  BackHandler(enabled = selectedArtifact != null || activeTab != UiTab.EXECUTION_FEED || currentExplorerPath.isNotBlank()) {
+  // Intercept back navigation when viewing an artifact preview, modal dialogs, subfolder, or secondary tabs
+  BackHandler(enabled = selectedArtifact != null || showFilesDialog || showStagesDialog || showHistoryDialog || activeTab != UiTab.EXECUTION_FEED || currentExplorerPath.isNotBlank()) {
     if (selectedArtifact != null) {
       viewModel.closeArtifactPreview()
+    } else if (showFilesDialog) {
+      if (currentExplorerPath.isNotBlank()) {
+        viewModel.navigateUpDirectory()
+      } else {
+        showFilesDialog = false
+      }
+    } else if (showStagesDialog) {
+      showStagesDialog = false
+    } else if (showHistoryDialog) {
+      showHistoryDialog = false
     } else if (activeTab == UiTab.ARTIFACTS && currentExplorerPath.isNotBlank()) {
       viewModel.navigateUpDirectory()
     } else {
@@ -415,6 +441,11 @@ fun AgentScreen(
           filterCount = if (showFeedButtons) filteredFeed.size else 0,
           mcpCount = mcpServers.count { it.enabled },
           docsCount = documents.size,
+          artifactsCount = state.trackedDeliverables.size,
+          historyCount = state.taskHistory.size,
+          onOpenFiles = { showFilesDialog = true },
+          onOpenStages = { showStagesDialog = true },
+          onOpenHistory = { showHistoryDialog = true },
           onOpenTelemetry = { showTelemetryDialog = true },
           onOpenFilterDialog = { showFilterDialog = true },
           onStop = { viewModel.stopExecution() },
@@ -434,20 +465,12 @@ fun AgentScreen(
             }
           } else null
         )
-
-        PremiumTabBar(
-          selectedTab = activeTab,
-          feedCount = state.executionFeed.size,
-          artifactsCount = state.trackedDeliverables.size,
-          historyCount = state.taskHistory.size,
-          onSelectTab = { viewModel.selectTab(it) }
-        )
       }
     },
     bottomBar = {
       val isInputActive = isInputFocused || inputText.isNotBlank()
       val containerBorderColor by animateColorAsState(
-        targetValue = if (isInputActive) AmoledActionPrimary.copy(alpha = 0.85f) else AmoledBorder,
+        targetValue = if (isInputActive) AmoledActionPrimary.copy(alpha = 0.85f) else Color(0xFF2C2C34),
         animationSpec = tween(180),
         label = "prompt_border"
       )
@@ -459,174 +482,320 @@ fun AgentScreen(
           .background(AmoledBackground),
         contentAlignment = Alignment.Center
       ) {
-          Column(
-            modifier = Modifier
-              .fillMaxWidth()
-              .widthIn(max = 720.dp)
-              .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 6.dp)
-          ) {
-            // Quick action buttons above prompt input: Displayed ONLY when suggested (contextual follow-ups upon completion)
-            val suggestedPresets = if (state.status == AgentStatus.COMPLETED) {
-              viewModel.followUpPresets
-            } else {
-              emptyList()
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = 720.dp)
+            .padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 6.dp)
+        ) {
+          // Follow-up presets upon completion
+          val suggestedPresets = if (state.status == AgentStatus.COMPLETED) {
+            viewModel.followUpPresets
+          } else {
+            emptyList()
+          }
+          if (suggestedPresets.isNotEmpty()) {
+            val chipScrollState = rememberScrollState()
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(chipScrollState)
+                .padding(bottom = 6.dp),
+              horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+              suggestedPresets.forEach { preset ->
+                AragonActionButton(
+                  text = preset.title,
+                  onClick = {
+                    inputText = ""
+                    viewModel.submitTask(preset.prompt, preset.expectedArtifact)
+                  },
+                  variant = AragonButtonVariant.SUCCESS,
+                  height = 28.dp,
+                  testTag = "preset_chip_${preset.expectedArtifact ?: preset.title.replace(" ", "_")}"
+                )
+              }
             }
-            if (suggestedPresets.isNotEmpty()) {
-              val chipScrollState = rememberScrollState()
+          }
+
+          // Screenshot 2: Suggested for you section (above input field, dismissible with ✕)
+          AnimatedVisibility(
+            visible = showSuggestions && state.executionFeed.isEmpty(),
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically()
+          ) {
+            Column(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 6.dp, vertical = 4.dp)
+            ) {
               Row(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .horizontalScroll(chipScrollState)
-                  .padding(bottom = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                  .padding(bottom = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
               ) {
-                suggestedPresets.forEach { preset ->
-                  AragonActionButton(
-                    text = preset.title,
-                    onClick = {
-                      inputText = ""
-                      viewModel.submitTask(preset.prompt, preset.expectedArtifact)
+                Text(
+                  text = "Suggested for you",
+                  style = MaterialTheme.typography.titleSmall,
+                  fontFamily = InterFontFamily,
+                  fontWeight = FontWeight.SemiBold,
+                  fontSize = 13.5.sp,
+                  color = Color(0xFFE4E4E7)
+                )
+                Box(
+                  modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .clickable(role = Role.Button, onClickLabel = "Dismiss suggestions") {
+                      showSuggestions = false
                     },
-                    variant = AragonButtonVariant.SUCCESS,
-                    height = 28.dp,
-                    testTag = "preset_chip_${preset.expectedArtifact ?: preset.title.replace(" ", "_")}"
+                  contentAlignment = Alignment.Center
+                ) {
+                  Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Dismiss",
+                    tint = AmoledIconGrey,
+                    modifier = Modifier.size(15.dp)
                   )
                 }
               }
-            }
 
-            // Modern Interactive Floating User Prompt Field
-            Surface(
-              shape = RoundedCornerShape(18.dp),
-              color = Color(0xFF0C0C0E),
-              border = androidx.compose.foundation.BorderStroke(1.2.dp, containerBorderColor),
-              modifier = Modifier.fillMaxWidth()
-            ) {
-              Column(
-                modifier = Modifier
-                  .fillMaxWidth()
-                  .padding(vertical = 10.dp)
-              ) {
-                // Attached Documents & System Messages Strip (ONLY shows documents explicitly attached / in-scope)
-                val attachedDocuments = remember(documents, documentScope) {
-                  documents.filter { it.id in documentScope }
-                }
-                if (documentMessages.isNotEmpty() || attachedDocuments.isNotEmpty()) {
-                  val docChipScrollState = rememberScrollState()
-                  Row(
-                    modifier = Modifier
-                      .fillMaxWidth()
-                      .padding(horizontal = 14.dp, vertical = 4.dp)
-                      .horizontalScroll(docChipScrollState),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                  ) {
-                    documentMessages.forEach { message ->
-                      Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = Color(0xFF141418),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
-                        modifier = Modifier
-                          .clickable(role = Role.Button, onClickLabel = "Dismiss message") {
-                            viewModel.clearDocumentMessages()
-                          }
-                          .testTag("document_message_chip")
-                      ) {
-                        Text(
-                          text = message,
-                          fontFamily = JetBrainsMonoFontFamily,
-                          fontSize = 9.sp,
-                          color = AmoledIconGreyLight,
-                          maxLines = 1,
-                          overflow = TextOverflow.Ellipsis,
-                          modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                      }
-                    }
-                    attachedDocuments.forEachIndexed { index, doc ->
-                      val chipColor = when (doc.status) {
-                        DocumentStatus.READY, DocumentStatus.READY_LEXICAL -> AmoledStatusSuccess
-                        DocumentStatus.PROCESSING, DocumentStatus.IMPORTING -> AmoledStatusWarning
-                        DocumentStatus.FAILED -> AmoledStatusError
-                        DocumentStatus.CANCELLED -> AmoledIconGrey
-                      }
-                      Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = Color(0xFF101014),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, chipColor.copy(alpha = 0.5f)),
-                        modifier = Modifier.testTag("doc_chip_${doc.id}")
-                      ) {
-                        Row(
-                          verticalAlignment = Alignment.CenterVertically,
-                          modifier = Modifier.padding(start = 7.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
-                        ) {
-                          Text(
-                            text = "📎 ${doc.displayName.take(16)} · ${doc.statusLabel}",
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontSize = 9.sp,
-                            color = chipColor,
-                            maxLines = 1,
-                            modifier = Modifier.clickable(role = Role.Button, onClickLabel = "Open documents manager") {
-                              showDocumentsDialog = true
-                            }
-                          )
-                          Spacer(modifier = Modifier.width(4.dp))
-                          Box(
-                            modifier = Modifier
-                              .size(16.dp)
-                              .clip(CircleShape)
-                              .clickable(role = Role.Button, onClickLabel = "Unattach document") {
-                                viewModel.setDocumentInScope(doc.id, false)
-                              },
-                            contentAlignment = Alignment.Center
-                          ) {
-                            Text(
-                              text = "×",
-                              fontFamily = JetBrainsMonoFontFamily,
-                              fontSize = 11.sp,
-                              fontWeight = FontWeight.Bold,
-                              color = AmoledIconGreyLight
-                            )
-                          }
-                        }
-                      }
-                    }
-                    if (attachedDocuments.isNotEmpty()) {
-                      AragonFeedButton(
-                        text = "CLEAR ALL",
-                        onClick = { viewModel.clearDocumentScope() },
-                        variant = AragonButtonVariant.MUTED,
-                        testTag = "clear_attached_documents_btn"
-                      )
-                      AragonFeedButton(
-                        text = "MANAGE",
-                        onClick = { showDocumentsDialog = true },
-                        variant = AragonButtonVariant.MUTED,
-                        testTag = "manage_documents_btn"
-                      )
-                    }
-                  }
-                }
+              val suggestions = listOf(
+                "Create study materials with effective quizzes",
+                "Solve problems with step-by-step guidance",
+                "Identify contents in images accurately"
+              )
 
-                // Spacious Full-Width Multiline Editor (enlarged for comfort, not too small not too big)
+              suggestions.forEachIndexed { index, suggestion ->
                 Box(
                   modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 58.dp)
-                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .clickable {
+                      inputText = suggestion
+                      inputFocusRequester.requestFocus()
+                    }
+                    .padding(vertical = 10.dp)
+                ) {
+                  Text(
+                    text = suggestion,
+                    fontFamily = InterFontFamily,
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFFD4D4D8)
+                  )
+                }
+                if (index < suggestions.size - 1) {
+                  Box(
+                    modifier = Modifier
+                      .fillMaxWidth()
+                      .height(0.6.dp)
+                      .background(Color(0xFF222226))
+                  )
+                }
+              }
+              Spacer(modifier = Modifier.height(4.dp))
+            }
+          }
+
+          // Screenshot 2: Transformed user prompt input field container (AMOLED style)
+          Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = Color(0xFF16161A),
+            border = androidx.compose.foundation.BorderStroke(1.2.dp, containerBorderColor),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Column(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp)
+            ) {
+              // Top row inside card: Cloud selector & Project selector
+              Row(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+              ) {
+                // Cloud pill selector
+                Surface(
+                  shape = RoundedCornerShape(12.dp),
+                  color = Color(0xFF202026),
+                  border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF32323C)),
+                  modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(role = Role.Button, onClickLabel = "Sandbox Configuration") {
+                      showSettingsDialog = true
+                    }
+                    .testTag("cloud_environment_pill")
+                ) {
+                  Row(
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
+                    Icon(
+                      imageVector = Icons.Default.Cloud,
+                      contentDescription = "Cloud Sandbox",
+                      tint = Color(0xFFCBD5E1),
+                      modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                      text = if (sandboxMode == SandboxMode.E2B_CLOUD) "Cloud" else "Local",
+                      fontFamily = InterFontFamily,
+                      fontSize = 12.sp,
+                      fontWeight = FontWeight.Medium,
+                      color = Color(0xFFE2E8F0)
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Icon(
+                      imageVector = Icons.Default.UnfoldMore,
+                      contentDescription = "Switch environment",
+                      tint = AmoledIconGreyDark,
+                      modifier = Modifier.size(13.dp)
+                    )
+                  }
+                }
+
+                // Project pill selector
+                Surface(
+                  shape = RoundedCornerShape(12.dp),
+                  color = Color(0xFF202026),
+                  border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF32323C)),
+                  modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(role = Role.Button, onClickLabel = "Select Project") {
+                      showFilesDialog = true
+                    }
+                    .testTag("project_selector_pill")
+                ) {
+                  Row(
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
+                    Icon(
+                      imageVector = Icons.Default.Inventory2,
+                      contentDescription = "Project",
+                      tint = Color(0xFFCBD5E1),
+                      modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                      text = if (currentExplorerPath.isNotBlank()) currentExplorerPath.substringAfterLast('/').ifEmpty { "Project" } else "No project",
+                      fontFamily = InterFontFamily,
+                      fontSize = 12.sp,
+                      fontWeight = FontWeight.Medium,
+                      color = Color(0xFFE2E8F0)
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Icon(
+                      imageVector = Icons.Default.UnfoldMore,
+                      contentDescription = "Select project",
+                      tint = AmoledIconGreyDark,
+                      modifier = Modifier.size(13.dp)
+                    )
+                  }
+                }
+              }
+
+              // Attached Documents Strip (if any)
+              val attachedDocuments = remember(documents, documentScope) {
+                documents.filter { it.id in documentScope }
+              }
+              if (documentMessages.isNotEmpty() || attachedDocuments.isNotEmpty()) {
+                val docChipScrollState = rememberScrollState()
+                Row(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 3.dp)
+                    .horizontalScroll(docChipScrollState),
+                  horizontalArrangement = Arrangement.spacedBy(6.dp),
+                  verticalAlignment = Alignment.CenterVertically
+                ) {
+                  documentMessages.forEach { message ->
+                    Surface(
+                      shape = RoundedCornerShape(4.dp),
+                      color = Color(0xFF141418),
+                      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+                      modifier = Modifier.clickable { viewModel.clearDocumentMessages() }
+                    ) {
+                      Text(
+                        text = message,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 9.sp,
+                        color = AmoledIconGreyLight,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                      )
+                    }
+                  }
+                  attachedDocuments.forEach { doc ->
+                    Surface(
+                      shape = RoundedCornerShape(4.dp),
+                      color = Color(0xFF101014),
+                      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledStatusSuccess.copy(alpha = 0.5f)),
+                      modifier = Modifier.testTag("doc_chip_${doc.id}")
+                    ) {
+                      Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(start = 7.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
+                      ) {
+                        Text(
+                          text = "📎 ${doc.displayName.take(16)}",
+                          fontFamily = JetBrainsMonoFontFamily,
+                          fontSize = 9.sp,
+                          color = AmoledStatusSuccess,
+                          maxLines = 1
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Box(
+                          modifier = Modifier
+                            .size(16.dp)
+                            .clip(CircleShape)
+                            .clickable { viewModel.setDocumentInScope(doc.id, false) },
+                          contentAlignment = Alignment.Center
+                        ) {
+                          Text(text = "×", fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp, color = AmoledIconGreyLight)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+
+              // Text Input Area with Screenshot 2's blue accent cursor line and placeholder
+              Row(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .heightIn(min = 46.dp)
+                  .padding(horizontal = 14.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.Top
+              ) {
+                // Vertical accent line
+                Box(
+                  modifier = Modifier
+                    .width(2.5.dp)
+                    .height(20.dp)
+                    .padding(top = 2.dp)
+                    .background(Color(0xFF00A3FF), RoundedCornerShape(1.dp))
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(
+                  modifier = Modifier
+                    .weight(1f)
+                    .padding(top = 1.dp)
                 ) {
                   if (inputText.isEmpty()) {
                     Text(
-                      text = if (state.status == AgentStatus.COMPLETED) {
-                        "Continue conversation / modify task (e.g. 'Add unit tests')..."
-                      } else {
-                        "Assign mission (e.g. analyze data.csv → report.docx)..."
-                      },
+                      text = "Assign a task or type / for more",
                       style = TextStyle(
                         fontFamily = InterFontFamily,
-                        fontSize = 15.sp,
-                        color = AmoledTextMuted,
-                        lineHeight = 22.sp,
+                        fontSize = 14.5.sp,
+                        color = Color(0xFF6B7280),
+                        lineHeight = 20.sp,
                         fontWeight = FontWeight.Normal
                       )
                     )
@@ -637,13 +806,13 @@ fun AgentScreen(
                     onValueChange = { inputText = it },
                     textStyle = TextStyle(
                       fontFamily = InterFontFamily,
-                      fontSize = 15.sp,
+                      fontSize = 14.5.sp,
                       color = AmoledTextPrimary,
-                      lineHeight = 22.sp,
+                      lineHeight = 20.sp,
                       fontWeight = FontWeight.Normal
                     ),
-                    cursorBrush = SolidColor(AmoledActionPrimary),
-                    maxLines = 8,
+                    cursorBrush = SolidColor(Color(0xFF00A3FF)),
+                    maxLines = 6,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = {
                       if (inputText.isNotBlank()) {
@@ -659,213 +828,147 @@ fun AgentScreen(
                       .testTag("agent_input_field")
                   )
                 }
+              }
 
-                Spacer(modifier = Modifier.height(4.dp))
-
-                // Bottom Controls Shelf: Organized Left Tools + Right Action
+              // Bottom Actions Row: Left (+, 🔌) and Right (💬|||, 🎙, ↑)
+              Row(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(start = 10.dp, end = 10.dp, top = 2.dp, bottom = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                // Left action buttons: + (attachment) and 🔌 (MCP / tools)
                 Row(
-                  modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 2.dp),
-                  horizontalArrangement = Arrangement.SpaceBetween,
-                  verticalAlignment = Alignment.CenterVertically
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                  // Left Tools Cluster: + DOC, Model Selector, Autonomy Pill
-                  val toolsScrollState = rememberScrollState()
-                  Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                  Box(
                     modifier = Modifier
-                      .weight(1f, fill = false)
-                      .horizontalScroll(toolsScrollState)
-                  ) {
-                    // Document picker capsule button
-                    AragonFeedButton(
-                      text = "+ DOC",
-                      onClick = { documentPickerLauncher.launch(DOCUMENT_MIME_FILTERS) },
-                      variant = AragonButtonVariant.MUTED,
-                      testTag = "attach_documents_button"
-                    )
-
-                    // MCP ecosystem capsule button
-                    val activeMcpCount = remember(mcpServers) { mcpServers.count { it.enabled } }
-                    AragonFeedButton(
-                      text = "MCP",
-                      onClick = { showMcpDialog = true },
-                      variant = if (activeMcpCount > 0) AragonButtonVariant.PRIMARY else AragonButtonVariant.MUTED,
-                      testTag = "mcp_servers_button"
-                    )
-
-                    // Model switcher pill
-                    val modelName = when (providerType) {
-                      ProviderType.NVIDIA_NIM -> nvidiaModel.substringAfterLast('/')
-                      ProviderType.SANDBOX_ENGINE -> "Autonomous"
-                      ProviderType.GEMINI_LIVE_API -> "Gemini Live"
-                    }
-                    val modelInteractionSource = remember { MutableInteractionSource() }
-                    Surface(
-                      shape = RoundedCornerShape(5.dp),
-                      color = Color(0xFF161619),
-                      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
-                      modifier = Modifier
-                        .tactilePress(modelInteractionSource)
-                        .clickable(
-                          interactionSource = modelInteractionSource,
-                          indication = ripple(color = AmoledActionPrimary.copy(alpha = 0.2f)),
-                          role = Role.Button,
-                          onClickLabel = "Select AI Model"
-                        ) { showModelSelectDialog = true }
-                        .testTag("model_switcher_button")
-                    ) {
-                      Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
-                      ) {
-                        Box(
-                          modifier = Modifier
-                            .size(5.dp)
-                            .clip(CircleShape)
-                            .background(if (state.canCancel) AmoledActionPrimary else AmoledIconGreyDark)
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                          text = modelName,
-                          style = MaterialTheme.typography.labelSmall,
-                          fontFamily = JetBrainsMonoFontFamily,
-                          fontSize = 9.sp,
-                          color = AmoledIconGreyLight,
-                          maxLines = 1,
-                          overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text(
-                          text = "▾",
-                          fontSize = 8.sp,
-                          color = AmoledIconGreyDark
-                        )
+                      .size(34.dp)
+                      .clip(CircleShape)
+                      .clickable(role = Role.Button, onClickLabel = "Attach document or file") {
+                        documentPickerLauncher.launch(DOCUMENT_MIME_FILTERS)
                       }
-                    }
-
-                    // Autonomy Policy Pill
-                    AutonomyPolicyPill(
-                      currentPolicy = approvalPolicy,
-                      onClick = { showAutonomyDialog = true }
+                      .testTag("add_attachment_btn"),
+                    contentAlignment = Alignment.Center
+                  ) {
+                    Icon(
+                      imageVector = Icons.Default.Add,
+                      contentDescription = "Attach files",
+                      tint = Color(0xFFCBD5E1),
+                      modifier = Modifier.size(19.dp)
                     )
                   }
 
-                  Spacer(modifier = Modifier.width(6.dp))
-
-                  // Right Action Cluster: Character & Token count, CLEAR, and EXEC / STOP Button
-                  Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                  val activeMcpCount = remember(mcpServers) { mcpServers.count { it.enabled } }
+                  Box(
+                    modifier = Modifier
+                      .size(34.dp)
+                      .clip(CircleShape)
+                      .clickable(role = Role.Button, onClickLabel = "Open MCP tools") {
+                        showMcpDialog = true
+                      }
+                      .testTag("tools_mcp_btn"),
+                    contentAlignment = Alignment.Center
                   ) {
-                    if (inputText.isNotEmpty()) {
+                    Icon(
+                      imageVector = Icons.Default.Power,
+                      contentDescription = "MCP & Tools",
+                      tint = if (activeMcpCount > 0) AmoledActionPrimary else Color(0xFF94A3B8),
+                      modifier = Modifier.size(18.dp)
+                    )
+                  }
+                }
+
+                // Right action buttons: Speech/Voice wave, Mic, and Circular Send Arrow
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                  // Voice / Audio mode wave icon
+                  Box(
+                    modifier = Modifier
+                      .size(32.dp)
+                      .clip(CircleShape)
+                      .clickable(role = Role.Button, onClickLabel = "Voice agent mode") {
+                        android.widget.Toast.makeText(context, "Voice agent mode active", android.widget.Toast.LENGTH_SHORT).show()
+                      }
+                      .testTag("voice_mode_btn"),
+                    contentAlignment = Alignment.Center
+                  ) {
+                    Icon(
+                      imageVector = Icons.Default.GraphicEq,
+                      contentDescription = "Voice mode",
+                      tint = Color(0xFF94A3B8),
+                      modifier = Modifier.size(18.dp)
+                    )
+                  }
+
+                  // Microphone button
+                  Box(
+                    modifier = Modifier
+                      .size(32.dp)
+                      .clip(CircleShape)
+                      .clickable(role = Role.Button, onClickLabel = "Microphone input") {
+                        android.widget.Toast.makeText(context, "Listening for voice prompt...", android.widget.Toast.LENGTH_SHORT).show()
+                      }
+                      .testTag("mic_input_btn"),
+                    contentAlignment = Alignment.Center
+                  ) {
+                    Icon(
+                      imageVector = Icons.Default.Mic,
+                      contentDescription = "Voice input",
+                      tint = Color(0xFF94A3B8),
+                      modifier = Modifier.size(18.dp)
+                    )
+                  }
+
+                  // Circular send / stop button matching Screenshot 2
+                  val canSend = inputText.isNotBlank()
+                  val isRunning = state.canCancel
+                  Box(
+                    modifier = Modifier
+                      .size(34.dp)
+                      .clip(CircleShape)
+                      .background(
+                        if (isRunning) Color(0xFF7F1D1D)
+                        else if (canSend) Color(0xFFE2E8F0)
+                        else Color(0xFF26262E)
+                      )
+                      .clickable(
+                        enabled = canSend || isRunning,
+                        role = Role.Button,
+                        onClickLabel = if (isRunning) "Stop execution" else "Send prompt"
+                      ) {
+                        if (isRunning) {
+                          viewModel.stopExecution()
+                        } else if (canSend) {
+                          val t = inputText
+                          inputText = ""
+                          viewModel.submitTask(t)
+                        }
+                      }
+                      .testTag("run_task_button"),
+                    contentAlignment = Alignment.Center
+                  ) {
+                    if (isRunning) {
                       Text(
-                        text = "${inputText.length}c · ~${(inputText.length / 4).coerceAtLeast(1)}t",
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontSize = 9.sp,
-                        color = AmoledTextMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        text = "◼",
+                        color = Color(0xFFFCA5A5),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
                       )
-
-                      AragonFeedButton(
-                        text = "CLEAR",
-                        onClick = { inputText = "" },
-                        variant = AragonButtonVariant.MUTED,
-                        testTag = "clear_prompt_input_btn"
-                      )
-                    }
-
-                    if (state.canCancel) {
-                      val stopInteraction = remember { MutableInteractionSource() }
-                      Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFF261010),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, AmoledStatusError.copy(alpha = 0.7f)),
-                        modifier = Modifier
-                          .tactilePress(stopInteraction)
-                          .clickable(
-                            interactionSource = stopInteraction,
-                            indication = ripple(color = AmoledStatusError.copy(alpha = 0.3f)),
-                            role = Role.Button,
-                            onClickLabel = "Stop execution"
-                          ) { viewModel.stopExecution() }
-                          .testTag("stop_execution_button")
-                      ) {
-                        Box(
-                          contentAlignment = Alignment.Center,
-                          modifier = Modifier
-                            .height(30.dp)
-                            .padding(horizontal = 13.dp)
-                        ) {
-                          Text(
-                            text = "STOP ◼",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 10.5.sp,
-                            color = AmoledStatusError
-                          )
-                        }
-                      }
                     } else {
-                      val isReady = inputText.isNotBlank()
-                      val execInteraction = remember { MutableInteractionSource() }
-                      val buttonColor by animateColorAsState(
-                        targetValue = if (isReady) AmoledActionPrimary else Color(0xFF18181A),
-                        animationSpec = tween(150),
-                        label = "btn_color"
+                      Icon(
+                        imageVector = Icons.Default.ArrowUpward,
+                        contentDescription = "Send",
+                        tint = if (canSend) Color(0xFF0F172A) else Color(0xFF64748B),
+                        modifier = Modifier.size(17.dp)
                       )
-                      val textColor by animateColorAsState(
-                        targetValue = if (isReady) AmoledActionPrimaryOn else AmoledIconGreyDark,
-                        animationSpec = tween(150),
-                        label = "text_color"
-                      )
-
-                      Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = buttonColor,
-                        border = androidx.compose.foundation.BorderStroke(
-                          1.dp,
-                          if (isReady) AmoledActionPrimary else AmoledBorderSubtle
-                        ),
-                        modifier = Modifier
-                          .tactilePress(execInteraction)
-                          .clickable(
-                            interactionSource = execInteraction,
-                            indication = ripple(color = AmoledActionPrimary.copy(alpha = 0.25f)),
-                            enabled = isReady,
-                            role = Role.Button,
-                            onClickLabel = if (state.status == AgentStatus.COMPLETED) "Send follow-up" else "Execute task"
-                          ) {
-                            if (isReady) {
-                              val taskText = inputText
-                              inputText = ""
-                              viewModel.submitTask(taskText)
-                            }
-                          }
-                          .testTag("run_task_button")
-                      ) {
-                        Box(
-                          contentAlignment = Alignment.Center,
-                          modifier = Modifier
-                            .height(30.dp)
-                            .padding(horizontal = 13.dp)
-                        ) {
-                          Text(
-                            text = if (state.status == AgentStatus.COMPLETED) "SEND ⏎" else "EXEC ⏎",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 10.5.sp,
-                            color = textColor
-                          )
-                        }
-                      }
                     }
                   }
+                }
               }
             }
           }
@@ -1090,57 +1193,6 @@ fun AgentScreen(
                     .fillMaxSize()
                     .widthIn(max = 840.dp)
                 ) {
-                  // Streamlined feed control bar: Filter indicator on Left + COPY ALL on Right
-                  Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = Color(0xFF101012),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
-                    modifier = Modifier
-                      .fillMaxWidth()
-                      .padding(horizontal = 14.dp, vertical = 4.dp)
-                  ) {
-                    Row(
-                      modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                      verticalAlignment = Alignment.CenterVertically,
-                      horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                      Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                      ) {
-                        Text(
-                          text = if (activeFeedFilter != FeedFilter.ALL) "FILTER: ${activeFeedFilter.label} (${filteredFeed.size})" else "FEED: ${filteredFeed.size} steps",
-                          fontFamily = JetBrainsMonoFontFamily,
-                          fontSize = 9.sp,
-                          fontWeight = FontWeight.Bold,
-                          color = if (activeFeedFilter != FeedFilter.ALL) AmoledActionPrimary else AmoledIconGreyLight
-                        )
-                        if (activeFeedFilter != FeedFilter.ALL) {
-                          Text(
-                            text = "[RESET]",
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = AmoledActionPrimary,
-                            modifier = Modifier
-                              .clip(RoundedCornerShape(4.dp))
-                              .clickable { activeFeedFilter = FeedFilter.ALL }
-                              .padding(2.dp)
-                          )
-                        }
-                      }
-
-                      AragonFeedCopyButton(
-                        textToCopy = "",
-                        textProvider = { formatExecutionFeedLog(state) },
-                        label = "COPY ALL",
-                        testTag = "feed_header_copy_all_btn"
-                      )
-                    }
-                  }
-
                   LazyColumn(
                     state = listState,
                     modifier = Modifier
@@ -1214,50 +1266,81 @@ fun AgentScreen(
 
                   if (state.status == AgentStatus.COMPLETED) {
                     item(key = "continuation_prompt_banner") {
-                      Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = Color(0xFF0F1810),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, AmoledStatusSuccess.copy(alpha = 0.4f)),
+                      Column(
                         modifier = Modifier
                           .fillMaxWidth()
-                          .padding(horizontal = 14.dp, vertical = 10.dp)
-                          .testTag("conversation_active_banner")
+                          .padding(horizontal = 14.dp, vertical = 6.dp)
                       ) {
-                        Column(
+                        // Prominent "✔ Task completed" effect matching Screenshot 1
+                        Row(
+                          verticalAlignment = Alignment.CenterVertically,
                           modifier = Modifier
                             .fillMaxWidth()
-                            .padding(12.dp)
+                            .padding(bottom = 8.dp)
+                            .testTag("task_completed_badge_row")
                         ) {
-                          Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                          Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "Task completed",
+                            tint = Color(0xFF22C55E),
+                            modifier = Modifier.size(24.dp)
+                          )
+                          Spacer(modifier = Modifier.width(8.dp))
+                          Text(
+                            text = "Task completed",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = Color(0xFF22C55E)
+                          )
+                        }
+
+                        Surface(
+                          shape = RoundedCornerShape(10.dp),
+                          color = Color(0xFF0F1810),
+                          border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF22C55E).copy(alpha = 0.4f)),
+                          modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("conversation_active_banner")
+                        ) {
+                          Column(
+                            modifier = Modifier
+                              .fillMaxWidth()
+                              .padding(12.dp)
                           ) {
+                            Row(
+                              modifier = Modifier.fillMaxWidth(),
+                              horizontalArrangement = Arrangement.SpaceBetween,
+                              verticalAlignment = Alignment.CenterVertically
+                            ) {
+                              Text(
+                                text = "CONVERSATION ACTIVE",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                color = AmoledStatusSuccess,
+                                fontSize = 10.sp
+                              )
+                              Text(
+                                text = "READY FOR FOLLOW-UP",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = JetBrainsMonoFontFamily,
+                                color = AmoledIconGreyLight,
+                                fontSize = 9.sp
+                              )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                              text = "TASK COMPLETED • CONVERSATION ACTIVE",
-                              style = MaterialTheme.typography.labelSmall,
-                              fontFamily = JetBrainsMonoFontFamily,
-                              fontWeight = FontWeight.Bold,
-                              color = AmoledStatusSuccess,
-                              fontSize = 10.sp
-                            )
-                            Text(
-                              text = "READY FOR FOLLOW-UP",
-                              style = MaterialTheme.typography.labelSmall,
-                              fontFamily = JetBrainsMonoFontFamily,
-                              color = AmoledIconGreyLight,
-                              fontSize = 9.sp
+                              text = state.completionSummary
+                                ?: "Session context and deliverables remain loaded. Enter follow-up instructions, request code modifications, tests, or optimizations below.",
+                              style = MaterialTheme.typography.bodySmall,
+                              fontFamily = InterFontFamily,
+                              color = AmoledTextSecondary,
+                              fontSize = 11.sp,
+                              lineHeight = 15.sp
                             )
                           }
-                          Spacer(modifier = Modifier.height(4.dp))
-                          Text(
-                            text = "Session context and deliverables remain loaded. Enter follow-up instructions, request code modifications, tests, or optimizations below.",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = InterFontFamily,
-                            color = AmoledTextSecondary,
-                            fontSize = 11.sp,
-                            lineHeight = 15.sp
-                          )
                         }
                       }
                     }
@@ -1618,7 +1701,14 @@ fun AgentScreen(
       artifactCount = state.trackedDeliverables.size,
       mcpServerCount = mcpServers.count { it.enabled },
       documentCount = documents.size,
-      onSelectTab = { tab -> viewModel.selectTab(tab) },
+      onSelectTab = { tab ->
+        when (tab) {
+          UiTab.ARTIFACTS -> showFilesDialog = true
+          UiTab.FIVE_STAGES -> showStagesDialog = true
+          UiTab.TASK_HISTORY -> showHistoryDialog = true
+          else -> viewModel.selectTab(tab)
+        }
+      },
       onOpenModelSelect = { showModelSelectDialog = true },
       onOpenAutonomy = { showAutonomyDialog = true },
       onOpenMcp = { showMcpDialog = true },
@@ -1632,6 +1722,174 @@ fun AgentScreen(
       onReplaySplash = onReplaySplash,
       onDismiss = { showNavMenu = false }
     )
+  }
+
+  // Cognitive Execution Stages Dialog
+  if (showStagesDialog) {
+    Dialog(
+      onDismissRequest = { showStagesDialog = false },
+      properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+      Surface(
+        modifier = Modifier
+          .fillMaxSize()
+          .background(AmoledBackground),
+        color = AmoledBackground
+      ) {
+        Column(
+          modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+        ) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+          ) {
+            Text(
+              text = "EXECUTION STAGES",
+              style = MaterialTheme.typography.titleMedium,
+              fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = FontWeight.Bold,
+              color = Color.White
+            )
+            AragonActionButton(
+              text = "CLOSE",
+              onClick = { showStagesDialog = false },
+              variant = AragonButtonVariant.MUTED,
+              height = 28.dp,
+              testTag = "close_stages_dialog_btn"
+            )
+          }
+          FiveStagesInspector(record = state.fiveStageRecord)
+        }
+      }
+    }
+  }
+
+  // Workspace Files Dialog
+  if (showFilesDialog) {
+    Dialog(
+      onDismissRequest = { showFilesDialog = false },
+      properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+      Surface(
+        modifier = Modifier
+          .fillMaxSize()
+          .background(AmoledBackground),
+        color = AmoledBackground
+      ) {
+        Column(
+          modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+        ) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+          ) {
+            Text(
+              text = "WORKSPACE FILES",
+              style = MaterialTheme.typography.titleMedium,
+              fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = FontWeight.Bold,
+              color = Color.White
+            )
+            AragonActionButton(
+              text = "CLOSE",
+              onClick = { showFilesDialog = false },
+              variant = AragonButtonVariant.MUTED,
+              height = 28.dp,
+              testTag = "close_files_dialog_btn"
+            )
+          }
+          WorkspaceFileExplorer(
+            currentPath = currentExplorerPath,
+            searchQuery = explorerSearchQuery,
+            items = explorerItems,
+            deliverables = state.trackedDeliverables,
+            onNavigateToFolder = { viewModel.navigateToFolder(it) },
+            onNavigateUp = { viewModel.navigateUpDirectory() },
+            onBreadcrumbClick = { viewModel.navigateToBreadcrumb(it) },
+            onSearchQueryChange = { viewModel.setExplorerSearch(it) },
+            onCreateFile = { name, content -> viewModel.createNewFile(name, content) },
+            onCreateFolder = { name -> viewModel.createNewFolder(name) },
+            onDeleteItem = { viewModel.deleteExplorerItem(it) },
+            onPreviewItem = { viewModel.previewExplorerItem(it) },
+            onSaveItem = { viewModel.saveExplorerItem(context, it) },
+            onShareItem = { viewModel.shareExplorerItem(context, it) },
+            onRefresh = { viewModel.refreshExplorer() },
+            onRenameItem = { item, newName -> viewModel.renameExplorerItem(item, newName) },
+            onDuplicateItem = { item -> viewModel.duplicateExplorerItem(item) }
+          )
+        }
+      }
+    }
+  }
+
+  // Task Logs & History Dialog
+  if (showHistoryDialog) {
+    Dialog(
+      onDismissRequest = { showHistoryDialog = false },
+      properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+      Surface(
+        modifier = Modifier
+          .fillMaxSize()
+          .background(AmoledBackground),
+        color = AmoledBackground
+      ) {
+        Column(
+          modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+        ) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+          ) {
+            Text(
+              text = "TASK LOGS & HISTORY",
+              style = MaterialTheme.typography.titleMedium,
+              fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = FontWeight.Bold,
+              color = Color.White
+            )
+            AragonActionButton(
+              text = "CLOSE",
+              onClick = { showHistoryDialog = false },
+              variant = AragonButtonVariant.MUTED,
+              height = 28.dp,
+              testTag = "close_history_dialog_btn"
+            )
+          }
+          TaskHistoryView(
+            taskHistory = state.taskHistory,
+            onSelectTask = { goal ->
+              inputText = goal
+              showHistoryDialog = false
+              viewModel.submitTask(goal)
+            },
+            onRestoreTask = { record ->
+              showHistoryDialog = false
+              viewModel.restoreTaskFromHistory(record)
+            },
+            onClearHistory = { viewModel.clearTaskHistory() }
+          )
+        }
+      }
+    }
   }
 }
 
@@ -1767,6 +2025,11 @@ fun AgentTopHeader(
   filterCount: Int = 0,
   mcpCount: Int = 0,
   docsCount: Int = 0,
+  artifactsCount: Int = 0,
+  historyCount: Int = 0,
+  onOpenFiles: () -> Unit = {},
+  onOpenStages: () -> Unit = {},
+  onOpenHistory: () -> Unit = {},
   onOpenTelemetry: () -> Unit = {},
   onOpenFilterDialog: () -> Unit = {},
   onStop: () -> Unit,
@@ -1816,7 +2079,7 @@ fun AgentTopHeader(
 
         Spacer(modifier = Modifier.width(8.dp))
 
-        // RIGHT-ALIGNED ACTIONS: MCP, DOCS, STATS, COPY ALL, STOP, MENU
+        // RIGHT-ALIGNED ACTIONS: FILES, STAGES, STATS, LOGS, MCP, DOCS, COPY ALL, STOP, MENU
         Row(
           modifier = Modifier
             .weight(1f, fill = false)
@@ -1824,10 +2087,52 @@ fun AgentTopHeader(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
-          // Direct 1-tap MCP button with no badge
+          // Direct 1-tap FILES button
+          AragonHeaderButton(
+            text = "FILES",
+            badge = if (artifactsCount > 0) "$artifactsCount" else null,
+            onClick = onOpenFiles,
+            variant = if (artifactsCount > 0) AragonButtonVariant.PRIMARY else AragonButtonVariant.MUTED,
+            testTag = "header_files_btn"
+          )
+
+          // Direct 1-tap STAGES button
+          AragonHeaderButton(
+            text = "STAGES",
+            badge = null,
+            onClick = onOpenStages,
+            variant = AragonButtonVariant.MUTED,
+            testTag = "header_stages_btn"
+          )
+
+          // STATS (Telemetry & analytics)
+          val filterBadge = if (activeFeedFilter != null && activeFeedFilter != FeedFilter.ALL) {
+            activeFeedFilter.label
+          } else if (telemetry != null && telemetry.errorCount > 0) {
+            "!ERR"
+          } else null
+
+          AragonHeaderButton(
+            text = "STATS",
+            onClick = onOpenTelemetry,
+            variant = if (activeFeedFilter != null && activeFeedFilter != FeedFilter.ALL) AragonButtonVariant.PRIMARY else AragonButtonVariant.MUTED,
+            badge = filterBadge,
+            testTag = "header_telemetry_filters_btn"
+          )
+
+          // LOGS (Task History)
+          AragonHeaderButton(
+            text = "LOGS",
+            badge = if (historyCount > 0) "$historyCount" else null,
+            onClick = onOpenHistory,
+            variant = AragonButtonVariant.MUTED,
+            testTag = "header_logs_btn"
+          )
+
+          // Direct 1-tap MCP button
           AragonHeaderButton(
             text = "MCP",
-            badge = null,
+            badge = if (mcpCount > 0) "$mcpCount" else null,
             onClick = onOpenMcp,
             variant = if (mcpCount > 0) AragonButtonVariant.PRIMARY else AragonButtonVariant.MUTED,
             testTag = "header_mcp_btn"
@@ -1840,22 +2145,6 @@ fun AgentTopHeader(
               onClick = onOpenDocs,
               variant = AragonButtonVariant.MUTED,
               testTag = "header_docs_btn"
-            )
-          }
-
-          if (telemetry != null) {
-            val filterBadge = if (activeFeedFilter != null && activeFeedFilter != FeedFilter.ALL) {
-              activeFeedFilter.label
-            } else if (telemetry.errorCount > 0) {
-              "!ERR"
-            } else null
-
-            AragonHeaderButton(
-              text = "STATS",
-              onClick = onOpenTelemetry,
-              variant = if (activeFeedFilter != null && activeFeedFilter != FeedFilter.ALL) AragonButtonVariant.PRIMARY else AragonButtonVariant.MUTED,
-              badge = filterBadge,
-              testTag = "header_telemetry_filters_btn"
             )
           }
 
