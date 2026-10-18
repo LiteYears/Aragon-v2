@@ -105,6 +105,10 @@ enum class ToolErrorCode(val code: String, val recoveryHint: String) {
     "NETWORK_ERROR",
     "Network communication failed. Check the URL, network connectivity, or retry with backoff."
   ),
+  RATE_LIMITED(
+    "RATE_LIMITED",
+    "API rate limit exceeded. Retry with exponential backoff."
+  ),
   TRANSIENT_NETWORK(
     "TRANSIENT_NETWORK",
     "Transient network communication glitch occurred. Retry with bounded backoff."

@@ -7,6 +7,7 @@ import java.util.UUID
  */
 enum class AgentStatus {
   IDLE,
+  RUNNING,
   THINKING,
   PLANNING,
   EXECUTING_TOOL,
@@ -105,7 +106,9 @@ data class CompletionEvidenceItem(
   val stepId: String? = null,
   val type: String, // "FILE_EXISTS", "CONTENT_VERIFIED", "EXIT_CODE_ZERO", "TOOL_OUTPUT", "ASSERTION"
   val description: String,
-  val targetPath: String? = null,
+  val target: String? = null,
+  val targetPath: String? = target,
+  val details: String? = null,
   val verified: Boolean = false,
   val timestamp: Long = System.currentTimeMillis()
 ) {
@@ -115,7 +118,12 @@ data class CompletionEvidenceItem(
     if (stepId != null) obj.put("stepId", stepId)
     obj.put("type", type)
     obj.put("description", description)
-    if (targetPath != null) obj.put("targetPath", targetPath)
+    val effTarget = target ?: targetPath
+    if (effTarget != null) {
+      obj.put("target", effTarget)
+      obj.put("targetPath", effTarget)
+    }
+    if (details != null) obj.put("details", details)
     obj.put("verified", verified)
     obj.put("timestamp", timestamp)
     return obj
@@ -123,12 +131,16 @@ data class CompletionEvidenceItem(
 
   companion object {
     fun fromJsonObject(obj: org.json.JSONObject): CompletionEvidenceItem {
+      val t = if (obj.has("target")) obj.optString("target") else if (obj.has("targetPath")) obj.optString("targetPath") else null
+      val d = if (obj.has("details")) obj.optString("details") else null
       return CompletionEvidenceItem(
         id = obj.optString("id", "ev_" + UUID.randomUUID().toString().take(8)),
         stepId = if (obj.has("stepId")) obj.optString("stepId") else null,
         type = obj.optString("type", "ASSERTION"),
         description = obj.optString("description", ""),
-        targetPath = if (obj.has("targetPath")) obj.optString("targetPath") else null,
+        target = t,
+        targetPath = t,
+        details = d,
         verified = obj.optBoolean("verified", false),
         timestamp = obj.optLong("timestamp", System.currentTimeMillis())
       )
@@ -253,7 +265,8 @@ data class PersistentTask(
   val completedAt: Long? = null,
   val expectedArtifact: String? = null,
   val error: String? = null,
-  val conclusion: String? = null
+  val conclusion: String? = null,
+  val artifacts: List<Artifact> = emptyList()
 ) {
   fun toJsonObject(): org.json.JSONObject {
     val obj = org.json.JSONObject()
@@ -436,6 +449,7 @@ data class TaskRecord(
   val error: String? = null,
   val conclusion: String? = null,
   val deliverables: List<String> = emptyList(),
+  val timestamp: Long = startedAt,
   val conversation: List<AgentMessage> = emptyList(),
   val planSteps: List<String> = emptyList(),
   val executionFeed: List<ExecutionStep> = emptyList(),

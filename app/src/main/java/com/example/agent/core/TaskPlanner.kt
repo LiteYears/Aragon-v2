@@ -512,7 +512,7 @@ class TaskPlanner(private val goal: String) {
       val cur = actionableSteps[idx]
       val newObs = if (observation != null) cur.observations + observation else cur.observations
       val newArts = if (artifact != null) cur.artifacts + artifact else cur.artifacts
-      val newEv = if (evidence != null) cur.completionEvidence + evidence else cur.completionEvidence
+      val newEv = if (evidence != null) cur.completionEvidence + evidence.description else cur.completionEvidence
       actionableSteps[idx] = cur.copy(
         status = ActionExecutionStatus.COMPLETED,
         observations = newObs,

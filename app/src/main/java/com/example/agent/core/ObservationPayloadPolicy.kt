@@ -260,7 +260,7 @@ object ObservationPayloadPolicy {
       for (seg in segments) {
         if (seg.contains('[') && seg.endsWith(']')) {
           val key = seg.substringBefore('[')
-          val idxStr = seg.substringAfter('[').removeSuffix(']')
+          val idxStr = seg.substringAfter('[').removeSuffix("]")
           val idx = idxStr.toIntOrNull() ?: return null
           val nextObj = if (key.isNotEmpty()) {
             if (current is JSONObject) (current as JSONObject).get(key) else return null

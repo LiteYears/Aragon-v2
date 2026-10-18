@@ -1897,6 +1897,7 @@ fun AgentTopHeader(
 fun StatusPill(status: AgentStatus) {
   val (bgColor, textColor, label) = when (status) {
     AgentStatus.IDLE -> Triple(Color(0xFF141414), AmoledTextMuted, "IDLE")
+    AgentStatus.RUNNING -> Triple(Color(0xFF1B1710), AmoledActionPrimary, "RUNNING")
     AgentStatus.THINKING -> Triple(Color(0xFF1B1710), AmoledActionPrimary, "THINKING")
     AgentStatus.PLANNING -> Triple(Color(0xFF1B1710), AmoledActionPrimary, "PLANNING")
     AgentStatus.REPLANNING -> Triple(Color(0xFF1B1710), AmoledActionPrimary, "REPLAN")

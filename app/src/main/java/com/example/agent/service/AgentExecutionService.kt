@@ -94,6 +94,7 @@ class AgentExecutionService : Service() {
       engine.state.collectLatest { state ->
         try {
           when (state.status) {
+            AgentStatus.RUNNING,
             AgentStatus.THINKING,
             AgentStatus.PLANNING,
             AgentStatus.REPLANNING,

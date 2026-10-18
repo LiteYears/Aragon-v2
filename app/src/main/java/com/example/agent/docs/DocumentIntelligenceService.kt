@@ -236,14 +236,14 @@ class DocumentIntelligenceService(
       val file = File(artifact.canonicalPath.ifBlank { artifact.absolutePath })
       if (!file.exists() || !file.isFile || file.length() == 0L) return@withContext false
 
-      val sha = artifact.sha256 ?: DocumentDigest.sha256(file)
+      val sha = artifact.sha256 ?: DocumentText.fileSha256(file)
       val existing = repository.findBySha(sha)
       if (existing != null) {
         return@withContext true
       }
 
       val now = System.currentTimeMillis()
-      val detection = converter.detect(file, artifact.name)
+      val detection = DocumentDetector.sniff(file, null, artifact.name)
       val entity = DocumentEntity(
         id = artifact.id,
         displayName = DocumentText.sanitizeDisplayName(artifact.name),

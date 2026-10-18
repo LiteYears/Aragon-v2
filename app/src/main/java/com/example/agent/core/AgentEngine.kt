@@ -175,7 +175,7 @@ class AgentEngine(
     )
 
     // 5. Web & Browser Subsystem Tools
-    registry.register(WebSearchTool(isConfigured = webEnabled, workspaceDir = workspaceDir))
+    registry.register(WebSearchTool(isConfigured = webEnabled))
     registry.register(WebOpenTool(isConfigured = webEnabled, workspaceDir = workspaceDir))
     registry.register(WebExtractTool(isConfigured = webEnabled))
     registry.register(WebCrawlTool(isConfigured = webEnabled))
@@ -455,6 +455,7 @@ class AgentEngine(
       actionableSteps = task.actionableSteps,
       persistentTask = initialPTask
     )
+    val updatedHistory = listOf(taskRecord) + currentHistory.filter { it.id != task.id }
     scratchpad.saveTaskRecord(taskRecord)
     scratchpad.saveTask(initialPTask)
     val existingRecord = if (isResuming && _state.value.messages.isEmpty()) {
