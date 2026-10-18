@@ -253,7 +253,7 @@ class E2BCapabilitySmokeSuite(
         durationMs = System.currentTimeMillis() - t0,
         evidence = importCheck.second,
         details = "Dependency import failed post-provisioning.",
-        error = provRes.error
+        error = provRes.errorDetails ?: provRes.message
       )
     }
   }
