@@ -178,24 +178,42 @@ class DeliverableTracker(
       }
     }
 
-    // 2. Auto-discover non-temporary files created in workspace
+    // 2. Auto-discover non-temporary deliverable files created in workspace
     workspaceDir.walkTopDown()
       .maxDepth(4)
       .filter { file ->
+        val nameLower = file.name.lowercase(Locale.ROOT)
+        val parentLower = file.parentFile?.name.orEmpty().lowercase(Locale.ROOT)
+        val rel = PathSecurity.toCanonicalRelativePath(workspaceDir, PathSecurity.getRelativePath(workspaceDir, file))
+        val isTemp = nameLower.startsWith(".") ||
+          nameLower.startsWith(".tmp_") ||
+          nameLower.startsWith("temp_") ||
+          nameLower.startsWith("tmp_") ||
+          nameLower.startsWith("search_") ||
+          nameLower.startsWith("scrape_") ||
+          nameLower.startsWith("cache_") ||
+          nameLower.startsWith("query_") ||
+          nameLower.startsWith("raw_") ||
+          nameLower.startsWith("draft_") ||
+          nameLower.endsWith(".tmp") ||
+          nameLower.endsWith(".temp") ||
+          nameLower.endsWith(".part") ||
+          nameLower.endsWith(".bak") ||
+          nameLower.endsWith(".log") ||
+          rel.startsWith("tmp/") ||
+          rel.startsWith("temp/")
         file.isFile &&
           file.length() > 0 &&
-          !file.name.startsWith(".") &&
-          !file.name.startsWith(".tmp_") &&
-          !file.name.endsWith(".tmp") &&
-          !file.name.endsWith(".part") &&
-          file.parentFile?.name != ".git" &&
-          file.parentFile?.name != ".sessions" &&
-          file.parentFile?.name != ".observations" &&
-          file.parentFile?.name != ".artifacts" &&
-          file.parentFile?.name != ".mcp_data" &&
-          file.parentFile?.name != "notes" &&
-          file.parentFile?.name != "bin" &&
-          file.parentFile?.name != "tmp"
+          !isTemp &&
+          parentLower != ".git" &&
+          parentLower != ".sessions" &&
+          parentLower != ".observations" &&
+          parentLower != ".artifacts" &&
+          parentLower != ".mcp_data" &&
+          parentLower != "notes" &&
+          parentLower != "bin" &&
+          parentLower != "tmp" &&
+          parentLower != "temp"
       }
       .forEach { file ->
         val rel = PathSecurity.toCanonicalRelativePath(workspaceDir, PathSecurity.getRelativePath(workspaceDir, file))

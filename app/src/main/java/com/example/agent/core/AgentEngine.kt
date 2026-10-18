@@ -74,13 +74,9 @@ class AgentEngine(
     workspaceDir.mkdirs()
     ArtifactDownloader.defaultWorkspaceDir = workspaceDir
 
-    artifactManager.databaseRegistrar = { art ->
-      documentService?.let { ds ->
-        scope.launch {
-          ds.registerArtifactDocument(art)
-        }
-      }
-    }
+    // Generated artifacts are deliverables/outputs tracked by ArtifactManager,
+    // they must NEVER be automatically registered as user-attached input documents.
+    artifactManager.databaseRegistrar = null
 
     // 1. Process Tool (powered by E2B Cloud Firecracker MicroVM execution engine)
     val terminalTool = TerminalTool(
@@ -489,13 +485,24 @@ class AgentEngine(
       content = task.goal
     )
 
-    val inputFiles = (documentService?.documents?.value?.map { it.displayName } ?: emptyList())
+    val inScopeIds = documentService?.scope?.value ?: emptySet()
+    val inScopeDocNames = if (inScopeIds.isNotEmpty()) {
+      documentService?.documents?.value
+        ?.filter { it.id in inScopeIds }
+        ?.map { it.displayName } ?: emptyList()
+    } else emptyList()
+
+    val inputFiles = inScopeDocNames
       .plus(
         workspaceDir.walkTopDown()
           .filter { f ->
+            val rel = f.relativeTo(workspaceDir).path.replace('\\', '/')
             f.isFile && !f.name.startsWith(".") &&
-              !f.relativeTo(workspaceDir).path.startsWith("documents/") &&
-              !f.relativeTo(workspaceDir).path.startsWith(".scratchpad/")
+              !rel.startsWith("documents/") &&
+              !rel.startsWith(".scratchpad/") &&
+              !rel.startsWith(".observations/") &&
+              !rel.startsWith("tmp/") &&
+              !rel.startsWith("temp/")
           }
           .map { it.relativeTo(workspaceDir).path.replace('\\', '/') }
           .toList()
@@ -529,29 +536,30 @@ class AgentEngine(
     }
 
     val messageAttachments = mutableListOf<FileAttachment>()
-    val inScopeIds = documentService?.scope?.value ?: emptySet()
-    val allDocs = documentService?.documents?.value ?: emptyList()
-    for (doc in allDocs) {
-      if (inScopeIds.isEmpty() || doc.id in inScopeIds) {
-        val f = documentService?.getOriginalFile(doc.id)
-        if (f != null && f.exists() && f.length() <= 10 * 1024 * 1024) {
-          val mime = when (doc.type) {
-            com.example.agent.docs.DocumentType.IMAGE -> {
-              when (f.extension.lowercase()) {
-                "png" -> "image/png"
-                "webp" -> "image/webp"
-                "gif" -> "image/gif"
-                else -> "image/jpeg"
+    if (inScopeIds.isNotEmpty()) {
+      val allDocs = documentService?.documents?.value ?: emptyList()
+      for (doc in allDocs) {
+        if (doc.id in inScopeIds) {
+          val f = documentService?.getOriginalFile(doc.id)
+          if (f != null && f.exists() && f.length() <= 10 * 1024 * 1024) {
+            val mime = when (doc.type) {
+              com.example.agent.docs.DocumentType.IMAGE -> {
+                when (f.extension.lowercase()) {
+                  "png" -> "image/png"
+                  "webp" -> "image/webp"
+                  "gif" -> "image/gif"
+                  else -> "image/jpeg"
+                }
               }
+              com.example.agent.docs.DocumentType.PDF -> "application/pdf"
+              com.example.agent.docs.DocumentType.CSV -> "text/csv"
+              com.example.agent.docs.DocumentType.TXT -> "text/plain"
+              com.example.agent.docs.DocumentType.DOCX -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              com.example.agent.docs.DocumentType.XLSX -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              else -> "text/plain"
             }
-            com.example.agent.docs.DocumentType.PDF -> "application/pdf"
-            com.example.agent.docs.DocumentType.CSV -> "text/csv"
-            com.example.agent.docs.DocumentType.TXT -> "text/plain"
-            com.example.agent.docs.DocumentType.DOCX -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            com.example.agent.docs.DocumentType.XLSX -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            else -> "text/plain"
+            messageAttachments.add(FileAttachment(name = doc.displayName, mimeType = mime, file = f))
           }
-          messageAttachments.add(FileAttachment(name = doc.displayName, mimeType = mime, file = f))
         }
       }
     }
@@ -675,22 +683,29 @@ class AgentEngine(
     if (activeSandbox != null && activeSandbox.isRemote) {
       try {
         val syncedFiles = mutableListOf<String>()
-        val allDocs = documentService?.documents?.value ?: emptyList()
-        for (doc in allDocs) {
-          val localDocFile = documentService?.resolveDocumentFile(doc.id)
-            ?: File(workspaceDir, doc.displayName).takeIf { it.exists() }
-          if (localDocFile != null && localDocFile.isFile) {
-            val ok = activeSandbox.pushFileToRemote(task.sessionId, doc.displayName, localDocFile)
-            if (ok) syncedFiles.add(doc.displayName)
+        val inScopeIds = documentService?.scope?.value ?: emptySet()
+        if (inScopeIds.isNotEmpty()) {
+          val inScopeDocs = documentService?.documents?.value?.filter { it.id in inScopeIds } ?: emptyList()
+          for (doc in inScopeDocs) {
+            val localDocFile = documentService?.resolveDocumentFile(doc.id)
+              ?: File(workspaceDir, doc.displayName).takeIf { it.exists() }
+            if (localDocFile != null && localDocFile.isFile) {
+              val ok = activeSandbox.pushFileToRemote(task.sessionId, doc.displayName, localDocFile)
+              if (ok) syncedFiles.add(doc.displayName)
+            }
           }
         }
         val isExistingActiveSandbox = expectedSandboxId != null
         if (!isExistingActiveSandbox) {
           val allWorkspaceFiles = workspaceDir.walkTopDown()
             .filter { f ->
+              val rel = f.relativeTo(workspaceDir).path.replace('\\', '/')
               f.isFile && !f.name.startsWith(".") &&
-                !f.relativeTo(workspaceDir).path.startsWith("documents/") &&
-                !f.relativeTo(workspaceDir).path.startsWith(".scratchpad/")
+                !rel.startsWith("documents/") &&
+                !rel.startsWith(".scratchpad/") &&
+                !rel.startsWith(".observations/") &&
+                !rel.startsWith("tmp/") &&
+                !rel.startsWith("temp/")
             }
             .toList()
           for (f in allWorkspaceFiles) {

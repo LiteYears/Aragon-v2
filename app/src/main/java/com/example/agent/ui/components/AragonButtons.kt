@@ -470,19 +470,19 @@ fun AragonHeaderButton(
           overflow = TextOverflow.Ellipsis
         )
         if (badge != null) {
-          Spacer(modifier = Modifier.width(4.dp))
+          Spacer(modifier = Modifier.width(3.dp))
           Surface(
-            shape = RoundedCornerShape(3.dp),
+            shape = RoundedCornerShape(2.dp),
             color = AmoledActionPrimary,
-            modifier = Modifier.padding(vertical = 1.dp)
+            modifier = Modifier.padding(start = 2.dp)
           ) {
             Text(
               text = badge,
               fontFamily = JetBrainsMonoFontFamily,
               fontWeight = FontWeight.Bold,
-              fontSize = 8.sp,
+              fontSize = 6.5.sp,
               color = AmoledActionPrimaryOn,
-              modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+              modifier = Modifier.padding(horizontal = 2.5.dp, vertical = 0.5.dp)
             )
           }
         }

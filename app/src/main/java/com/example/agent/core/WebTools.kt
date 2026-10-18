@@ -566,8 +566,8 @@ class WebOpenTool(private val isConfigured: Boolean = true, var workspaceDir: Fi
         var spilloverPath: String? = null
         if (isTruncated && workspaceDir != null) {
           try {
-            val obsDir = File(workspaceDir, ".observations").apply { mkdirs() }
-            val spillFile = File(obsDir, "web_${callId.replace(Regex("[^a-zA-Z0-9_-]"), "_")}.md")
+            val tmpDir = File(workspaceDir, "tmp").apply { mkdirs() }
+            val spillFile = File(tmpDir, "web_${callId.replace(Regex("[^a-zA-Z0-9_-]"), "_")}.md")
             spillFile.writeText(html, StandardCharsets.UTF_8)
             spilloverPath = spillFile.absolutePath
           } catch (_: Exception) {}

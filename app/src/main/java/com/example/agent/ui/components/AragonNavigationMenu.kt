@@ -452,19 +452,19 @@ private fun TypographyNavigationCard(
       }
 
       if (badge != null) {
-        Spacer(modifier = Modifier.width(8.dp))
+        Spacer(modifier = Modifier.width(6.dp))
         Surface(
-          shape = RoundedCornerShape(3.dp),
+          shape = RoundedCornerShape(2.dp),
           color = if (isSelected) AmoledActionPrimary else Color(0xFF1A1A20),
-          border = BorderStroke(1.dp, if (isSelected) AmoledActionPrimary else Color(0xFF26262E))
+          border = BorderStroke(0.8.dp, if (isSelected) AmoledActionPrimary else Color(0xFF26262E))
         ) {
           Text(
             text = badge,
             fontFamily = JetBrainsMonoFontFamily,
-            fontSize = 8.5.sp,
+            fontSize = 6.5.sp,
             fontWeight = FontWeight.Bold,
             color = if (isSelected) AmoledActionPrimaryOn else AmoledIconGreyLight,
-            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+            modifier = Modifier.padding(horizontal = 3.5.dp, vertical = 1.dp)
           )
         }
       }

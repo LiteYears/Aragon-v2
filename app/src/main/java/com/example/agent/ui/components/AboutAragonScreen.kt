@@ -1,6 +1,9 @@
 package com.example.agent.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,11 +18,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -28,25 +30,25 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
 import com.example.ui.theme.AmoledActionPrimary
 import com.example.ui.theme.AmoledBackground
 import com.example.ui.theme.AmoledBorder
 import com.example.ui.theme.AmoledBorderSubtle
+import com.example.ui.theme.AmoledIconGreyDark
 import com.example.ui.theme.AmoledIconGreyLight
 import com.example.ui.theme.AmoledStatusSuccess
+import com.example.ui.theme.AmoledStatusWarning
 import com.example.ui.theme.AmoledSurface
 import com.example.ui.theme.AmoledSurfaceElevated
 import com.example.ui.theme.AmoledTextMuted
@@ -55,15 +57,14 @@ import com.example.ui.theme.AmoledTextSecondary
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.JetBrainsMonoFontFamily
 
-import androidx.compose.runtime.saveable.rememberSaveable
-
-private const val BUILD_NUMBER = "2026.10.09.4-PROD"
-private const val APP_VERSION = "2.4.0"
+private const val BUILD_NUMBER = "2026.10.18.2-PROD"
+private const val APP_VERSION = "2.4.2"
 private const val REQUIRED_TAPS_TO_UNLOCK = 10
 
 /**
- * System Architecture & About Screen.
- * Pure typography design. Retains the 10-tap hidden settings unlock on build number.
+ * System Architecture & About Screen for Aragon.
+ * Pristine typography, enterprise architecture specifications, runtime diagnostics,
+ * dedicated tmp scratchpad isolation details, and 10-tap developer settings unlock.
  */
 @Composable
 fun AboutAragonScreen(
@@ -85,150 +86,120 @@ fun AboutAragonScreen(
       .fillMaxSize()
       .background(AmoledBackground)
       .verticalScroll(scrollState)
-      .padding(horizontal = 16.dp, vertical = 12.dp)
+      .padding(horizontal = 14.dp, vertical = 10.dp)
       .widthIn(max = 680.dp),
-    horizontalAlignment = Alignment.CenterHorizontally
+    horizontalAlignment = Alignment.CenterHorizontally,
+    verticalArrangement = Arrangement.spacedBy(10.dp)
   ) {
-    // Top Hero Brand Card
+    // 1. Top Hero Brand Card
     Surface(
-      shape = RoundedCornerShape(16.dp),
+      shape = RoundedCornerShape(14.dp),
       color = AmoledSurface,
-      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+      border = BorderStroke(1.dp, AmoledBorderSubtle),
       modifier = Modifier.fillMaxWidth()
     ) {
       Column(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(20.dp),
+          .padding(18.dp),
         horizontalAlignment = Alignment.CenterHorizontally
       ) {
         // Aragon Logo Emblem
         Box(
           contentAlignment = Alignment.Center,
-          modifier = Modifier.size(54.dp)
+          modifier = Modifier.size(52.dp)
         ) {
           AragonLogoEmblem(
             tint = Color.White,
-            modifier = Modifier.size(46.dp)
+            modifier = Modifier.size(44.dp)
           )
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         Text(
           text = "ARAGON",
           style = MaterialTheme.typography.headlineSmall.copy(
             fontFamily = InterFontFamily,
             fontWeight = FontWeight.Bold,
-            letterSpacing = 3.sp
+            letterSpacing = 4.sp
           ),
           color = Color.White
         )
 
-        Spacer(modifier = Modifier.height(3.dp))
+        Spacer(modifier = Modifier.height(2.dp))
 
         Text(
-          text = "Autonomous Intelligence Kernel",
+          text = "Autonomous Intelligence Kernel • v$APP_VERSION",
           style = MaterialTheme.typography.bodySmall,
-          fontFamily = InterFontFamily,
+          fontFamily = JetBrainsMonoFontFamily,
           color = AmoledIconGreyLight,
-          fontSize = 12.sp
+          fontSize = 11.sp
         )
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        Surface(
-          shape = RoundedCornerShape(4.dp),
-          color = Color(0xFF1A1A1A),
-          border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle)
+        // Specification Pills
+        Row(
+          horizontalArrangement = Arrangement.spacedBy(4.dp),
+          verticalAlignment = Alignment.CenterVertically
         ) {
-          Text(
-            text = "ENTERPRISE RUNTIME",
-            style = MaterialTheme.typography.labelSmall,
-            fontFamily = JetBrainsMonoFontFamily,
-            fontSize = 9.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color.White,
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-          )
+          SpecTag(text = "MICROVM")
+          SpecTag(text = "MCP 2024-11-05")
+          SpecTag(text = "DOCX/XLSX/PDF")
+          SpecTag(text = "tmp/ ISOLATED")
         }
       }
     }
 
-    Spacer(modifier = Modifier.height(12.dp))
-
-    // Description Overview
+    // 2. Executive Overview Card
     Surface(
       shape = RoundedCornerShape(12.dp),
       color = AmoledSurfaceElevated,
-      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+      border = BorderStroke(1.dp, AmoledBorderSubtle),
       modifier = Modifier.fillMaxWidth()
     ) {
       Column(modifier = Modifier.padding(14.dp)) {
-        Text(
-          text = "Overview",
-          style = MaterialTheme.typography.titleSmall,
-          fontWeight = FontWeight.SemiBold,
-          color = AmoledTextPrimary
-        )
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        Text(
-          text = "Aragon is a deterministic autonomous agent kernel engineered for real-world execution. Operating in an isolated sandbox with terminal execution, Python 3 runtimes, file synthesis, and verifiable evidence generation.",
-          style = MaterialTheme.typography.bodySmall,
-          color = AmoledTextSecondary,
-          lineHeight = 18.sp
-        )
-      }
-    }
-
-    Spacer(modifier = Modifier.height(10.dp))
-
-    // Replay Splash Intro Animation card
-    Surface(
-      shape = RoundedCornerShape(12.dp),
-      color = AmoledSurfaceElevated,
-      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
-      modifier = Modifier.fillMaxWidth()
-    ) {
-      Row(
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(14.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
           Text(
-            text = "Sacred Monochrome Intro",
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = AmoledTextPrimary
+            text = "KERNEL OVERVIEW",
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = JetBrainsMonoFontFamily,
+            fontWeight = FontWeight.Bold,
+            color = AmoledActionPrimary,
+            fontSize = 10.sp
           )
-          Spacer(modifier = Modifier.height(2.dp))
           Text(
-            text = "Replay the hypnotic mathematical quantum singularity splash animation.",
-            style = MaterialTheme.typography.bodySmall,
-            color = AmoledTextSecondary,
-            fontSize = 11.sp
+            text = "DETERMINISTIC EXECUTION",
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = JetBrainsMonoFontFamily,
+            color = AmoledStatusSuccess,
+            fontSize = 8.5.sp
           )
         }
-        Spacer(modifier = Modifier.width(10.dp))
-        AragonHeaderButton(
-          text = "PLAY",
-          onClick = onReplaySplash,
-          variant = AragonButtonVariant.PRIMARY,
-          testTag = "replay_splash_intro_btn"
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Text(
+          text = "Aragon is a production-grade autonomous cognitive agent engine designed for deterministic, verifiable task execution. Running within an isolated hardware microVM sandbox, it seamlessly orchestrates deep web research, precision document synthesis, Python 3 computational pipelines, Model Context Protocol servers, and rigorous 5-stage verification.",
+          style = MaterialTheme.typography.bodySmall,
+          fontFamily = InterFontFamily,
+          color = AmoledTextSecondary,
+          lineHeight = 18.sp,
+          fontSize = 11.5.sp
         )
       }
     }
 
-    // Architecture Pillars Cards (Pure text badges)
+    // 3. Architecture Pillars
     Surface(
       shape = RoundedCornerShape(12.dp),
       color = AmoledSurfaceElevated,
-      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+      border = BorderStroke(1.dp, AmoledBorderSubtle),
       modifier = Modifier.fillMaxWidth()
     ) {
       Column(
@@ -236,86 +207,113 @@ fun AboutAragonScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp)
       ) {
         Text(
-          text = "Cognitive Architecture",
-          style = MaterialTheme.typography.titleSmall,
-          fontWeight = FontWeight.SemiBold,
-          color = AmoledTextPrimary
+          text = "CORE ARCHITECTURAL PILLARS",
+          style = MaterialTheme.typography.labelSmall,
+          fontFamily = JetBrainsMonoFontFamily,
+          fontWeight = FontWeight.Bold,
+          color = AmoledActionPrimary,
+          fontSize = 10.sp
         )
 
-        FeatureRow(
-          tag = "TOOL",
-          title = "Native Sandbox Toolchain",
-          description = "Full workspace runtime with Python 3, precision file patching, pattern grep, asset downloading, and JSON/CSV dataset processing."
+        ArchitecturePillarRow(
+          tag = "SANDBOX",
+          title = "E2B Cloud MicroVM & tmp/ Isolation",
+          description = "Dedicated Linux x86_64 Firecracker microVM with full terminal, Python 3, and package management. Intermediate search scrapes, temporary files, and dumps are cleanly isolated inside tmp/ so they never pollute final workspace deliverables."
         )
 
-        FeatureRow(
-          tag = "WEB",
-          title = "Autonomous Web Research System",
-          description = "Multi-step search, HTML page retrieval, form submission, recursive link crawling, and structured table extraction."
-        )
-
-        FeatureRow(
+        ArchitecturePillarRow(
           tag = "5-STG",
           title = "5-Stage Cognitive Discipline",
-          description = "Objective Intent → Dynamic Plan → Tool Execution → Sensory Observation → Empirical Verification."
+          description = "Every mission rigorously flows through Objective Intent Decoding → Dynamic Plan Breakdown → Deterministic Tool Invocation → Sensory Observation → Empirical Evidence Verification."
         )
 
-        FeatureRow(
-          tag = "ORCH",
-          title = "Multi-Model Orchestration",
-          description = "Run NVIDIA NIM cloud models, Google Gemini, or the built-in engine; transient provider failures recover automatically."
+        ArchitecturePillarRow(
+          tag = "DOCS",
+          title = "Universal Document Synthesis Engine",
+          description = "Synthesizes native Microsoft Word (.docx), Excel (.xlsx), Adobe PDF, and Markdown (.md) deliverables with multi-page typography, tables, and native Right-to-Left (RTL) Arabic support."
+        )
+
+        ArchitecturePillarRow(
+          tag = "MCP",
+          title = "Model Context Protocol (2024-11-05)",
+          description = "Compliant MCP client supporting SQLite database querying, filesystem access, HTTP fetch, and custom external JSON-RPC servers."
+        )
+
+        ArchitecturePillarRow(
+          tag = "RESEARCH",
+          title = "Autonomous Web & Browser Research",
+          description = "Playwright-grade browser automation, multi-source web search, structured HTML parsing, recursive link crawling, and table extraction with zero hallucination."
+        )
+
+        ArchitecturePillarRow(
+          tag = "NEURAL",
+          title = "Zero-Failover Multi-Model Gateway",
+          description = "Unified orchestration routing requests to NVIDIA NIM (Llama 3.3 70B, Nemotron, DeepSeek) or Google Gemini with intelligent failover."
         )
       }
     }
 
-    Spacer(modifier = Modifier.height(10.dp))
-
-    // Runtime Diagnostics
+    // 4. Runtime Diagnostics
     Surface(
       shape = RoundedCornerShape(12.dp),
       color = AmoledSurfaceElevated,
-      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+      border = BorderStroke(1.dp, AmoledBorderSubtle),
       modifier = Modifier.fillMaxWidth()
     ) {
       Column(
         modifier = Modifier.padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        verticalArrangement = Arrangement.spacedBy(7.dp)
       ) {
         Text(
-          text = "System Diagnostics",
-          style = MaterialTheme.typography.titleSmall,
-          fontWeight = FontWeight.SemiBold,
-          color = AmoledTextPrimary
+          text = "RUNTIME DIAGNOSTICS & TOPOLOGY",
+          style = MaterialTheme.typography.labelSmall,
+          fontFamily = JetBrainsMonoFontFamily,
+          fontWeight = FontWeight.Bold,
+          color = AmoledActionPrimary,
+          fontSize = 10.sp
         )
 
-        DiagnosticRow(label = "Active Engine", value = currentProviderName)
-        DiagnosticRow(label = "Workspace", value = workspacePath)
+        DiagnosticRow(label = "Active Intelligence Engine", value = currentProviderName)
+        DiagnosticRow(label = "Workspace Root", value = workspacePath)
+        DiagnosticRow(label = "Scratchpad Directory", value = "$workspacePath/tmp")
         DiagnosticRow(label = "Execution Boundary", value = sandboxBoundary)
-        DiagnosticRow(label = "Platform", value = "Android 7.0+ • Jetpack Compose (Material 3)")
+        DiagnosticRow(label = "Artifact Deliverable Filter", value = "Strict Root Only (tmp/ Excluded)")
+        DiagnosticRow(label = "Document Database Scope", value = "User Attachments Only")
+        DiagnosticRow(label = "UI Architecture", value = "Jetpack Compose M3 AMOLED True Black")
       }
     }
 
-    Spacer(modifier = Modifier.height(14.dp))
-
-    // Direct Settings & Keys Configuration Button
-    AragonActionButton(
-      text = "SETTINGS & KEYS CONFIGURATION",
-      onClick = onOpenSettings,
+    // 5. Quick Actions Row
+    Row(
       modifier = Modifier.fillMaxWidth(),
-      variant = AragonButtonVariant.PRIMARY,
-      height = 36.dp,
-      testTag = "about_open_settings_direct_btn"
-    )
+      horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+      AragonActionButton(
+        text = "SETTINGS & KEYS",
+        onClick = onOpenSettings,
+        modifier = Modifier.weight(1f),
+        variant = AragonButtonVariant.PRIMARY,
+        height = 34.dp,
+        testTag = "about_open_settings_direct_btn"
+      )
 
-    Spacer(modifier = Modifier.height(12.dp))
+      AragonActionButton(
+        text = "REPLAY INTRO",
+        onClick = onReplaySplash,
+        modifier = Modifier.weight(1f),
+        variant = AragonButtonVariant.MUTED,
+        height = 34.dp,
+        testTag = "replay_splash_intro_btn"
+      )
+    }
 
-    // Interactive Build Number Card with 10-Click Secret Unlock
+    // 6. Interactive Build Number Card with 10-Click Secret Unlock
     Surface(
       shape = RoundedCornerShape(12.dp),
-      color = if (isDevUnlocked) Color(0xFF141F14) else Color(0xFF111111),
-      border = androidx.compose.foundation.BorderStroke(
+      color = if (isDevUnlocked) Color(0xFF141F14) else Color(0xFF0E0E0E),
+      border = BorderStroke(
         1.dp,
-        if (isDevUnlocked) AmoledStatusSuccess.copy(alpha = 0.5f) else AmoledBorder
+        if (isDevUnlocked) AmoledStatusSuccess.copy(alpha = 0.5f) else AmoledBorderSubtle
       ),
       modifier = Modifier
         .fillMaxWidth()
@@ -330,13 +328,13 @@ fun AboutAragonScreen(
             if (nextCount >= REQUIRED_TAPS_TO_UNLOCK) {
               buildTapCount = 0
               isDevUnlocked = true
-              unlockBannerMessage = "Settings & Configuration Unlocked!"
+              unlockBannerMessage = "Developer Mode & Settings Unlocked!"
               onOpenSettings()
             } else {
               buildTapCount = nextCount
               val remaining = REQUIRED_TAPS_TO_UNLOCK - nextCount
               if (remaining in 1..6) {
-                unlockBannerMessage = "You are $remaining tap${if (remaining == 1) "" else "s"} away from Settings & Configuration"
+                unlockBannerMessage = "You are $remaining tap${if (remaining == 1) "" else "s"} away from Developer Mode"
               }
             }
           }
@@ -350,15 +348,15 @@ fun AboutAragonScreen(
         horizontalAlignment = Alignment.CenterHorizontally
       ) {
         Text(
-          text = if (isDevUnlocked) "[SETTINGS UNLOCKED]" else "[BUILD INFO]",
+          text = if (isDevUnlocked) "[DEVELOPER MODE ACTIVE]" else "[BUILD INFO]",
           style = MaterialTheme.typography.labelSmall,
           fontFamily = JetBrainsMonoFontFamily,
           fontWeight = FontWeight.Bold,
-          fontSize = 10.sp,
+          fontSize = 9.5.sp,
           color = if (isDevUnlocked) AmoledStatusSuccess else AmoledActionPrimary
         )
 
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(3.dp))
 
         Text(
           text = "Version $APP_VERSION ($BUILD_NUMBER)",
@@ -370,22 +368,22 @@ fun AboutAragonScreen(
         Spacer(modifier = Modifier.height(2.dp))
 
         Text(
-          text = if (isDevUnlocked) "Tap to open Settings & Configuration" else "Tap build number to reveal Settings & Configuration",
+          text = if (isDevUnlocked) "Tap to open system settings & configurations" else "Tap 10 times to unlock direct configuration shortcut",
           style = MaterialTheme.typography.labelSmall,
           color = AmoledTextMuted,
-          fontSize = 10.sp,
+          fontSize = 9.5.sp,
           textAlign = TextAlign.Center
         )
 
-        AnimatedVisibility(visible = unlockBannerMessage != null) {
+        AnimatedVisibility(visible = unlockBannerMessage != null, enter = fadeIn(), exit = fadeOut()) {
           unlockBannerMessage?.let { msg ->
             Spacer(modifier = Modifier.height(6.dp))
             Text(
               text = msg,
               style = MaterialTheme.typography.labelSmall,
               fontFamily = JetBrainsMonoFontFamily,
-              color = if (isDevUnlocked) AmoledStatusSuccess else AmoledActionPrimary,
-              fontSize = 10.sp,
+              color = if (isDevUnlocked) AmoledStatusSuccess else AmoledStatusWarning,
+              fontSize = 9.5.sp,
               textAlign = TextAlign.Center
             )
           }
@@ -393,12 +391,30 @@ fun AboutAragonScreen(
       }
     }
 
-    Spacer(modifier = Modifier.height(28.dp))
+    Spacer(modifier = Modifier.height(20.dp))
   }
 }
 
 @Composable
-private fun FeatureRow(
+private fun SpecTag(text: String) {
+  Surface(
+    shape = RoundedCornerShape(3.dp),
+    color = Color(0xFF161618),
+    border = BorderStroke(1.dp, AmoledBorderSubtle)
+  ) {
+    Text(
+      text = text,
+      fontFamily = JetBrainsMonoFontFamily,
+      fontSize = 8.sp,
+      fontWeight = FontWeight.SemiBold,
+      color = AmoledIconGreyLight,
+      modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+    )
+  }
+}
+
+@Composable
+private fun ArchitecturePillarRow(
   tag: String,
   title: String,
   description: String
@@ -410,9 +426,9 @@ private fun FeatureRow(
   ) {
     Surface(
       shape = RoundedCornerShape(4.dp),
-      color = Color(0xFF161616),
-      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
-      modifier = Modifier.size(width = 38.dp, height = 24.dp)
+      color = Color(0xFF141416),
+      border = BorderStroke(1.dp, AmoledBorderSubtle),
+      modifier = Modifier.width(46.dp).height(24.dp)
     ) {
       Box(contentAlignment = Alignment.Center) {
         Text(
@@ -420,8 +436,9 @@ private fun FeatureRow(
           style = MaterialTheme.typography.labelSmall,
           fontFamily = JetBrainsMonoFontFamily,
           fontWeight = FontWeight.Bold,
-          fontSize = 8.sp,
-          color = AmoledActionPrimary
+          fontSize = 7.5.sp,
+          color = AmoledActionPrimary,
+          maxLines = 1
         )
       }
     }
@@ -430,16 +447,18 @@ private fun FeatureRow(
       Text(
         text = title,
         style = MaterialTheme.typography.bodyMedium,
+        fontFamily = InterFontFamily,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 12.sp,
+        fontSize = 11.5.sp,
         color = AmoledTextPrimary
       )
       Spacer(modifier = Modifier.height(2.dp))
       Text(
         text = description,
         style = MaterialTheme.typography.bodySmall,
+        fontFamily = InterFontFamily,
         color = AmoledTextMuted,
-        fontSize = 11.sp,
+        fontSize = 10.5.sp,
         lineHeight = 15.sp
       )
     }
@@ -457,7 +476,7 @@ private fun DiagnosticRow(label: String, value: String) {
       text = label,
       style = MaterialTheme.typography.labelSmall,
       color = AmoledTextMuted,
-      fontSize = 11.sp,
+      fontSize = 10.sp,
       modifier = Modifier.padding(end = 8.dp)
     )
     Text(
@@ -465,7 +484,7 @@ private fun DiagnosticRow(label: String, value: String) {
       style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily),
       fontWeight = FontWeight.Medium,
       color = AmoledTextPrimary,
-      fontSize = 11.sp,
+      fontSize = 10.sp,
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,
       textAlign = TextAlign.End,

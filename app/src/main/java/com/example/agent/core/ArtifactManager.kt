@@ -22,6 +22,8 @@ class ArtifactManager(
   var databaseRegistrar: ((Artifact) -> Unit)? = null
 
   init {
+    val tmpFolder = File(workspaceDir, "tmp")
+    if (!tmpFolder.exists()) tmpFolder.mkdirs()
     loadPersistedRegistry()
   }
 
@@ -118,9 +120,25 @@ class ArtifactManager(
       else -> ArtifactCreationStatus.CORRUPTED
     }
 
+    val nameLower = file.name.lowercase(java.util.Locale.ROOT)
+    val isTempName = nameLower.startsWith("temp_") ||
+      nameLower.startsWith("tmp_") ||
+      nameLower.startsWith("search_") ||
+      nameLower.startsWith("scrape_") ||
+      nameLower.startsWith("cache_") ||
+      nameLower.startsWith("query_") ||
+      nameLower.startsWith("raw_") ||
+      nameLower.startsWith("draft_") ||
+      nameLower.endsWith(".tmp") ||
+      nameLower.endsWith(".temp") ||
+      nameLower.endsWith(".part") ||
+      nameLower.endsWith(".bak") ||
+      nameLower.endsWith(".swp") ||
+      nameLower.endsWith(".log")
+
     val category = when {
       cleanRelPath.startsWith(".observations/") -> ArtifactCategory.INTERNAL_OBSERVATION
-      cleanRelPath.startsWith(".tmp_") || cleanRelPath.endsWith(".tmp") || cleanRelPath.endsWith(".part") || cleanRelPath.startsWith("tmp/") -> ArtifactCategory.TEMPORARY_SCRATCH
+      cleanRelPath.startsWith("tmp/") || cleanRelPath.startsWith("temp/") || cleanRelPath.startsWith(".tmp_") || isTempName -> ArtifactCategory.TEMPORARY_SCRATCH
       else -> ArtifactCategory.USER_FACING_DELIVERABLE
     }
 
@@ -229,20 +247,32 @@ class ArtifactManager(
     workspaceDir.walkTopDown()
       .maxDepth(5)
       .filter { file ->
-        val name = file.name.lowercase()
-        val parentName = file.parentFile?.name.orEmpty().lowercase()
+        val name = file.name.lowercase(java.util.Locale.ROOT)
+        val parentName = file.parentFile?.name.orEmpty().lowercase(java.util.Locale.ROOT)
         val isLink = PathSecurity.isSymbolicLink(file)
+        val isTemp = name.startsWith(".tmp_") ||
+          name.startsWith("temp_") ||
+          name.startsWith("tmp_") ||
+          name.startsWith("search_") ||
+          name.startsWith("scrape_") ||
+          name.startsWith("cache_") ||
+          name.startsWith("query_") ||
+          name.startsWith(".e2b_session") ||
+          name.startsWith(".sessions") ||
+          name.startsWith(".git") ||
+          name.endsWith(".tmp") ||
+          name.endsWith(".temp") ||
+          name.endsWith(".part") ||
+          name.endsWith(".bak") ||
+          name.endsWith(".log") ||
+          name.endsWith(".db") ||
+          name.endsWith(".db-wal") ||
+          name.endsWith(".db-shm") ||
+          name.endsWith(".db-journal") ||
+          name == "data.db"
         file.isFile &&
           !isLink &&
-          !name.startsWith(".tmp_") &&
-          !name.startsWith(".e2b_session") &&
-          !name.startsWith(".sessions") &&
-          !name.startsWith(".git") &&
-          !name.endsWith(".db") &&
-          !name.endsWith(".db-wal") &&
-          !name.endsWith(".db-shm") &&
-          !name.endsWith(".db-journal") &&
-          name != "data.db" &&
+          !isTemp &&
           parentName != ".git" &&
           parentName != ".sessions" &&
           parentName != ".mcp_data" &&
@@ -254,6 +284,7 @@ class ArtifactManager(
           parentName != "node_modules" &&
           parentName != "bin" &&
           parentName != "tmp" &&
+          parentName != "temp" &&
           parentName != "notes"
       }
       .forEach { file ->

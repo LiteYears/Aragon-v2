@@ -24,6 +24,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.graphics.graphicsLayer
 import com.example.agent.ui.components.tactilePress
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -506,8 +507,11 @@ fun AgentScreen(
                   .fillMaxWidth()
                   .padding(vertical = 10.dp)
               ) {
-                // Attached Documents & System Messages Strip (if any)
-                if (documentMessages.isNotEmpty() || documents.isNotEmpty()) {
+                // Attached Documents & System Messages Strip (ONLY shows documents explicitly attached / in-scope)
+                val attachedDocuments = remember(documents, documentScope) {
+                  documents.filter { it.id in documentScope }
+                }
+                if (documentMessages.isNotEmpty() || attachedDocuments.isNotEmpty()) {
                   val docChipScrollState = rememberScrollState()
                   Row(
                     modifier = Modifier
@@ -539,7 +543,7 @@ fun AgentScreen(
                         )
                       }
                     }
-                    documents.forEachIndexed { index, doc ->
+                    attachedDocuments.forEachIndexed { index, doc ->
                       val chipColor = when (doc.status) {
                         DocumentStatus.READY, DocumentStatus.READY_LEXICAL -> AmoledStatusSuccess
                         DocumentStatus.PROCESSING, DocumentStatus.IMPORTING -> AmoledStatusWarning
@@ -550,23 +554,50 @@ fun AgentScreen(
                         shape = RoundedCornerShape(4.dp),
                         color = Color(0xFF101014),
                         border = androidx.compose.foundation.BorderStroke(1.dp, chipColor.copy(alpha = 0.5f)),
-                        modifier = Modifier
-                          .clickable(role = Role.Button, onClickLabel = "Open documents manager") {
-                            showDocumentsDialog = true
-                          }
-                          .testTag("doc_chip_${doc.id}")
+                        modifier = Modifier.testTag("doc_chip_${doc.id}")
                       ) {
-                        Text(
-                          text = "D${index + 1} ${doc.displayName.take(16)} · ${doc.statusLabel}",
-                          fontFamily = JetBrainsMonoFontFamily,
-                          fontSize = 9.sp,
-                          color = chipColor,
-                          maxLines = 1,
-                          modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
+                        Row(
+                          verticalAlignment = Alignment.CenterVertically,
+                          modifier = Modifier.padding(start = 7.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
+                        ) {
+                          Text(
+                            text = "📎 ${doc.displayName.take(16)} · ${doc.statusLabel}",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontSize = 9.sp,
+                            color = chipColor,
+                            maxLines = 1,
+                            modifier = Modifier.clickable(role = Role.Button, onClickLabel = "Open documents manager") {
+                              showDocumentsDialog = true
+                            }
+                          )
+                          Spacer(modifier = Modifier.width(4.dp))
+                          Box(
+                            modifier = Modifier
+                              .size(16.dp)
+                              .clip(CircleShape)
+                              .clickable(role = Role.Button, onClickLabel = "Unattach document") {
+                                viewModel.setDocumentInScope(doc.id, false)
+                              },
+                            contentAlignment = Alignment.Center
+                          ) {
+                            Text(
+                              text = "×",
+                              fontFamily = JetBrainsMonoFontFamily,
+                              fontSize = 11.sp,
+                              fontWeight = FontWeight.Bold,
+                              color = AmoledIconGreyLight
+                            )
+                          }
+                        }
                       }
                     }
-                    if (documents.isNotEmpty()) {
+                    if (attachedDocuments.isNotEmpty()) {
+                      AragonFeedButton(
+                        text = "CLEAR ALL",
+                        onClick = { viewModel.clearDocumentScope() },
+                        variant = AragonButtonVariant.MUTED,
+                        testTag = "clear_attached_documents_btn"
+                      )
                       AragonFeedButton(
                         text = "MANAGE",
                         onClick = { showDocumentsDialog = true },
@@ -1690,21 +1721,21 @@ fun PremiumTabBar(
                 overflow = TextOverflow.Ellipsis
               )
               if (badge != null) {
-                Spacer(modifier = Modifier.width(3.dp))
+                Spacer(modifier = Modifier.width(2.5.dp))
                 Surface(
-                  shape = RoundedCornerShape(3.dp),
+                  shape = RoundedCornerShape(2.dp),
                   color = if (isSelected) AmoledActionPrimary else Color(0xFF1E1E22),
-                  modifier = Modifier.height(14.dp)
+                  modifier = Modifier.height(11.dp)
                 ) {
                   Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier.padding(horizontal = 3.dp)
+                    modifier = Modifier.padding(horizontal = 2.dp)
                   ) {
                     Text(
                       text = badge,
                       style = MaterialTheme.typography.labelSmall,
                       fontFamily = JetBrainsMonoFontFamily,
-                      fontSize = 7.5.sp,
+                      fontSize = 6.5.sp,
                       fontWeight = FontWeight.Bold,
                       color = if (isSelected) AmoledActionPrimaryOn else AmoledIconGreyLight
                     )
@@ -3350,115 +3381,147 @@ fun TaskHistoryView(
   onClearHistory: () -> Unit,
   modifier: Modifier = Modifier
 ) {
-  Column(
-    modifier = modifier
-      .fillMaxSize()
-      .background(AmoledBackground)
-  ) {
-    // Header Row with count and Clear button
-    Row(
-      modifier = Modifier
-        .fillMaxWidth()
-        .padding(horizontal = 16.dp, vertical = 8.dp),
-      horizontalArrangement = Arrangement.SpaceBetween,
-      verticalAlignment = Alignment.CenterVertically
+  var viewingRecord by remember { mutableStateOf<TaskRecord?>(null) }
+
+  // Handle system back gesture when inspecting a full conversation
+  BackHandler(enabled = viewingRecord != null) {
+    viewingRecord = null
+  }
+
+  if (viewingRecord != null) {
+    TaskFullConversationHistoryView(
+      record = viewingRecord!!,
+      onBack = { viewingRecord = null },
+      onReRun = {
+        val goal = viewingRecord!!.goal
+        viewingRecord = null
+        onSelectTask(goal)
+      },
+      onRestore = {
+        val record = viewingRecord!!
+        viewingRecord = null
+        onRestoreTask(record)
+      },
+      modifier = modifier
+    )
+  } else {
+    Column(
+      modifier = modifier
+        .fillMaxSize()
+        .background(AmoledBackground)
     ) {
-      Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-          text = "TASK ARCHIVE & LOGS",
-          style = MaterialTheme.typography.labelSmall,
-          fontFamily = JetBrainsMonoFontFamily,
-          fontWeight = FontWeight.Bold,
-          fontSize = 10.sp,
-          color = AmoledIconGreyLight
-        )
-        if (taskHistory.isNotEmpty()) {
-          Spacer(modifier = Modifier.width(6.dp))
-          Text(
-            text = "${taskHistory.size}",
-            style = MaterialTheme.typography.labelSmall,
-            fontFamily = JetBrainsMonoFontFamily,
-            fontSize = 9.sp,
-            color = AmoledActionPrimary,
-            modifier = Modifier
-              .background(Color(0xFF1E1A12), RoundedCornerShape(3.dp))
-              .padding(horizontal = 5.dp, vertical = 1.dp)
-          )
-        }
-      }
-
-      if (taskHistory.isNotEmpty()) {
-        AragonActionButton(
-          text = "CLEAR ALL",
-          onClick = onClearHistory,
-          variant = AragonButtonVariant.DANGER,
-          height = 24.dp,
-          testTag = "clear_all_history_btn"
-        )
-      }
-    }
-
-    if (taskHistory.isEmpty()) {
-      Box(
+      // Header Row with count and Clear button
+      Row(
         modifier = Modifier
-          .fillMaxSize()
-          .padding(32.dp),
-        contentAlignment = Alignment.Center
+          .fillMaxWidth()
+          .padding(horizontal = 14.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
       ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
           Text(
-            text = "[ARCHIVE EMPTY]",
+            text = "TASK LOGS & ARCHIVE",
             style = MaterialTheme.typography.labelSmall,
             fontFamily = JetBrainsMonoFontFamily,
-            color = AmoledIconGreyLight,
-            fontSize = 11.sp
+            fontWeight = FontWeight.Bold,
+            fontSize = 10.sp,
+            color = AmoledIconGreyLight
           )
-          Spacer(modifier = Modifier.height(8.dp))
-          Text(
-            text = "No Previous Task History",
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = AmoledTextPrimary
-          )
-          Spacer(modifier = Modifier.height(4.dp))
-          Text(
-            text = "When you execute tasks, each objective, deliverable record, full conversation, planning breakdown, and agentic execution steps are completely saved and accessible here.",
-            style = MaterialTheme.typography.bodySmall,
-            color = AmoledTextMuted,
-            textAlign = TextAlign.Center
+          if (taskHistory.isNotEmpty()) {
+            Spacer(modifier = Modifier.width(5.dp))
+            Surface(
+              shape = RoundedCornerShape(2.dp),
+              color = Color(0xFF1E1A12),
+              modifier = Modifier.padding(start = 2.dp)
+            ) {
+              Text(
+                text = "${taskHistory.size}",
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = JetBrainsMonoFontFamily,
+                fontSize = 7.sp,
+                fontWeight = FontWeight.Bold,
+                color = AmoledActionPrimary,
+                modifier = Modifier.padding(horizontal = 3.dp, vertical = 0.5.dp)
+              )
+            }
+          }
+        }
+
+        if (taskHistory.isNotEmpty()) {
+          AragonActionButton(
+            text = "CLEAR ALL",
+            onClick = onClearHistory,
+            variant = AragonButtonVariant.DANGER,
+            height = 22.dp,
+            testTag = "clear_all_history_btn"
           )
         }
       }
-    } else {
-      LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-      ) {
-        itemsIndexed(
-          items = taskHistory,
-          key = { _, record -> record.id }
-        ) { _, record ->
-          TaskHistoryCard(
-            record = record,
-            onReRun = { onSelectTask(record.goal) },
-            onRestore = { onRestoreTask(record) }
-          )
+
+      if (taskHistory.isEmpty()) {
+        Box(
+          modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+          contentAlignment = Alignment.Center
+        ) {
+          Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+              text = "[ARCHIVE EMPTY]",
+              style = MaterialTheme.typography.labelSmall,
+              fontFamily = JetBrainsMonoFontFamily,
+              color = AmoledIconGreyLight,
+              fontSize = 10.5.sp
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+              text = "No Previous Task History",
+              style = MaterialTheme.typography.titleSmall,
+              fontWeight = FontWeight.SemiBold,
+              color = AmoledTextPrimary
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+              text = "Executed missions, conversations, tool outputs, and generated deliverables are preserved here with full transcript inspection.",
+              style = MaterialTheme.typography.bodySmall,
+              color = AmoledTextMuted,
+              textAlign = TextAlign.Center,
+              fontSize = 11.5.sp
+            )
+          }
+        }
+      } else {
+        LazyColumn(
+          modifier = Modifier.fillMaxSize(),
+          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+          verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+          itemsIndexed(
+            items = taskHistory,
+            key = { _, record -> record.id }
+          ) { _, record ->
+            CompactTaskHistoryCard(
+              record = record,
+              onClick = { viewingRecord = record },
+              onReRun = { onSelectTask(record.goal) }
+            )
+          }
         }
       }
     }
   }
 }
 
+/**
+ * Sleek, compact task history card.
+ * Minimalist footprint with immediate visual status, goal preview, deliverables count, and tap-to-enter conversation history.
+ */
 @Composable
-fun TaskHistoryCard(
+fun CompactTaskHistoryCard(
   record: TaskRecord,
-  onReRun: () -> Unit,
-  onRestore: () -> Unit
+  onClick: () -> Unit,
+  onReRun: () -> Unit
 ) {
-  var isExpanded by remember { mutableStateOf(false) }
-  var activeDetailTab by remember { mutableStateOf(0) } // 0: FEED, 1: CONVERSATION, 2: PLAN & STAGES
-
   val statusColor = when (record.status) {
     AgentStatus.COMPLETED -> AmoledStatusSuccess
     AgentStatus.PARTIAL_COMPLETION -> AmoledStatusWarning
@@ -3489,421 +3552,655 @@ fun TaskHistoryCard(
   }
 
   Surface(
-    shape = RoundedCornerShape(10.dp),
-    color = Color(0xFF0C0C0C),
-    border = androidx.compose.foundation.BorderStroke(1.dp, if (isExpanded) AmoledActionPrimary.copy(alpha = 0.5f) else Color(0xFF1E1E1E)),
-    modifier = Modifier.fillMaxWidth()
+    shape = RoundedCornerShape(8.dp),
+    color = Color(0xFF0C0C0E),
+    border = BorderStroke(1.dp, Color(0xFF1B1B1F)),
+    modifier = Modifier
+      .fillMaxWidth()
+      .clickable(
+        role = Role.Button,
+        onClickLabel = "View full task conversation",
+        onClick = onClick
+      )
+      .testTag("task_history_card_${record.id}")
   ) {
-    Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
-      // Top meta row: Status badge + date + duration, Re-run and Expand buttons
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 11.dp, vertical = 9.dp)
+    ) {
+      // Top meta row
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
       ) {
         Row(
-          modifier = Modifier
-            .weight(1f, fill = false)
-            .horizontalScroll(rememberScrollState()),
+          modifier = Modifier.weight(1f, fill = false),
           verticalAlignment = Alignment.CenterVertically
         ) {
+          // Status Badge
           Text(
             text = statusLabel,
             style = MaterialTheme.typography.labelSmall,
             fontFamily = JetBrainsMonoFontFamily,
             fontWeight = FontWeight.Bold,
-            fontSize = 9.sp,
+            fontSize = 8.sp,
             color = statusColor,
             modifier = Modifier
-              .background(statusColor.copy(alpha = 0.12f), RoundedCornerShape(3.dp))
-              .padding(horizontal = 5.dp, vertical = 2.dp)
+              .background(statusColor.copy(alpha = 0.12f), RoundedCornerShape(2.5.dp))
+              .border(0.8.dp, statusColor.copy(alpha = 0.35f), RoundedCornerShape(2.5.dp))
+              .padding(horizontal = 4.dp, vertical = 1.dp)
           )
 
-          Spacer(modifier = Modifier.width(8.dp))
+          Spacer(modifier = Modifier.width(6.dp))
 
           Text(
             text = formattedDate,
             style = MaterialTheme.typography.labelSmall,
             fontFamily = JetBrainsMonoFontFamily,
-            fontSize = 9.sp,
+            fontSize = 8.5.sp,
             color = AmoledIconGreyDark
           )
 
           if (executionDuration != null) {
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.width(5.dp))
             Text(
               text = "• $executionDuration",
               style = MaterialTheme.typography.labelSmall,
+              fontFamily = JetBrainsMonoFontFamily,
+              fontSize = 8.5.sp,
+              color = AmoledTextMuted
+            )
+          }
+
+          if (record.executionFeed.isNotEmpty()) {
+            Spacer(modifier = Modifier.width(5.dp))
+            Text(
+              text = "• ${record.executionFeed.size} steps",
+              style = MaterialTheme.typography.labelSmall,
+              fontFamily = JetBrainsMonoFontFamily,
+              fontSize = 8.5.sp,
+              color = AmoledActionPrimary.copy(alpha = 0.7f)
+            )
+          }
+        }
+
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+          AragonActionButton(
+            text = "RE-RUN",
+            onClick = onReRun,
+            variant = AragonButtonVariant.MUTED,
+            height = 20.dp,
+            testTag = "rerun_task_btn_${record.id}"
+          )
+
+          Text(
+            text = "VIEW ›",
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = JetBrainsMonoFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 8.sp,
+            color = AmoledActionPrimary,
+            modifier = Modifier.padding(start = 2.dp)
+          )
+        }
+      }
+
+      Spacer(modifier = Modifier.height(5.dp))
+
+      // Goal text (clean, 2-line max)
+      Text(
+        text = record.goal,
+        style = MaterialTheme.typography.bodyMedium,
+        fontFamily = InterFontFamily,
+        fontWeight = FontWeight.Medium,
+        fontSize = 11.5.sp,
+        color = AmoledTextPrimary,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis
+      )
+
+      // Deliverables summary chips if any
+      if (record.deliverables.isNotEmpty()) {
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+          horizontalArrangement = Arrangement.spacedBy(4.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Text(
+            text = "DELIVERABLES:",
+            fontFamily = JetBrainsMonoFontFamily,
+            fontSize = 7.5.sp,
+            color = AmoledIconGreyDark,
+            fontWeight = FontWeight.SemiBold
+          )
+          for (deliv in record.deliverables) {
+            Surface(
+              shape = RoundedCornerShape(2.dp),
+              color = AmoledStatusSuccess.copy(alpha = 0.10f),
+              border = BorderStroke(0.7.dp, AmoledStatusSuccess.copy(alpha = 0.35f))
+            ) {
+              Text(
+                text = deliv,
+                fontFamily = JetBrainsMonoFontFamily,
+                fontSize = 7.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = AmoledStatusSuccess,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Deep inspection screen displaying the FULL conversation and execution transcript of a recorded task.
+ * Includes user prompts, assistant thoughts/reasoning, tool calls, stdout, planning breakdown, and deliverables.
+ */
+@Composable
+fun TaskFullConversationHistoryView(
+  record: TaskRecord,
+  onBack: () -> Unit,
+  onReRun: () -> Unit,
+  onRestore: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val scrollState = rememberScrollState()
+
+  val statusColor = when (record.status) {
+    AgentStatus.COMPLETED -> AmoledStatusSuccess
+    AgentStatus.PARTIAL_COMPLETION -> AmoledStatusWarning
+    AgentStatus.FAILED -> AmoledStatusError
+    AgentStatus.CANCELLED -> AmoledTextMuted
+    AgentStatus.THINKING, AgentStatus.PLANNING, AgentStatus.REPLANNING, AgentStatus.EXECUTING_TOOL, AgentStatus.OBSERVING, AgentStatus.VERIFYING -> AmoledActionPrimary
+    else -> AmoledIconGreyLight
+  }
+
+  val formattedDate = remember(record.timestamp) {
+    SimpleDateFormat("MMMM dd, yyyy • HH:mm:ss", Locale.US).format(Date(record.timestamp))
+  }
+
+  val executionDuration = remember(record.startedAt, record.completedAt) {
+    if (record.completedAt != null && record.completedAt > record.startedAt) {
+      val diffSec = (record.completedAt - record.startedAt) / 1000
+      if (diffSec < 60) "${diffSec}s" else "${diffSec / 60}m ${diffSec % 60}s"
+    } else "In progress / interrupted"
+  }
+
+  Column(
+    modifier = modifier
+      .fillMaxSize()
+      .background(AmoledBackground)
+  ) {
+    // Top Navigation Header
+    Surface(
+      shape = RoundedCornerShape(0.dp),
+      color = AmoledSurface,
+      border = BorderStroke(1.dp, AmoledBorderSubtle),
+      modifier = Modifier.fillMaxWidth()
+    ) {
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        AragonHeaderButton(
+          text = "← BACK TO LOGS",
+          onClick = onBack,
+          variant = AragonButtonVariant.MUTED,
+          testTag = "task_history_back_btn"
+        )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+          AragonHeaderButton(
+            text = "RE-RUN",
+            onClick = onReRun,
+            variant = AragonButtonVariant.DEFAULT,
+            testTag = "task_history_rerun_header_btn"
+          )
+
+          AragonHeaderButton(
+            text = "CONTINUE TASK",
+            onClick = onRestore,
+            variant = AragonButtonVariant.PRIMARY,
+            testTag = "task_history_continue_header_btn"
+          )
+        }
+      }
+    }
+
+    // Scrollable Transcript Body
+    Column(
+      modifier = Modifier
+        .fillMaxSize()
+        .verticalScroll(scrollState)
+        .padding(horizontal = 14.dp, vertical = 10.dp),
+      verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+      // Mission Overview Card
+      Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = AmoledSurfaceElevated,
+        border = BorderStroke(1.dp, AmoledBorderSubtle),
+        modifier = Modifier.fillMaxWidth()
+      ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Text(
+              text = "TASK OBJECTIVE & METRICS",
+              fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = FontWeight.Bold,
+              fontSize = 9.sp,
+              color = AmoledActionPrimary
+            )
+            Surface(
+              shape = RoundedCornerShape(2.5.dp),
+              color = statusColor.copy(alpha = 0.12f),
+              border = BorderStroke(0.8.dp, statusColor.copy(alpha = 0.5f))
+            ) {
+              Text(
+                text = record.status.name,
+                fontFamily = JetBrainsMonoFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 8.sp,
+                color = statusColor,
+                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+              )
+            }
+          }
+
+          Spacer(modifier = Modifier.height(6.dp))
+
+          Text(
+            text = record.goal,
+            style = MaterialTheme.typography.bodyMedium,
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 13.sp,
+            color = AmoledTextPrimary
+          )
+
+          Spacer(modifier = Modifier.height(6.dp))
+
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+          ) {
+            Text(
+              text = "Time: $formattedDate",
+              fontFamily = JetBrainsMonoFontFamily,
+              fontSize = 9.sp,
+              color = AmoledTextMuted
+            )
+            Text(
+              text = "Duration: $executionDuration",
               fontFamily = JetBrainsMonoFontFamily,
               fontSize = 9.sp,
               color = AmoledTextMuted
             )
           }
 
-          if (record.executionFeed.isNotEmpty()) {
-            Spacer(modifier = Modifier.width(6.dp))
+          if (!record.sessionId.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
-              text = "• ${record.executionFeed.size} steps",
-              style = MaterialTheme.typography.labelSmall,
+              text = "Session ID: ${record.sessionId}",
               fontFamily = JetBrainsMonoFontFamily,
-              fontSize = 9.sp,
-              color = AmoledActionPrimary.copy(alpha = 0.8f)
+              fontSize = 8.5.sp,
+              color = AmoledIconGreyDark
             )
           }
         }
+      }
 
-        Spacer(modifier = Modifier.width(6.dp))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-          AragonActionButton(
-            text = if (isExpanded) "COLLAPSE" else "INSPECT",
-            onClick = { isExpanded = !isExpanded },
-            variant = if (isExpanded) AragonButtonVariant.PRIMARY else AragonButtonVariant.MUTED,
-            height = 24.dp,
-            testTag = "inspect_task_btn_${record.id}"
-          )
-
-          AragonActionButton(
-            text = "RE-RUN",
-            onClick = onReRun,
-            variant = AragonButtonVariant.DEFAULT,
-            height = 24.dp,
-            testTag = "rerun_task_btn_${record.id}"
-          )
+      // Conclusion / Summary Card
+      if (!record.conclusion.isNullOrBlank() || !record.summary.isNullOrBlank()) {
+        val summaryText = record.conclusion ?: record.summary ?: ""
+        Surface(
+          shape = RoundedCornerShape(10.dp),
+          color = Color(0xFF0F1410),
+          border = BorderStroke(1.dp, AmoledStatusSuccess.copy(alpha = 0.35f)),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+              text = "MISSION SYNTHESIS & OUTCOME",
+              fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = FontWeight.Bold,
+              fontSize = 9.sp,
+              color = AmoledStatusSuccess
+            )
+            Spacer(modifier = Modifier.height(5.dp))
+            Text(
+              text = summaryText,
+              fontFamily = InterFontFamily,
+              fontSize = 11.5.sp,
+              lineHeight = 17.sp,
+              color = AmoledTextPrimary
+            )
+          }
         }
       }
 
-      Spacer(modifier = Modifier.height(8.dp))
-
-      // Goal text
-      Text(
-        text = record.goal,
-        style = MaterialTheme.typography.bodyMedium,
-        fontFamily = InterFontFamily,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 12.sp,
-        color = AmoledTextPrimary,
-        maxLines = if (isExpanded) 10 else 2,
-        overflow = TextOverflow.Ellipsis
-      )
-
-      // Conclusion / Outcome if available
-      if (!record.conclusion.isNullOrBlank()) {
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-          text = record.conclusion,
-          style = MaterialTheme.typography.bodySmall,
-          fontFamily = InterFontFamily,
-          fontSize = 11.sp,
-          color = AmoledTextSecondary,
-          maxLines = if (isExpanded) 10 else 2,
-          overflow = TextOverflow.Ellipsis
-        )
-      }
-
-      // Deliverables pills if any
+      // Generated Deliverables Section
       if (record.deliverables.isNotEmpty()) {
-        Spacer(modifier = Modifier.height(6.dp))
-        Row(
-          modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-          horizontalArrangement = Arrangement.spacedBy(4.dp)
+        Surface(
+          shape = RoundedCornerShape(10.dp),
+          color = AmoledSurfaceElevated,
+          border = BorderStroke(1.dp, AmoledBorderSubtle),
+          modifier = Modifier.fillMaxWidth()
         ) {
-          for (deliv in record.deliverables) {
+          Column(modifier = Modifier.padding(12.dp)) {
             Text(
-              text = deliv,
-              style = MaterialTheme.typography.labelSmall,
+              text = "FINAL DELIVERABLES (${record.deliverables.size})",
               fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = FontWeight.Bold,
               fontSize = 9.sp,
-              color = AmoledStatusSuccess,
-              modifier = Modifier
-                .background(AmoledStatusSuccess.copy(alpha = 0.12f), RoundedCornerShape(3.dp))
-                .border(1.dp, AmoledStatusSuccess.copy(alpha = 0.3f), RoundedCornerShape(3.dp))
-                .padding(horizontal = 5.dp, vertical = 2.dp)
+              color = AmoledActionPrimary
             )
-          }
-        }
-      }
-
-      // Deep inspection section when expanded
-      AnimatedVisibility(visible = isExpanded) {
-        Column(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 10.dp)
-            .background(Color(0xFF080808), RoundedCornerShape(6.dp))
-            .border(1.dp, Color(0xFF181818), RoundedCornerShape(6.dp))
-            .padding(10.dp)
-        ) {
-          // Sub-tabs: EXECUTION STEPS, CONVERSATION, PLAN & STAGES
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-          ) {
-            val tabs = listOf(
-              "EXECUTION (${record.executionFeed.size})",
-              "CONVERSATION (${record.conversation.size})",
-              "PLAN & STAGES (${record.planSteps.size})"
-            )
-            tabs.forEachIndexed { idx, label ->
-              val isSel = activeDetailTab == idx
-              Surface(
-                shape = RoundedCornerShape(4.dp),
-                color = if (isSel) AmoledActionPrimary.copy(alpha = 0.15f) else Color.Transparent,
-                border = androidx.compose.foundation.BorderStroke(1.dp, if (isSel) AmoledActionPrimary else Color(0xFF222222)),
-                modifier = Modifier.clickable { activeDetailTab = idx }
-              ) {
-                Text(
-                  text = label,
-                  fontFamily = JetBrainsMonoFontFamily,
-                  fontSize = 9.sp,
-                  fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
-                  color = if (isSel) AmoledActionPrimary else AmoledTextSecondary,
-                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-              }
-            }
-          }
-
-          Spacer(modifier = Modifier.height(10.dp))
-
-          when (activeDetailTab) {
-            0 -> {
-              // EXECUTION STEPS
-              if (record.executionFeed.isEmpty()) {
-                Text(
-                  text = "No detailed execution steps were recorded for this task.",
-                  fontFamily = JetBrainsMonoFontFamily,
-                  fontSize = 10.sp,
-                  color = AmoledTextMuted
-                )
-              } else {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                  record.executionFeed.take(30).forEach { step ->
-                    Surface(
-                      shape = RoundedCornerShape(4.dp),
-                      color = Color(0xFF101010),
-                      border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1E1E1E)),
-                      modifier = Modifier.fillMaxWidth()
-                    ) {
-                      Column(modifier = Modifier.padding(8.dp)) {
-                        Row(
-                          modifier = Modifier.fillMaxWidth(),
-                          horizontalArrangement = Arrangement.SpaceBetween,
-                          verticalAlignment = Alignment.CenterVertically
-                        ) {
-                          Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                              text = "#${step.stepNumber}",
-                              fontFamily = JetBrainsMonoFontFamily,
-                              fontSize = 9.sp,
-                              fontWeight = FontWeight.Bold,
-                              color = AmoledActionPrimary
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                              text = step.type.name,
-                              fontFamily = JetBrainsMonoFontFamily,
-                              fontSize = 8.sp,
-                              fontWeight = FontWeight.Bold,
-                              color = if (step.type == StepType.ERROR) AmoledStatusError else AmoledIconGreyLight,
-                              modifier = Modifier
-                                .background(Color(0xFF1A1A1A), RoundedCornerShape(2.dp))
-                                .padding(horizontal = 4.dp, vertical = 1.dp)
-                            )
-                            if (!step.toolName.isNullOrBlank()) {
-                              Spacer(modifier = Modifier.width(4.dp))
-                              Text(
-                                text = step.toolName,
-                                fontFamily = JetBrainsMonoFontFamily,
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = AmoledStatusSuccess
-                              )
-                            }
-                          }
-                          if (step.durationMs != null) {
-                            Text(
-                              text = "${step.durationMs}ms",
-                              fontFamily = JetBrainsMonoFontFamily,
-                              fontSize = 8.sp,
-                              color = AmoledTextMuted
-                            )
-                          }
-                        }
-
-                        if (step.content.isNotBlank()) {
-                          Spacer(modifier = Modifier.height(4.dp))
-                          Text(
-                            text = step.content.take(300),
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontSize = 9.sp,
-                            color = AmoledTextSecondary,
-                            maxLines = 6,
-                            overflow = TextOverflow.Ellipsis
-                          )
-                        }
-
-                        if (!step.stdout.isNullOrBlank()) {
-                          Spacer(modifier = Modifier.height(4.dp))
-                          Text(
-                            text = step.stdout.take(250),
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontSize = 8.sp,
-                            color = Color(0xFF7CB342),
-                            maxLines = 4,
-                            overflow = TextOverflow.Ellipsis
-                          )
-                        }
-                      }
-                    }
-                  }
-                  if (record.executionFeed.size > 30) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+              record.deliverables.forEach { item ->
+                Surface(
+                  shape = RoundedCornerShape(4.dp),
+                  color = Color(0xFF121214),
+                  border = BorderStroke(1.dp, Color(0xFF222226)),
+                  modifier = Modifier.fillMaxWidth()
+                ) {
+                  Row(
+                    modifier = Modifier
+                      .fillMaxWidth()
+                      .padding(horizontal = 8.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
                     Text(
-                      text = "... and ${record.executionFeed.size - 30} more steps (view all by restoring to feed).",
+                      text = item,
                       fontFamily = JetBrainsMonoFontFamily,
-                      fontSize = 9.sp,
+                      fontSize = 10.sp,
+                      color = AmoledStatusSuccess,
+                      fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                      text = "SAVED TO WORKSPACE",
+                      fontFamily = JetBrainsMonoFontFamily,
+                      fontSize = 7.5.sp,
                       color = AmoledTextMuted
                     )
                   }
                 }
               }
             }
+          }
+        }
+      }
 
-            1 -> {
-              // CONVERSATION
-              if (record.conversation.isEmpty()) {
+      // Cognitive Plan Steps (if any)
+      if (record.planSteps.isNotEmpty()) {
+        Surface(
+          shape = RoundedCornerShape(10.dp),
+          color = AmoledSurfaceElevated,
+          border = BorderStroke(1.dp, AmoledBorderSubtle),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+              text = "COGNITIVE EXECUTION PLAN (${record.planSteps.size} STAGES)",
+              fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = FontWeight.Bold,
+              fontSize = 9.sp,
+              color = AmoledActionPrimary
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            record.planSteps.forEachIndexed { i, step ->
+              Row(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.Top
+              ) {
                 Text(
-                  text = "No saved conversation turns recorded for this task.",
+                  text = "[✓] ${i + 1}. ",
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontSize = 9.5.sp,
+                  fontWeight = FontWeight.Bold,
+                  color = AmoledStatusSuccess
+                )
+                Text(
+                  text = step,
                   fontFamily = JetBrainsMonoFontFamily,
                   fontSize = 10.sp,
-                  color = AmoledTextMuted
+                  color = AmoledTextSecondary,
+                  modifier = Modifier.weight(1f)
                 )
-              } else {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                  record.conversation.forEach { msg ->
-                    val isUser = msg.role == MessageRole.USER
-                    Surface(
-                      shape = RoundedCornerShape(4.dp),
-                      color = if (isUser) Color(0xFF141414) else Color(0xFF10141A),
-                      border = androidx.compose.foundation.BorderStroke(1.dp, if (isUser) Color(0xFF242424) else Color(0xFF1C2430)),
-                      modifier = Modifier.fillMaxWidth()
-                    ) {
-                      Column(modifier = Modifier.padding(8.dp)) {
-                        Row(
-                          modifier = Modifier.fillMaxWidth(),
-                          horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                          Text(
-                            text = if (isUser) "USER" else "AGENT (${msg.role.name})",
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isUser) AmoledActionPrimary else Color(0xFF64B5F6)
-                          )
-                          if (!msg.toolName.isNullOrBlank()) {
-                            Text(
-                              text = "tool: ${msg.toolName}",
-                              fontFamily = JetBrainsMonoFontFamily,
-                              fontSize = 8.sp,
-                              color = AmoledStatusSuccess
-                            )
-                          }
-                        }
-                        Spacer(modifier = Modifier.height(3.dp))
-                        Text(
-                          text = msg.content.take(800),
-                          fontFamily = InterFontFamily,
-                          fontSize = 10.sp,
-                          color = AmoledTextPrimary,
-                          maxLines = 12,
-                          overflow = TextOverflow.Ellipsis
-                        )
-                      }
-                    }
-                  }
+              }
+            }
+          }
+        }
+      }
+
+      // FULL CONVERSATION & AGENTIC FEED TRANSCRIPT
+      Text(
+        text = "FULL CONVERSATION & REASONING TRANSCRIPT",
+        fontFamily = JetBrainsMonoFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 10.sp,
+        color = AmoledIconGreyLight,
+        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+      )
+
+      if (record.conversation.isEmpty() && record.executionFeed.isEmpty()) {
+        Surface(
+          shape = RoundedCornerShape(8.dp),
+          color = AmoledSurfaceElevated,
+          border = BorderStroke(1.dp, AmoledBorderSubtle),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          Text(
+            text = "No detailed conversation or tool feed was archived for this mission.",
+            fontFamily = JetBrainsMonoFontFamily,
+            fontSize = 10.sp,
+            color = AmoledTextMuted,
+            modifier = Modifier.padding(14.dp)
+          )
+        }
+      }
+
+      // 1. Conversation turns
+      record.conversation.forEach { msg ->
+        val isUser = msg.role == MessageRole.USER
+        val isAssistant = msg.role == MessageRole.ASSISTANT
+        val isTool = msg.role == MessageRole.TOOL
+
+        Surface(
+          shape = RoundedCornerShape(8.dp),
+          color = when {
+            isUser -> Color(0xFF141418)
+            isTool -> Color(0xFF0F141A)
+            else -> Color(0xFF101012)
+          },
+          border = BorderStroke(
+            1.dp,
+            when {
+              isUser -> Color(0xFF2C2C34)
+              isTool -> Color(0xFF1C2C3E)
+              else -> Color(0xFF202026)
+            }
+          ),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          Column(modifier = Modifier.padding(10.dp)) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Text(
+                text = when {
+                  isUser -> "USER PROMPT"
+                  isAssistant -> "ARAGON AGENT"
+                  isTool -> "TOOL OBSERVATION (${msg.toolName ?: "OUTPUT"})"
+                  else -> msg.role.name
+                },
+                fontFamily = JetBrainsMonoFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 8.sp,
+                color = when {
+                  isUser -> AmoledActionPrimary
+                  isAssistant -> AmoledStatusSuccess
+                  else -> Color(0xFF64B5F6)
                 }
+              )
+
+              if (!msg.toolName.isNullOrBlank()) {
+                Text(
+                  text = msg.toolName,
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontSize = 7.5.sp,
+                  color = AmoledStatusSuccess
+                )
               }
             }
 
-            2 -> {
-              // PLAN & 5 STAGES
-              Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (record.planSteps.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+              text = msg.content,
+              fontFamily = if (isUser) InterFontFamily else JetBrainsMonoFontFamily,
+              fontSize = 10.5.sp,
+              color = AmoledTextPrimary,
+              lineHeight = 16.sp
+            )
+          }
+        }
+      }
+
+      // 2. Execution Feed Steps (Tool Calls & Outputs)
+      if (record.executionFeed.isNotEmpty()) {
+        Text(
+          text = "EXECUTION TOOL CHAIN (${record.executionFeed.size} STEPS)",
+          fontFamily = JetBrainsMonoFontFamily,
+          fontWeight = FontWeight.Bold,
+          fontSize = 9.sp,
+          color = AmoledActionPrimary,
+          modifier = Modifier.padding(top = 6.dp)
+        )
+
+        record.executionFeed.forEach { step ->
+          Surface(
+            shape = RoundedCornerShape(6.dp),
+            color = Color(0xFF0E0E10),
+            border = BorderStroke(1.dp, Color(0xFF1C1C20)),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Column(modifier = Modifier.padding(9.dp)) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                   Text(
-                    text = "PLANNED STEPS (${record.planSteps.size}):",
+                    text = "#${step.stepNumber}",
                     fontFamily = JetBrainsMonoFontFamily,
-                    fontSize = 9.sp,
                     fontWeight = FontWeight.Bold,
+                    fontSize = 8.5.sp,
                     color = AmoledActionPrimary
                   )
-                  record.planSteps.forEachIndexed { i, step ->
+                  Spacer(modifier = Modifier.width(6.dp))
+                  Text(
+                    text = step.type.name,
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 7.5.sp,
+                    color = if (step.type == StepType.ERROR) AmoledStatusError else AmoledIconGreyLight,
+                    modifier = Modifier
+                      .background(Color(0xFF1A1A1E), RoundedCornerShape(2.dp))
+                      .padding(horizontal = 4.dp, vertical = 1.dp)
+                  )
+                  if (!step.toolName.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                      text = "${i + 1}. $step",
+                      text = step.toolName,
                       fontFamily = JetBrainsMonoFontFamily,
-                      fontSize = 10.sp,
-                      color = AmoledTextSecondary
+                      fontSize = 8.5.sp,
+                      fontWeight = FontWeight.SemiBold,
+                      color = AmoledStatusSuccess
                     )
                   }
                 }
 
-                record.fiveStageRecord?.let { fsr ->
-                  if (fsr.actions.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                      text = "ACTIONS TAKEN (${fsr.actions.size}):",
-                      fontFamily = JetBrainsMonoFontFamily,
-                      fontSize = 9.sp,
-                      fontWeight = FontWeight.Bold,
-                      color = AmoledStatusSuccess
-                    )
-                    fsr.actions.take(10).forEach { act ->
-                      Text(
-                        text = "• $act",
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontSize = 9.sp,
-                        color = AmoledTextSecondary
-                      )
-                    }
-                  }
+                if (step.durationMs != null) {
+                  Text(
+                    text = "${step.durationMs}ms",
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontSize = 7.5.sp,
+                    color = AmoledTextMuted
+                  )
+                }
+              }
 
-                  if (fsr.observations.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                      text = "KEY OBSERVATIONS (${fsr.observations.size}):",
-                      fontFamily = JetBrainsMonoFontFamily,
-                      fontSize = 9.sp,
-                      fontWeight = FontWeight.Bold,
-                      color = AmoledAccentAmber
-                    )
-                    fsr.observations.take(10).forEach { obs ->
-                      Text(
-                        text = "• $obs",
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontSize = 9.sp,
-                        color = AmoledTextSecondary
-                      )
-                    }
-                  }
+              if (step.content.isNotBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                  text = step.content,
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontSize = 9.5.sp,
+                  color = AmoledTextSecondary
+                )
+              }
+
+              if (!step.stdout.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Surface(
+                  shape = RoundedCornerShape(3.dp),
+                  color = Color(0xFF080D08),
+                  border = BorderStroke(0.6.dp, Color(0xFF183018)),
+                  modifier = Modifier.fillMaxWidth()
+                ) {
+                  Text(
+                    text = step.stdout,
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontSize = 8.sp,
+                    color = Color(0xFF81C784),
+                    modifier = Modifier.padding(6.dp)
+                  )
                 }
               }
             }
           }
-
-          Spacer(modifier = Modifier.height(10.dp))
-
-          // Bottom Action: RESTORE TO ACTIVE FEED
-          AragonActionButton(
-            text = "RESTORE TASK INTO LIVE FEED",
-            onClick = onRestore,
-            variant = AragonButtonVariant.PRIMARY,
-            height = 28.dp,
-            modifier = Modifier.fillMaxWidth(),
-            testTag = "restore_task_to_feed_btn_${record.id}"
-          )
         }
       }
+
+      Spacer(modifier = Modifier.height(10.dp))
+
+      // Bottom Action: Restore / Continue
+      AragonActionButton(
+        text = "RESTORE MISSION INTO ACTIVE LIVE CHAT",
+        onClick = onRestore,
+        variant = AragonButtonVariant.PRIMARY,
+        height = 36.dp,
+        modifier = Modifier.fillMaxWidth(),
+        testTag = "restore_mission_bottom_btn"
+      )
+
+      Spacer(modifier = Modifier.height(20.dp))
     }
   }
 }
+

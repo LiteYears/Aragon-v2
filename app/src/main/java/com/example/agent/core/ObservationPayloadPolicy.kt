@@ -81,11 +81,11 @@ object ObservationPayloadPolicy {
       )
     }
 
-    // Output exceeds cap: spill full output to disk in $WORKSPACE/.observations
-    val obsDir = File(workspaceDir, ".observations").apply { mkdirs() }
+    // Output exceeds cap: spill full output to disk in $WORKSPACE/tmp
+    val tmpDir = File(workspaceDir, "tmp").apply { mkdirs() }
     val safeStepId = stepId.replace(Regex("[^a-zA-Z0-9_-]"), "_")
     val ext = fileExtension.removePrefix(".").ifBlank { "txt" }
-    val spilloverFile = File(obsDir, "${safeStepId}.${ext}")
+    val spilloverFile = File(tmpDir, "obs_${safeStepId}.${ext}")
     try {
       spilloverFile.writeText(combinedRaw, StandardCharsets.UTF_8)
     } catch (_: Exception) {}
@@ -95,7 +95,7 @@ object ObservationPayloadPolicy {
     val omittedCount = (lines.size - 60).coerceAtLeast(0)
     val omittedBytesEst = (totalBytes - (headLines.length + tailLines.length)).coerceAtLeast(0)
 
-    val relativeSpillPath = ".observations/${spilloverFile.name}"
+    val relativeSpillPath = "tmp/${spilloverFile.name}"
     val inspectionHint = "To search: terminal 'grep -in \"pattern\" $relativeSpillPath' | To page: read_file path='$relativeSpillPath' offset=46 limit=50"
 
     val excerpt = buildString {

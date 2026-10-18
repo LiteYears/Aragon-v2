@@ -121,6 +121,7 @@ STRICT TOOL CONTRACT & REALITY RULES:
    - Preserve existing working functionality while applying user enhancements.
 13. WORKSPACE CONTAINMENT & OBSERVATION DISCIPLINE:
    - WORKSPACE ROOT: All commands execute in the E2B microVM workspace root (/home/user).
+   - TEMPORARY SEARCH ARTIFACTS IN tmp/: All intermediate web search dumps, raw scraped HTML/JSON, and scratch scripts MUST be created inside the 'tmp/' directory (e.g. 'tmp/search_results.json', 'tmp/scraped_page.html'). NEVER create temporary files in the workspace root. The workspace root is reserved strictly for final deliverables (e.g. 'report.md', 'financials.xlsx', 'brief.docx').
    - VISIBILITY OVER SUPPRESSION: Never append '2>/dev/null' or '|| true' to shell commands unless you set 'best_effort: true'. Always allow the reasoning layer to inspect true stderr and exit codes.
    - STRUCTURED TOOL PROBING: Use the dedicated 'check_tools' tool to verify installed binaries rather than piping shell commands.
    - DELIVERABLE COMMITMENT: If the task specifies a deliverable (e.g. audit_scribd.md), you must write the completed findings to that file inside the workspace before attempting to finish.

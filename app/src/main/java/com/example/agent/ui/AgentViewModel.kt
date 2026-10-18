@@ -478,6 +478,10 @@ class AgentViewModel(
     documentService.setInScope(docId, inScope)
   }
 
+  fun clearDocumentScope() {
+    documentService.clearScope()
+  }
+
   fun setOcrEnabled(enabled: Boolean) {
     _ocrEnabled.value = enabled
     documentService.setOcrEnabled(enabled)
@@ -1056,6 +1060,7 @@ class AgentViewModel(
     _selectedArtifactForPreview.value = null
     _previewContent.value = null
     _activeTab.value = UiTab.EXECUTION_FEED
+    documentService.clearScope()
   }
 
   fun stopExecution() {
