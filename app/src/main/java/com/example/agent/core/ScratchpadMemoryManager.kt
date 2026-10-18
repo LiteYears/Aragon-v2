@@ -177,6 +177,15 @@ class ScratchpadMemoryManager(val workspaceDir: File) {
     } catch (_: Exception) {}
   }
 
+  fun resetForFollowUp() {
+    try {
+      planFile.delete()
+      checkpointFile.delete()
+      File(workspaceDir, "plan.md").delete()
+      File(workspaceDir, "checkpoint.json").delete()
+    } catch (_: Exception) {}
+  }
+
   private val notesDir: File
     get() = File(workspaceDir, "notes/$currentSessionId").apply { if (!exists()) mkdirs() }
 

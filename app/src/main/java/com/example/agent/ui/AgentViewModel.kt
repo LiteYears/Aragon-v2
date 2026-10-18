@@ -168,6 +168,13 @@ class AgentViewModel(
     geminiApiKey = _geminiApiKey.value
   )
 
+  private val _sandboxUploadToast = MutableStateFlow<String?>(null)
+  val sandboxUploadToast: StateFlow<String?> = _sandboxUploadToast.asStateFlow()
+
+  fun dismissSandboxToast() {
+    _sandboxUploadToast.value = null
+  }
+
   private val engine: AgentEngine = AgentEngine(
     workspaceDir = workspaceDir,
     initialProvider = when (initialProviderType) {
@@ -177,7 +184,14 @@ class AgentViewModel(
     },
     initialSandboxConfig = initialSandboxConfig,
     documentService = documentService
-  ).also { engineRef = it }
+  ).also {
+    engineRef = it
+    it.onFilesSyncedToSandbox = { count, _ ->
+      viewModelScope.launch {
+        _sandboxUploadToast.value = "Synced $count workspace file${if (count > 1) "s" else ""} to E2B Cloud Sandbox"
+      }
+    }
+  }
 
   // First-Class Model Context Protocol (MCP) Subsystem
   val mcpManager = McpManager(

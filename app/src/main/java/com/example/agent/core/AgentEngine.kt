@@ -64,6 +64,7 @@ class AgentEngine(
   val dispatcher = ToolDispatcher(registry, executor, approvalManager, recoveryManager)
 
   var mcpManager: com.example.agent.mcp.McpManager? = null
+  var onFilesSyncedToSandbox: ((count: Int, files: List<String>) -> Unit)? = null
   private var configuredProvider: LLMProvider = initialProvider
   private var activeProvider: LLMProvider = initialProvider
   private var activeJob: Job? = null
@@ -188,9 +189,7 @@ class AgentEngine(
       registry.register(com.example.agent.docs.ReadImageTool(workspaceDir, docs.ocrRouter))
     }
 
-    // 7. Native Microsoft Office & PDF Document Builders & Universal Replicator
-    registry.register(BuildWordDocumentTool(workspaceDir, artifactManager))
-    registry.register(BuildExcelSpreadsheetTool(workspaceDir, artifactManager))
+    // 7. Native PDF Document Builder & Universal Replicator (Word & Excel are authored exclusively via Python)
     registry.register(BuildPdfDocumentTool(workspaceDir, artifactManager))
     registry.register(RecreateDocumentTool(workspaceDir, artifactManager, docs?.ocrRouter, docs))
 
@@ -428,6 +427,8 @@ class AgentEngine(
     dispatcher.reset()
     if (!isContinuation) {
       scratchpad.initSession(sessionId)
+    } else if (isFollowUp) {
+      scratchpad.resetForFollowUp()
     }
 
     val task = Task(
@@ -531,7 +532,7 @@ class AgentEngine(
         appendLine("- If the task asks to REPLICATE, RECREATE, or CLONE a document, image, or screenshot (e.g. replicating a Word document, spreadsheet, or PDF from a photo or screenshot, or modifying its title, author, and date):")
         appendLine("  * Call 'recreate_document(source: \"<filename>\", target_format: \"docx\"|\"xlsx\"|\"pdf\", title: \"...\", author: \"...\", date: \"today\")'.")
         appendLine("  * It automatically executes high-precision OCR on pictures/screenshots, extracts sections/headings/tables, substitutes the title, author name, and date to the current date, and builds a verified deliverable.")
-        appendLine("- You can also use 'build_word_document', 'build_excel_spreadsheet', 'build_pdf_document', 'read_image_text', or run Python automation directly in the sandbox.")
+        appendLine("- To create Word (.docx) or Excel (.xlsx) files: ALWAYS write and execute a Python script in the sandbox using 'python-docx' for Word and 'openpyxl'/'pandas' for Excel. When stuck, ALWAYS turn to Python!")
       }
     }
 
@@ -717,15 +718,7 @@ class AgentEngine(
           }
         }
         if (syncedFiles.isNotEmpty()) {
-          val syncStep = ExecutionStep(
-            id = "step_sync_files_${task.id}",
-            stepNumber = 1,
-            type = StepType.TOOL_EXECUTION,
-            title = "Placed Input Files in E2B Sandbox",
-            content = "Successfully uploaded ${syncedFiles.size} input file(s) into E2B Cloud Sandbox (/home/user):\n" +
-              syncedFiles.joinToString("\n") { "• /home/user/$it" }
-          )
-          onStepCreated(syncStep)
+          onFilesSyncedToSandbox?.invoke(syncedFiles.size, syncedFiles)
         }
       } catch (e: Exception) {
         Log.w("AgentEngine", "Pre-sync input files to E2B sandbox failed (non-fatal, continuing)", e)
@@ -2759,7 +2752,7 @@ class AgentEngine(
     sb.appendLine("- When the user asks to replicate, recreate, or modify a document or screenshot (e.g., 'see this picture of a word file, replicate it and change title, author, and date to current date'):")
     sb.appendLine("  * Call 'recreate_document(source: \"<filename>\", target_format: \"docx|xlsx|pdf\", output_path: \"...\", title: \"...\", author: \"...\", date: \"$formattedDate\", replacements: {...})'.")
     sb.appendLine("  * It automatically analyzes the image/screenshot via OCR, transcribes structure, replaces title/author/date, and builds the target file!")
-    sb.appendLine("  * For authoring from scratch: use 'build_word_document', 'build_excel_spreadsheet', or 'build_pdf_document'.")
+    sb.appendLine("  * For authoring from scratch: ALWAYS use Python scripts (python-docx for .docx, openpyxl/pandas for .xlsx) or 'build_pdf_document' for PDF. WHEN STUCK: ALWAYS USE PYTHON!")
 
     // Model Context Protocol (MCP) Subsystem Status & Guidance
     val mcp = mcpManager

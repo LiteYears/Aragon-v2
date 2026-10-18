@@ -381,15 +381,11 @@ class ToolRegistry {
     }
 
     // 6. Document Generation & Replication Tools
-    if (canonicalName in listOf("build_word_document", "build_excel_spreadsheet", "build_pdf_document")) {
+    if (canonicalName == "build_pdf_document") {
       val pathAlias = normArgs["path"] ?: normArgs["file"] ?: normArgs["filePath"] ?: normArgs["file_path"] ?: normArgs["target"]
       if (pathAlias != null) normArgs["path"] = pathAlias
       val contentAlias = normArgs["content"] ?: normArgs["text"] ?: normArgs["markdown"] ?: normArgs["body"]
       if (contentAlias != null) normArgs["content"] = contentAlias
-    }
-    if (canonicalName == "build_excel_spreadsheet") {
-      val csvAlias = normArgs["csvData"] ?: normArgs["csv_data"] ?: normArgs["data"] ?: normArgs["csv"] ?: normArgs["content"]
-      if (csvAlias != null) normArgs["csvData"] = csvAlias
     }
     if (canonicalName == "recreate_document") {
       val srcAlias = normArgs["sourcePath"] ?: normArgs["source_path"] ?: normArgs["source"] ?: normArgs["file"] ?: normArgs["path"]

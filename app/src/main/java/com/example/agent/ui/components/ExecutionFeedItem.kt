@@ -293,27 +293,25 @@ fun ToolCallBoxView(
     else -> if (step.isCompleted) "FINISHED" else "WAITING"
   }
 
-  // Static state borders (kept calm; no perpetual pulsing animations)
+  // Minimalist AMOLED styling: quiet obsidian background with razor-thin hairline borders
   val borderColor = when (toolState) {
-    "ACTIVE" -> AmoledActionPrimary.copy(alpha = 0.85f)
-    "WAITING" -> Color(0xFF886622).copy(alpha = 0.7f)
-    "FAILED" -> AmoledStatusError.copy(alpha = 0.7f)
-    "FINISHED" -> AmoledStatusSuccess.copy(alpha = 0.5f)
-    else -> AmoledBorderSubtle
+    "ACTIVE" -> AmoledActionPrimary.copy(alpha = 0.55f)
+    "WAITING" -> Color(0xFF262632)
+    "FAILED" -> AmoledStatusError.copy(alpha = 0.45f)
+    "FINISHED" -> Color(0xFF1F1F28)
+    else -> Color(0xFF1A1A22)
   }
 
   val boxBgColor = when (toolState) {
-    "ACTIVE" -> Color(0xFF14120E)
-    "WAITING" -> Color(0xFF141208)
-    "FAILED" -> Color(0xFF180A0A)
-    "FINISHED" -> Color(0xFF0E1410)
-    else -> Color(0xFF111111)
+    "ACTIVE" -> Color(0xFF0D0D12)
+    "FAILED" -> Color(0xFF110A0A)
+    else -> Color(0xFF09090D)
   }
 
   Surface(
-    shape = RoundedCornerShape(10.dp),
+    shape = RoundedCornerShape(8.dp),
     color = boxBgColor,
-    border = androidx.compose.foundation.BorderStroke(1.dp, borderColor),
+    border = androidx.compose.foundation.BorderStroke(0.75.dp, borderColor),
     modifier = Modifier
       .fillMaxWidth()
       .animateContentSize(animationSpec = tween(180, easing = FastOutSlowInEasing))
@@ -322,7 +320,7 @@ fun ToolCallBoxView(
     Column(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(10.dp)
+        .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
       // Header row: Tool name & metrics on LEFT, Status Badge & [VIEW] on RIGHT
       Row(
@@ -352,21 +350,21 @@ fun ToolCallBoxView(
               )
             } else {
               Surface(
-                shape = RoundedCornerShape(4.dp),
-                color = if (step.exitCode == 0 || step.toolStatus == ToolStatus.SUCCEEDED.name) Color(0xFF102014) else Color(0xFF161618),
-                border = BorderStroke(1.dp, if (step.exitCode == 0 || step.toolStatus == ToolStatus.SUCCEEDED.name) AmoledStatusSuccess.copy(alpha = 0.5f) else AmoledBorderSubtle),
-                modifier = Modifier.height(20.dp)
+                shape = RoundedCornerShape(3.dp),
+                color = if (step.exitCode == 0 || step.toolStatus == ToolStatus.SUCCEEDED.name) Color(0xFF0F1A12) else Color(0xFF141418),
+                border = BorderStroke(0.6.dp, if (step.exitCode == 0 || step.toolStatus == ToolStatus.SUCCEEDED.name) Color(0xFF10B981).copy(alpha = 0.4f) else Color(0xFF282834)),
+                modifier = Modifier.height(18.dp)
               ) {
                 Box(
-                  modifier = Modifier.padding(horizontal = 6.dp),
+                  modifier = Modifier.padding(horizontal = 5.dp),
                   contentAlignment = Alignment.Center
                 ) {
                   Text(
-                    text = if (step.exitCode == 0 || step.toolStatus == ToolStatus.SUCCEEDED.name) "⚡ OK" else "⚡ CALL",
+                    text = if (step.exitCode == 0 || step.toolStatus == ToolStatus.SUCCEEDED.name) "OK" else "CALL",
                     fontFamily = JetBrainsMonoFontFamily,
                     fontSize = 8.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (step.exitCode == 0 || step.toolStatus == ToolStatus.SUCCEEDED.name) AmoledStatusSuccess else AmoledIconGreyLight
+                    color = if (step.exitCode == 0 || step.toolStatus == ToolStatus.SUCCEEDED.name) Color(0xFF10B981) else AmoledIconGreyLight
                   )
                 }
               }

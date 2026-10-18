@@ -17,7 +17,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -656,11 +658,107 @@ fun AgentScreen(
             }
           }
 
-          // Transformed user prompt input field container (AMOLED pure black with crisp white outline)
+          // Outside selector pills on the left: Cloud Environment & Workspace Project
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(start = 2.dp, end = 2.dp, bottom = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            // Enhanced Cloud selector pill
+            Surface(
+              shape = RoundedCornerShape(16.dp),
+              color = Color(0xFF101015),
+              border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0xFF262634)),
+              modifier = Modifier
+                .clip(RoundedCornerShape(16.dp))
+                .clickable(role = Role.Button, onClickLabel = "Sandbox Configuration") {
+                  showSettingsDialog = true
+                }
+                .testTag("cloud_environment_pill")
+            ) {
+              Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                Box(
+                  modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(if (sandboxMode == SandboxMode.E2B_CLOUD) Color(0xFF10B981) else Color(0xFF64748B))
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Icon(
+                  imageVector = Icons.Default.Cloud,
+                  contentDescription = "Cloud Sandbox",
+                  tint = if (sandboxMode == SandboxMode.E2B_CLOUD) Color(0xFF38BDF8) else Color(0xFF94A3B8),
+                  modifier = Modifier.size(13.dp)
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                  text = if (sandboxMode == SandboxMode.E2B_CLOUD) "Cloud" else "Local",
+                  fontFamily = InterFontFamily,
+                  fontSize = 11.5.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = Color(0xFFE2E8F0)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                  imageVector = Icons.Default.KeyboardArrowDown,
+                  contentDescription = "Switch environment",
+                  tint = Color(0xFF71717A),
+                  modifier = Modifier.size(13.dp)
+                )
+              }
+            }
+
+            // Enhanced Project selector pill
+            Surface(
+              shape = RoundedCornerShape(16.dp),
+              color = Color(0xFF101015),
+              border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0xFF262634)),
+              modifier = Modifier
+                .clip(RoundedCornerShape(16.dp))
+                .clickable(role = Role.Button, onClickLabel = "Select Project") {
+                  showFilesDialog = true
+                }
+                .testTag("project_selector_pill")
+            ) {
+              Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                Icon(
+                  imageVector = Icons.Default.Inventory2,
+                  contentDescription = "Project",
+                  tint = Color(0xFFA78BFA),
+                  modifier = Modifier.size(13.dp)
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                  text = if (currentExplorerPath.isNotBlank()) currentExplorerPath.substringAfterLast('/').ifEmpty { "Project" } else "Project",
+                  fontFamily = InterFontFamily,
+                  fontSize = 11.5.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = Color(0xFFE2E8F0)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                  imageVector = Icons.Default.KeyboardArrowDown,
+                  contentDescription = "Select project",
+                  tint = Color(0xFF71717A),
+                  modifier = Modifier.size(13.dp)
+                )
+              }
+            }
+          }
+
+          // Transformed user prompt input field container (AMOLED pure black with thinner crisp white outline)
           Surface(
             shape = RoundedCornerShape(22.dp),
             color = Color.Black,
-            border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White),
+            border = androidx.compose.foundation.BorderStroke(0.8.dp, Color.White),
             modifier = Modifier
               .fillMaxWidth()
               .testTag("prompt_input_container")
@@ -670,94 +768,6 @@ fun AgentScreen(
                 .fillMaxWidth()
                 .padding(vertical = 8.dp)
             ) {
-              // Top row inside card: Cloud selector & Project selector
-              Row(
-                modifier = Modifier
-                  .fillMaxWidth()
-                  .padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-              ) {
-                // Cloud pill selector
-                Surface(
-                  shape = RoundedCornerShape(14.dp),
-                  color = Color(0xFF17171E),
-                  border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF262632)),
-                  modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .clickable(role = Role.Button, onClickLabel = "Sandbox Configuration") {
-                      showSettingsDialog = true
-                    }
-                    .testTag("cloud_environment_pill")
-                ) {
-                  Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                  ) {
-                    Icon(
-                      imageVector = Icons.Default.Cloud,
-                      contentDescription = "Cloud Sandbox",
-                      tint = Color(0xFFCBD5E1),
-                      modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                      text = if (sandboxMode == SandboxMode.E2B_CLOUD) "Cloud" else "Local",
-                      fontFamily = InterFontFamily,
-                      fontSize = 12.sp,
-                      fontWeight = FontWeight.Medium,
-                      color = Color(0xFFE2E8F0)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Icon(
-                      imageVector = Icons.Default.KeyboardArrowDown,
-                      contentDescription = "Switch environment",
-                      tint = Color(0xFF71717A),
-                      modifier = Modifier.size(14.dp)
-                    )
-                  }
-                }
-
-                // Project pill selector
-                Surface(
-                  shape = RoundedCornerShape(14.dp),
-                  color = Color(0xFF17171E),
-                  border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF262632)),
-                  modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .clickable(role = Role.Button, onClickLabel = "Select Project") {
-                      showFilesDialog = true
-                    }
-                    .testTag("project_selector_pill")
-                ) {
-                  Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                  ) {
-                    Icon(
-                      imageVector = Icons.Default.Inventory2,
-                      contentDescription = "Project",
-                      tint = Color(0xFFCBD5E1),
-                      modifier = Modifier.size(13.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                      text = if (currentExplorerPath.isNotBlank()) currentExplorerPath.substringAfterLast('/').ifEmpty { "Project" } else "No project",
-                      fontFamily = InterFontFamily,
-                      fontSize = 12.sp,
-                      fontWeight = FontWeight.Medium,
-                      color = Color(0xFFE2E8F0)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Icon(
-                      imageVector = Icons.Default.KeyboardArrowDown,
-                      contentDescription = "Select project",
-                      tint = Color(0xFF71717A),
-                      modifier = Modifier.size(14.dp)
-                    )
-                  }
-                }
-              }
 
               // Attached Documents Strip (if any)
               val attachedDocuments = remember(documents, documentScope) {
@@ -834,7 +844,7 @@ fun AgentScreen(
               ) {
                 if (inputText.isEmpty()) {
                   Text(
-                    text = "Assign a task or type / for more",
+                    text = if (state.status == AgentStatus.COMPLETED) "Continue conversation with a follow-up..." else "Assign a task or type / for more",
                     style = TextStyle(
                       fontFamily = InterFontFamily,
                       fontSize = 15.sp,
@@ -981,31 +991,6 @@ fun AgentScreen(
                       )
                     }
                   }
-
-                  // MCP tools button
-                  val activeMcpCount = remember(mcpServers) { mcpServers.count { it.enabled } }
-                  Box(
-                    modifier = Modifier
-                      .size(32.dp)
-                      .clip(CircleShape)
-                      .background(Color(0xFF181820))
-                      .border(
-                        BorderStroke(1.dp, if (activeMcpCount > 0) Color(0xFF38BDF8).copy(alpha = 0.6f) else Color(0xFF262632)),
-                        CircleShape
-                      )
-                      .clickable(role = Role.Button, onClickLabel = "Open MCP tools") {
-                        showMcpDialog = true
-                      }
-                      .testTag("tools_mcp_btn"),
-                    contentAlignment = Alignment.Center
-                  ) {
-                    Icon(
-                      imageVector = Icons.Default.Power,
-                      contentDescription = "MCP & Tools",
-                      tint = if (activeMcpCount > 0) Color(0xFF38BDF8) else Color(0xFF94A3B8),
-                      modifier = Modifier.size(16.dp)
-                    )
-                  }
                 }
 
                 // Right action buttons: Speech wave, Mic, and Circular Send Arrow
@@ -1120,12 +1105,17 @@ fun AgentScreen(
       }
     }
   ) { paddingValues ->
-    Column(
+    Box(
       modifier = Modifier
         .fillMaxSize()
         .background(AmoledBackground)
         .padding(paddingValues)
     ) {
+      Column(
+        modifier = Modifier
+          .fillMaxSize()
+          .background(AmoledBackground)
+      ) {
       // Discrete Error Banner (Pure text)
       AnimatedVisibility(visible = state.error != null) {
         state.error?.let { errText ->
@@ -1543,6 +1533,48 @@ fun AgentScreen(
                             )
                           }
                         }
+
+                        // Quick Follow-up continuation chips for seamless chat
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                          modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                          horizontalArrangement = Arrangement.spacedBy(6.dp),
+                          verticalAlignment = Alignment.CenterVertically
+                        ) {
+                          listOf(
+                            "Summarize deliverables",
+                            "Convert to Python script",
+                            "Verify calculations",
+                            "Refine styling & formatting",
+                            "Next steps"
+                          ).forEach { suggestion ->
+                            Surface(
+                              shape = RoundedCornerShape(12.dp),
+                              color = Color(0xFF111116),
+                              border = androidx.compose.foundation.BorderStroke(0.75.dp, Color(0xFF262634)),
+                              modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                  inputText = suggestion
+                                }
+                            ) {
+                              Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                              ) {
+                                Text(
+                                  text = "↳ $suggestion",
+                                  fontFamily = InterFontFamily,
+                                  fontSize = 11.5.sp,
+                                  fontWeight = FontWeight.Medium,
+                                  color = Color(0xFFD4D4D8)
+                                )
+                              }
+                            }
+                          }
+                        }
                       }
                     }
                   } else if (
@@ -1674,6 +1706,75 @@ fun AgentScreen(
               onOpenSettings = { showSettingsDialog = true },
               onReplaySplash = onReplaySplash
             )
+          }
+        }
+      }
+
+      // Clean Nice Green Modern Toast Notification (replaces the old inline execution feed box)
+      val sandboxToast by viewModel.sandboxUploadToast.collectAsStateWithLifecycle()
+      LaunchedEffect(sandboxToast) {
+        if (sandboxToast != null) {
+          kotlinx.coroutines.delay(3500)
+          viewModel.dismissSandboxToast()
+        }
+      }
+
+      AnimatedVisibility(
+        visible = sandboxToast != null,
+        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+        modifier = Modifier
+          .align(Alignment.TopCenter)
+          .padding(top = 10.dp, start = 14.dp, end = 14.dp)
+      ) {
+        Surface(
+          shape = RoundedCornerShape(22.dp),
+          color = Color(0xFF06150B),
+          border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.85f)),
+          shadowElevation = 8.dp,
+          modifier = Modifier.testTag("sandbox_upload_toast")
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Box(
+              modifier = Modifier
+                .size(18.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF10B981).copy(alpha = 0.2f)),
+              contentAlignment = Alignment.Center
+            ) {
+              Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = null,
+                tint = Color(0xFF10B981),
+                modifier = Modifier.size(13.dp)
+              )
+            }
+            Spacer(modifier = Modifier.width(9.dp))
+            Text(
+              text = sandboxToast ?: "",
+              fontFamily = InterFontFamily,
+              fontSize = 12.sp,
+              fontWeight = FontWeight.Medium,
+              color = Color(0xFFE6FBF0)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Box(
+              modifier = Modifier
+                .size(18.dp)
+                .clip(CircleShape)
+                .clickable { viewModel.dismissSandboxToast() },
+              contentAlignment = Alignment.Center
+            ) {
+              Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "Dismiss",
+                tint = Color(0xFF6EE7B7),
+                modifier = Modifier.size(12.dp)
+              )
+            }
           }
         }
       }
@@ -2288,84 +2389,12 @@ fun AgentTopHeader(
 
         Spacer(modifier = Modifier.width(8.dp))
 
-        // RIGHT-ALIGNED ACTIONS: FILES, STAGES, STATS, LOGS, MCP, DOCS, COPY ALL, STOP, MENU
+        // RIGHT-ALIGNED ACTIONS: Clean, streamlined action row (redundant buttons that duplicate MENU removed)
         Row(
-          modifier = Modifier
-            .weight(1f, fill = false)
-            .horizontalScroll(rememberScrollState()),
+          modifier = Modifier.weight(1f, fill = false),
           verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(5.dp)
+          horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-          // Direct 1-tap FILES button
-          AragonHeaderButton(
-            text = "FILES",
-            badge = if (artifactsCount > 0) "$artifactsCount" else null,
-            onClick = onOpenFiles,
-            variant = if (artifactsCount > 0) AragonButtonVariant.PRIMARY else AragonButtonVariant.MUTED,
-            testTag = "header_files_btn"
-          )
-
-          // Direct 1-tap STAGES button
-          AragonHeaderButton(
-            text = "STAGES",
-            badge = null,
-            onClick = onOpenStages,
-            variant = AragonButtonVariant.MUTED,
-            testTag = "header_stages_btn"
-          )
-
-          // STATS (Telemetry & analytics)
-          val filterBadge = if (activeFeedFilter != null && activeFeedFilter != FeedFilter.ALL) {
-            activeFeedFilter.label
-          } else if (telemetry != null && telemetry.errorCount > 0) {
-            "!ERR"
-          } else null
-
-          AragonHeaderButton(
-            text = "STATS",
-            onClick = onOpenTelemetry,
-            variant = if (activeFeedFilter != null && activeFeedFilter != FeedFilter.ALL) AragonButtonVariant.PRIMARY else AragonButtonVariant.MUTED,
-            badge = filterBadge,
-            testTag = "header_telemetry_filters_btn"
-          )
-
-          // LOGS (Task History)
-          AragonHeaderButton(
-            text = "LOGS",
-            badge = if (historyCount > 0) "$historyCount" else null,
-            onClick = onOpenHistory,
-            variant = AragonButtonVariant.MUTED,
-            testTag = "header_logs_btn"
-          )
-
-          // Direct 1-tap MCP button
-          AragonHeaderButton(
-            text = "MCP",
-            badge = if (mcpCount > 0) "$mcpCount" else null,
-            onClick = onOpenMcp,
-            variant = if (mcpCount > 0) AragonButtonVariant.PRIMARY else AragonButtonVariant.MUTED,
-            testTag = "header_mcp_btn"
-          )
-
-          if (docsCount > 0) {
-            AragonHeaderButton(
-              text = "DOCS",
-              badge = "$docsCount",
-              onClick = onOpenDocs,
-              variant = AragonButtonVariant.MUTED,
-              testTag = "header_docs_btn"
-            )
-          }
-
-          if (onCopyAll != null) {
-            AragonHeaderButton(
-              text = "COPY ALL",
-              onClick = onCopyAll,
-              variant = AragonButtonVariant.MUTED,
-              testTag = "header_copy_all_btn"
-            )
-          }
-
           if (canCancel) {
             AragonHeaderButton(
               text = "STOP",
@@ -2375,9 +2404,36 @@ fun AgentTopHeader(
             )
           }
 
-          // Modern Navigation Menu Trigger (Pure typography)
+          // STATS (Telemetry & analytics)
+          val filterBadge = if (activeFeedFilter != null && activeFeedFilter != FeedFilter.ALL) {
+            activeFeedFilter.label
+          } else if (telemetry != null && telemetry.errorCount > 0) {
+            "!ERR"
+          } else null
+
+          if (filterBadge != null || (telemetry != null && telemetry.totalSteps > 0)) {
+            AragonHeaderButton(
+              text = "STATS",
+              onClick = onOpenTelemetry,
+              variant = if (activeFeedFilter != null && activeFeedFilter != FeedFilter.ALL) AragonButtonVariant.PRIMARY else AragonButtonVariant.MUTED,
+              badge = filterBadge,
+              testTag = "header_telemetry_filters_btn"
+            )
+          }
+
+          if (onCopyAll != null) {
+            AragonHeaderButton(
+              text = "COPY",
+              onClick = onCopyAll,
+              variant = AragonButtonVariant.MUTED,
+              testTag = "header_copy_all_btn"
+            )
+          }
+
+          // Modern Navigation Menu Trigger (Unified access to Files, Stages, Logs, MCP, Docs, and Models)
           AragonHeaderButton(
             text = "MENU",
+            badge = if (artifactsCount > 0) "$artifactsCount" else null,
             onClick = onOpenMenu,
             variant = AragonButtonVariant.PRIMARY,
             testTag = "header_nav_menu_btn"
