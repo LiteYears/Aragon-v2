@@ -1709,72 +1709,72 @@ fun AgentScreen(
           }
         }
       }
+    }
 
-      // Clean Nice Green Modern Toast Notification (replaces the old inline execution feed box)
-      val sandboxToast by viewModel.sandboxUploadToast.collectAsStateWithLifecycle()
-      LaunchedEffect(sandboxToast) {
-        if (sandboxToast != null) {
-          kotlinx.coroutines.delay(3500)
-          viewModel.dismissSandboxToast()
-        }
+    // Clean Nice Green Modern Toast Notification (replaces the old inline execution feed box)
+    val sandboxToast by viewModel.sandboxUploadToast.collectAsStateWithLifecycle()
+    LaunchedEffect(sandboxToast) {
+      if (sandboxToast != null) {
+        kotlinx.coroutines.delay(3500)
+        viewModel.dismissSandboxToast()
       }
+    }
 
-      AnimatedVisibility(
-        visible = sandboxToast != null,
-        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
-        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
-        modifier = Modifier
-          .align(Alignment.TopCenter)
-          .padding(top = 10.dp, start = 14.dp, end = 14.dp)
+    AnimatedVisibility(
+      visible = sandboxToast != null,
+      enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+      exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+      modifier = Modifier
+        .align(Alignment.TopCenter)
+        .padding(top = 10.dp, start = 14.dp, end = 14.dp)
+    ) {
+      Surface(
+        shape = RoundedCornerShape(22.dp),
+        color = Color(0xFF06150B),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.85f)),
+        shadowElevation = 8.dp,
+        modifier = Modifier.testTag("sandbox_upload_toast")
       ) {
-        Surface(
-          shape = RoundedCornerShape(22.dp),
-          color = Color(0xFF06150B),
-          border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.85f)),
-          shadowElevation = 8.dp,
-          modifier = Modifier.testTag("sandbox_upload_toast")
+        Row(
+          modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+          verticalAlignment = Alignment.CenterVertically
         ) {
-          Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+          Box(
+            modifier = Modifier
+              .size(18.dp)
+              .clip(CircleShape)
+              .background(Color(0xFF10B981).copy(alpha = 0.2f)),
+            contentAlignment = Alignment.Center
           ) {
-            Box(
-              modifier = Modifier
-                .size(18.dp)
-                .clip(CircleShape)
-                .background(Color(0xFF10B981).copy(alpha = 0.2f)),
-              contentAlignment = Alignment.Center
-            ) {
-              Icon(
-                imageVector = Icons.Default.Check,
-                contentDescription = null,
-                tint = Color(0xFF10B981),
-                modifier = Modifier.size(13.dp)
-              )
-            }
-            Spacer(modifier = Modifier.width(9.dp))
-            Text(
-              text = sandboxToast ?: "",
-              fontFamily = InterFontFamily,
-              fontSize = 12.sp,
-              fontWeight = FontWeight.Medium,
-              color = Color(0xFFE6FBF0)
+            Icon(
+              imageVector = Icons.Default.Check,
+              contentDescription = null,
+              tint = Color(0xFF10B981),
+              modifier = Modifier.size(13.dp)
             )
-            Spacer(modifier = Modifier.width(8.dp))
-            Box(
-              modifier = Modifier
-                .size(18.dp)
-                .clip(CircleShape)
-                .clickable { viewModel.dismissSandboxToast() },
-              contentAlignment = Alignment.Center
-            ) {
-              Icon(
-                imageVector = Icons.Default.Close,
-                contentDescription = "Dismiss",
-                tint = Color(0xFF6EE7B7),
-                modifier = Modifier.size(12.dp)
-              )
-            }
+          }
+          Spacer(modifier = Modifier.width(9.dp))
+          Text(
+            text = sandboxToast ?: "",
+            fontFamily = InterFontFamily,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = Color(0xFFE6FBF0)
+          )
+          Spacer(modifier = Modifier.width(8.dp))
+          Box(
+            modifier = Modifier
+              .size(18.dp)
+              .clip(CircleShape)
+              .clickable { viewModel.dismissSandboxToast() },
+            contentAlignment = Alignment.Center
+          ) {
+            Icon(
+              imageVector = Icons.Default.Close,
+              contentDescription = "Dismiss",
+              tint = Color(0xFF6EE7B7),
+              modifier = Modifier.size(12.dp)
+            )
           }
         }
       }
@@ -2201,6 +2201,7 @@ fun AgentScreen(
       }
     }
   }
+}
 }
 
 /**

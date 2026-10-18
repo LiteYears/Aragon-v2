@@ -2531,6 +2531,19 @@ class InternalMcpTransport(
     }
   }
 
+  private fun buildToolErrorResult(text: String): JSONObject {
+    val items = JSONArray().apply {
+      put(JSONObject().apply {
+        put("type", "text")
+        put("text", text)
+      })
+    }
+    return JSONObject().apply {
+      put("isError", true)
+      put("content", items)
+    }
+  }
+
   private fun buildSuccessResponse(id: Any?, result: JSONObject): JSONObject {
     return JSONObject().apply {
       put("jsonrpc", "2.0")
