@@ -900,9 +900,12 @@ class AgentViewModel(
         appendLine()
         appendLine("=== EXECUTION STEPS (${feedSnapshot.size}) ===")
         feedSnapshot.forEach { step ->
-          appendLine("[Step ${step.stepNumber}] ${step.type}: ${step.title}")
+          appendLine("[Step ${step.stepNumber}] ${step.type} [${step.toolStatus ?: "COMPLETED"}]: ${step.title}")
+          if (!step.toolName.isNullOrBlank()) {
+            appendLine("Tool: ${step.toolName}${if (step.toolCallId != null) " (ID: ${step.toolCallId})" else ""}")
+          }
           if (step.content.isNotBlank()) {
-            appendLine("Content: ${step.content}")
+            appendLine("Content/Args:\n${step.content}")
           }
           if (!step.stdout.isNullOrBlank()) {
             val out = if (step.stdout.length > 20_000) step.stdout.take(20_000) + "\n...[TRUNCATED]..." else step.stdout
@@ -912,8 +915,8 @@ class AgentViewModel(
             val err = if (step.stderr.length > 20_000) step.stderr.take(20_000) + "\n...[TRUNCATED]..." else step.stderr
             appendLine("STDERR:\n$err")
           }
-          if (step.durationMs != null) {
-            appendLine("Duration: ${step.durationMs}ms | Exit: ${step.exitCode ?: 0}")
+          if (step.durationMs != null || step.exitCode != null) {
+            appendLine("Duration: ${step.durationMs ?: 0}ms | Exit: ${step.exitCode ?: 0}")
           }
           appendLine("-".repeat(40))
         }
@@ -1382,7 +1385,7 @@ class AgentViewModel(
       lastModified = item.lastModified,
       absolutePath = item.absolutePath
     )
-    ArtifactDownloader.downloadArtifact(context, artifact)
+    ArtifactDownloader.downloadArtifact(context, artifact, engine.workspaceDir)
   }
 
   fun shareExplorerItem(context: Context, item: FileExplorerItem) {
@@ -1394,7 +1397,7 @@ class AgentViewModel(
       lastModified = item.lastModified,
       absolutePath = item.absolutePath
     )
-    ArtifactDownloader.shareArtifact(context, artifact)
+    ArtifactDownloader.shareArtifact(context, artifact, engine.workspaceDir)
   }
 
 

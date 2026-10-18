@@ -3,6 +3,7 @@ package com.example.agent.core
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -161,8 +162,9 @@ object ArtifactDownloader {
               resolver.openOutputStream(uri)?.use { outputStream ->
                 copySourceTo(outputStream)
               }
-              showSafeToast(context, "Saved to Downloads: ${artifact.name}", Toast.LENGTH_LONG)
+              showSafeToast(context, "Saved to Downloads: ${artifact.name}", Toast.LENGTH_SHORT)
               saved = true
+              openDownloadedFile(context, uri = uri, file = null, mimeType = mimeType, fileName = artifact.name)
             } catch (writeErr: Throwable) {
               try { resolver.delete(uri, null, null) } catch (_: Throwable) {}
               saved = false
@@ -186,8 +188,9 @@ object ArtifactDownloader {
             FileOutputStream(targetFile).use { fos ->
               copySourceTo(fos)
             }
-            showSafeToast(context, "Saved to Downloads/AragonOutputs: ${artifact.name}", Toast.LENGTH_LONG)
+            showSafeToast(context, "Saved to Downloads/AragonOutputs: ${artifact.name}", Toast.LENGTH_SHORT)
             saved = true
+            openDownloadedFile(context, uri = null, file = targetFile, mimeType = mimeType, fileName = artifact.name)
           }
         } catch (_: Throwable) {
           saved = false
@@ -208,8 +211,9 @@ object ArtifactDownloader {
             FileOutputStream(targetFile).use { fos ->
               copySourceTo(fos)
             }
-            showSafeToast(context, "Saved to: ${targetFile.name}", Toast.LENGTH_LONG)
+            showSafeToast(context, "Saved to: ${targetFile.name}", Toast.LENGTH_SHORT)
             saved = true
+            openDownloadedFile(context, uri = null, file = targetFile, mimeType = mimeType, fileName = artifact.name)
           }
         } catch (_: Throwable) {
           saved = false
@@ -224,8 +228,9 @@ object ArtifactDownloader {
         FileOutputStream(targetFile).use { fos ->
           copySourceTo(fos)
         }
-        showSafeToast(context, "Saved to app storage: ${targetFile.name}", Toast.LENGTH_LONG)
+        showSafeToast(context, "Saved to app storage: ${targetFile.name}", Toast.LENGTH_SHORT)
         saved = true
+        openDownloadedFile(context, uri = null, file = targetFile, mimeType = mimeType, fileName = artifact.name)
       }
 
       saved
@@ -233,6 +238,88 @@ object ArtifactDownloader {
       e.printStackTrace()
       showSafeToast(context, "Download failed: ${e.message}", Toast.LENGTH_LONG)
       false
+    }
+  }
+
+  /**
+   * Opens the downloaded artifact file or URI automatically via the system viewer.
+   */
+  fun openDownloadedFile(
+    context: Context,
+    uri: Uri?,
+    file: File?,
+    mimeType: String,
+    fileName: String
+  ) {
+    try {
+      val targetUri: Uri? = uri ?: file?.let { f ->
+        if (!f.exists()) null
+        else {
+          try {
+            androidx.core.content.FileProvider.getUriForFile(
+              context,
+              "${context.packageName}.fileprovider",
+              f
+            )
+          } catch (e: Throwable) {
+            Uri.fromFile(f)
+          }
+        }
+      }
+
+      if (targetUri != null) {
+        val resolvedMime = if (mimeType.isNotBlank() && mimeType != "application/octet-stream") {
+          mimeType
+        } else {
+          getMimeType(fileName).ifBlank { "*/*" }
+        }
+
+        val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+          setDataAndType(targetUri, resolvedMime)
+          addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        // Grant URI permissions explicitly to all potential resolving components
+        try {
+          val resInfoList = context.packageManager.queryIntentActivities(
+            viewIntent,
+            android.content.pm.PackageManager.MATCH_DEFAULT_ONLY
+          )
+          for (resolveInfo in resInfoList) {
+            val packageName = resolveInfo.activityInfo.packageName
+            context.grantUriPermission(packageName, targetUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+          }
+        } catch (_: Throwable) {}
+
+        // 1. Direct launch first for instant automatic opening without an extra prompt when possible
+        try {
+          context.startActivity(viewIntent)
+        } catch (_: Throwable) {
+          // 2. Fallback to system Chooser with specific MIME
+          try {
+            val chooser = Intent.createChooser(viewIntent, "Open $fileName").apply {
+              addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
+          } catch (_: Throwable) {
+            // 3. Ultimate wildcard fallback (*/*) to ensure any available system handler can open it
+            try {
+              val wildcardIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(targetUri, "*/*")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+              }
+              val wildcardChooser = Intent.createChooser(wildcardIntent, "Open $fileName").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+              }
+              context.startActivity(wildcardChooser)
+            } catch (finalErr: Throwable) {
+              android.util.Log.w("ArtifactDownloader", "All attempts to auto-open file failed: ${finalErr.message}")
+            }
+          }
+        }
+      }
+    } catch (e: Throwable) {
+      android.util.Log.w("ArtifactDownloader", "Unable to open file automatically: ${e.message}")
     }
   }
 

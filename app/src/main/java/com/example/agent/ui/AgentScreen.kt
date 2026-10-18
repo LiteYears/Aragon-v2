@@ -121,6 +121,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.R
+import android.content.Context
+import com.example.agent.core.AgentState
 import com.example.agent.core.AgentStatus
 import com.example.agent.core.NvidiaNimConfig
 import com.example.agent.core.NvidiaNimModels
@@ -193,6 +195,73 @@ private val DOCUMENT_MIME_FILTERS = arrayOf(
   "text/plain",
   "application/octet-stream"
 )
+
+/**
+ * Formats the entire execution session into a clean, comprehensive structured Markdown log
+ * suitable for the clipboard, export, or audit records.
+ */
+fun formatExecutionFeedLog(state: AgentState): String {
+  return buildString {
+    appendLine("# ARAGON AUTONOMOUS AGENT EXECUTION LOG")
+    appendLine("Session ID: ${state.sessionId}")
+    appendLine("Status: ${state.status.name}")
+    state.task?.let { t ->
+      appendLine("Prompt: ${t.goal}")
+      if (!t.expectedArtifact.isNullOrBlank()) {
+        appendLine("Target Deliverable: ${t.expectedArtifact}")
+      }
+    }
+    appendLine("Timestamp: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(state.task?.createdAt ?: System.currentTimeMillis()))}")
+    appendLine()
+
+    if (state.plan.isNotEmpty()) {
+      appendLine("## EXECUTION PLAN")
+      state.plan.forEachIndexed { idx, p -> appendLine("${idx + 1}. $p") }
+      appendLine()
+    }
+
+    appendLine("## EXECUTION FEED (${state.executionFeed.size} steps)")
+    state.executionFeed.forEach { step ->
+      appendLine("---")
+      appendLine("### Step ${step.stepNumber}: [${step.type.name}] ${step.title}")
+      if (!step.toolName.isNullOrBlank()) {
+        appendLine("Tool: ${step.toolName} | Status: ${step.toolStatus ?: "COMPLETED"}")
+      }
+      if (step.durationMs != null) {
+        appendLine("Duration: ${step.durationMs}ms")
+      }
+      if (step.exitCode != null) {
+        appendLine("Exit Code: ${step.exitCode}")
+      }
+      if (step.content.isNotBlank()) {
+        appendLine("\nContent / Arguments:")
+        appendLine(step.content)
+      }
+      if (!step.stdout.isNullOrBlank()) {
+        appendLine("\nSTDOUT:")
+        appendLine(step.stdout)
+      }
+      if (!step.stderr.isNullOrBlank()) {
+        appendLine("\nSTDERR:")
+        appendLine(step.stderr)
+      }
+      appendLine()
+    }
+
+    if (state.trackedDeliverables.isNotEmpty()) {
+      appendLine("## DELIVERABLES & ARTIFACTS (${state.trackedDeliverables.size})")
+      state.trackedDeliverables.forEach { d ->
+        appendLine("- ${d.name} (${d.description.ifBlank { "Deliverable" }}) [Status: ${d.status.name}] Path: ${d.path}")
+      }
+      appendLine()
+    }
+
+    if (!state.completionSummary.isNullOrBlank()) {
+      appendLine("## CONCLUSION & SUMMARY")
+      appendLine(state.completionSummary)
+    }
+  }
+}
 
 /**
  * Main Aragon Autonomous Agent Screen.
@@ -350,7 +419,18 @@ fun AgentScreen(
           onGoHome = { viewModel.selectTab(UiTab.EXECUTION_FEED) },
           onOpenMcp = { showMcpDialog = true },
           onOpenDocs = { showDocumentsDialog = true },
-          onOpenMenu = { showNavMenu = true }
+          onOpenMenu = { showNavMenu = true },
+          onCopyAll = if (state.executionFeed.isNotEmpty()) {
+            {
+              val log = formatExecutionFeedLog(state)
+              val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+              if (clipboard != null) {
+                val clip = android.content.ClipData.newPlainText("Aragon Execution Feed", log.take(250_000))
+                clipboard.setPrimaryClip(clip)
+                android.widget.Toast.makeText(context, "Full execution feed & tool calls copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+              }
+            }
+          } else null
         )
 
         PremiumTabBar(
@@ -370,17 +450,13 @@ fun AgentScreen(
         label = "prompt_border"
       )
 
-      Surface(
+      Box(
         modifier = Modifier
           .fillMaxWidth()
-          .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime)),
-        color = AmoledBackground,
-        border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle)
+          .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
+          .background(AmoledBackground),
+        contentAlignment = Alignment.Center
       ) {
-        Box(
-          modifier = Modifier.fillMaxWidth(),
-          contentAlignment = Alignment.Center
-        ) {
           Column(
             modifier = Modifier
               .fillMaxWidth()
@@ -582,7 +658,7 @@ fun AgentScreen(
                     // MCP ecosystem capsule button
                     val activeMcpCount = mcpServers.count { it.enabled }
                     AragonFeedButton(
-                      text = if (activeMcpCount > 0) "MCP ($activeMcpCount)" else "MCP",
+                      text = "MCP",
                       onClick = { showMcpDialog = true },
                       variant = if (activeMcpCount > 0) AragonButtonVariant.PRIMARY else AragonButtonVariant.MUTED,
                       testTag = "mcp_servers_button"
@@ -758,7 +834,6 @@ fun AgentScreen(
                       }
                     }
                   }
-                }
               }
             }
           }
@@ -905,15 +980,81 @@ fun AgentScreen(
         when (currentTab) {
           UiTab.EXECUTION_FEED -> {
             if (state.executionFeed.isEmpty()) {
-              val currentModelName = when (providerType) {
-                ProviderType.NVIDIA_NIM -> nvidiaModel.substringAfterLast('/')
-                ProviderType.SANDBOX_ENGINE -> "Autonomous"
-                ProviderType.GEMINI_LIVE_API -> "Gemini Live"
+              if (state.status == AgentStatus.THINKING || state.status == AgentStatus.PLANNING || state.status == AgentStatus.EXECUTING_TOOL) {
+                Box(
+                  modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp, vertical = 20.dp),
+                  contentAlignment = Alignment.TopCenter
+                ) {
+                  Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF100E0A),
+                    border = androidx.compose.foundation.BorderStroke(1.2.dp, AmoledActionPrimary.copy(alpha = 0.7f)),
+                    modifier = Modifier
+                      .fillMaxWidth()
+                      .widthIn(max = 680.dp)
+                      .testTag("initial_reasoning_card")
+                  ) {
+                    Column(
+                      modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                    ) {
+                      Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                      ) {
+                        Text(
+                          text = if (state.status == AgentStatus.PLANNING) "PREPARING EXECUTION PLAN" else "AUTONOMOUS ENGINE REASONING",
+                          style = MaterialTheme.typography.labelSmall,
+                          fontFamily = JetBrainsMonoFontFamily,
+                          fontWeight = FontWeight.Bold,
+                          fontSize = 11.sp,
+                          letterSpacing = 1.sp,
+                          color = AmoledActionPrimary
+                        )
+                        com.example.agent.ui.components.CreativeAmoledLoadingBadge(
+                          label = if (state.status == AgentStatus.PLANNING) "PLAN" else "REASON",
+                          height = 24.dp,
+                          testTag = "initial_reasoning_badge"
+                        )
+                      }
+
+                      state.task?.let { t ->
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                          text = t.goal,
+                          style = MaterialTheme.typography.bodyMedium,
+                          fontFamily = InterFontFamily,
+                          color = AmoledTextPrimary,
+                          fontSize = 13.sp
+                        )
+                      }
+
+                      Spacer(modifier = Modifier.height(10.dp))
+                      Text(
+                        text = state.currentAction ?: "Evaluating instructions, provisioning tools, and synthesizing reasoning trajectory...",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        color = AmoledTextSecondary,
+                        fontSize = 10.sp
+                      )
+                    }
+                  }
+                }
+              } else {
+                val currentModelName = when (providerType) {
+                  ProviderType.NVIDIA_NIM -> nvidiaModel.substringAfterLast('/')
+                  ProviderType.SANDBOX_ENGINE -> "Autonomous"
+                  ProviderType.GEMINI_LIVE_API -> "Gemini Live"
+                }
+                EmptyExecutionState(
+                  currentModelName = currentModelName,
+                  onOpenModelSelect = { showModelSelectDialog = true }
+                )
               }
-              EmptyExecutionState(
-                currentModelName = currentModelName,
-                onOpenModelSelect = { showModelSelectDialog = true }
-              )
             } else {
               val telemetry = remember(state.executionFeed, state.status) {
                 viewModel.computeRunTelemetry()
@@ -939,13 +1080,20 @@ fun AgentScreen(
                 }
               }
 
-              Column(modifier = Modifier.fillMaxSize()) {
-                // Uncluttered execution feed: only a slim filter indicator if a filter is active
-                if (activeFeedFilter != FeedFilter.ALL) {
+              Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.TopCenter
+              ) {
+                Column(
+                  modifier = Modifier
+                    .fillMaxSize()
+                    .widthIn(max = 840.dp)
+                ) {
+                  // Streamlined feed control bar: Filter indicator on Left + COPY ALL on Right
                   Surface(
                     shape = RoundedCornerShape(6.dp),
-                    color = Color(0xFF141414),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledActionPrimary.copy(alpha = 0.5f)),
+                    color = Color(0xFF101012),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
                     modifier = Modifier
                       .fillMaxWidth()
                       .padding(horizontal = 14.dp, vertical = 4.dp)
@@ -957,44 +1105,111 @@ fun AgentScreen(
                       verticalAlignment = Alignment.CenterVertically,
                       horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                      Text(
-                        text = "FILTER: ${activeFeedFilter.label} (${filteredFeed.size} steps)",
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = AmoledActionPrimary
-                      )
-                      Text(
-                        text = "[RESET TO ALL]",
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = AmoledIconGreyLight,
-                        modifier = Modifier
-                          .clip(RoundedCornerShape(4.dp))
-                          .clickable { activeFeedFilter = FeedFilter.ALL }
-                          .padding(2.dp)
+                      Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                      ) {
+                        Text(
+                          text = if (activeFeedFilter != FeedFilter.ALL) "FILTER: ${activeFeedFilter.label} (${filteredFeed.size})" else "FEED: ${filteredFeed.size} steps",
+                          fontFamily = JetBrainsMonoFontFamily,
+                          fontSize = 9.sp,
+                          fontWeight = FontWeight.Bold,
+                          color = if (activeFeedFilter != FeedFilter.ALL) AmoledActionPrimary else AmoledIconGreyLight
+                        )
+                        if (activeFeedFilter != FeedFilter.ALL) {
+                          Text(
+                            text = "[RESET]",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = AmoledActionPrimary,
+                            modifier = Modifier
+                              .clip(RoundedCornerShape(4.dp))
+                              .clickable { activeFeedFilter = FeedFilter.ALL }
+                              .padding(2.dp)
+                          )
+                        }
+                      }
+
+                      AragonFeedCopyButton(
+                        textToCopy = "",
+                        textProvider = { formatExecutionFeedLog(state) },
+                        label = "COPY ALL",
+                        testTag = "feed_header_copy_all_btn"
                       )
                     }
                   }
-                }
 
-                LazyColumn(
-                  state = listState,
-                  modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("execution_feed_list"),
-                  contentPadding = PaddingValues(vertical = 4.dp, horizontal = 0.dp)
-                ) {
-                  itemsIndexed(
-                    items = filteredFeed,
-                    key = { _, step -> step.id }
-                  ) { index, step ->
-                    ExecutionFeedItem(
-                      step = step,
-                      isLast = index == filteredFeed.size - 1 && state.status != AgentStatus.COMPLETED
-                    )
-                  }
+                  LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                      .fillMaxSize()
+                      .testTag("execution_feed_list"),
+                    contentPadding = PaddingValues(vertical = 4.dp, horizontal = 0.dp)
+                  ) {
+                    itemsIndexed(
+                      items = filteredFeed,
+                      key = { _, step -> step.id }
+                    ) { index, step ->
+                      ExecutionFeedItem(
+                        step = step,
+                        isLast = index == filteredFeed.size - 1 && state.status != AgentStatus.COMPLETED
+                      )
+                    }
+
+                    // Active Model Reasoning Indicator Card (Displayed when model is actively reasoning/thinking)
+                    if (state.status == AgentStatus.THINKING || state.status == AgentStatus.PLANNING || (state.status == AgentStatus.EXECUTING_TOOL && filteredFeed.lastOrNull()?.isCompleted == true)) {
+                      item(key = "active_model_reasoning_indicator") {
+                        Surface(
+                          shape = RoundedCornerShape(10.dp),
+                          color = Color(0xFF14120E),
+                          border = androidx.compose.foundation.BorderStroke(1.dp, AmoledActionPrimary.copy(alpha = 0.6f)),
+                          modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                            .testTag("active_reasoning_card")
+                        ) {
+                          Row(
+                            modifier = Modifier
+                              .fillMaxWidth()
+                              .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                          ) {
+                            Row(
+                              verticalAlignment = Alignment.CenterVertically,
+                              modifier = Modifier.weight(1f)
+                            ) {
+                              Column {
+                                Text(
+                                  text = if (state.status == AgentStatus.PLANNING) "PREPARING EXECUTION PLAN" else "REASONING & SYNTHESIZING",
+                                  style = MaterialTheme.typography.labelSmall,
+                                  fontFamily = JetBrainsMonoFontFamily,
+                                  fontWeight = FontWeight.Bold,
+                                  fontSize = 10.5.sp,
+                                  color = AmoledActionPrimary
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                  text = state.currentAction ?: "Evaluating context and executing next action...",
+                                  style = MaterialTheme.typography.bodySmall,
+                                  fontFamily = InterFontFamily,
+                                  fontSize = 11.sp,
+                                  color = AmoledTextSecondary,
+                                  maxLines = 1,
+                                  overflow = TextOverflow.Ellipsis
+                                )
+                              }
+                            }
+                            com.example.agent.ui.components.CreativeAmoledLoadingBadge(
+                              label = if (state.status == AgentStatus.PLANNING) "PLAN" else "REASON",
+                              height = 22.dp,
+                              testTag = "waiting_reasoning_loading_badge"
+                            )
+                          }
+                        }
+                      }
+                    }
 
                   if (state.status == AgentStatus.COMPLETED) {
                     item(key = "continuation_prompt_banner") {
@@ -1118,8 +1333,9 @@ fun AgentScreen(
               }
             }
           }
+        }
 
-          UiTab.ARTIFACTS -> {
+        UiTab.ARTIFACTS -> {
             WorkspaceFileExplorer(
               currentPath = currentExplorerPath,
               searchQuery = explorerSearchQuery,
@@ -1554,7 +1770,8 @@ fun AgentTopHeader(
   onGoHome: () -> Unit = {},
   onOpenMcp: () -> Unit = {},
   onOpenDocs: () -> Unit = {},
-  onOpenMenu: () -> Unit
+  onOpenMenu: () -> Unit,
+  onCopyAll: (() -> Unit)? = null
 ) {
   Surface(
     modifier = Modifier.fillMaxWidth(),
@@ -1593,15 +1810,15 @@ fun AgentTopHeader(
           StatusPill(status = status)
         }
 
-        // RIGHT-ALIGNED ACTIONS: MCP, DOCS, STATS, STOP, MENU
+        // RIGHT-ALIGNED ACTIONS: MCP, DOCS, STATS, COPY ALL, STOP, MENU
         Row(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
-          // Direct 1-tap MCP button with count badge!
+          // Direct 1-tap MCP button with no badge
           AragonHeaderButton(
             text = "MCP",
-            badge = if (mcpCount > 0) "$mcpCount" else null,
+            badge = null,
             onClick = onOpenMcp,
             variant = if (mcpCount > 0) AragonButtonVariant.PRIMARY else AragonButtonVariant.MUTED,
             testTag = "header_mcp_btn"
@@ -1630,6 +1847,15 @@ fun AgentTopHeader(
               variant = if (activeFeedFilter != null && activeFeedFilter != FeedFilter.ALL) AragonButtonVariant.PRIMARY else AragonButtonVariant.MUTED,
               badge = filterBadge,
               testTag = "header_telemetry_filters_btn"
+            )
+          }
+
+          if (onCopyAll != null) {
+            AragonHeaderButton(
+              text = "COPY ALL",
+              onClick = onCopyAll,
+              variant = AragonButtonVariant.MUTED,
+              testTag = "header_copy_all_btn"
             )
           }
 

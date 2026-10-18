@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -224,12 +225,20 @@ fun ModelResponseView(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
       ) {
-        AragonStepBadge(
-          stepNumber = step.stepNumber,
-          type = step.type,
-          toolStatus = step.toolStatus,
-          isActive = isActive
-        )
+        if (isActive) {
+          CreativeAmoledLoadingBadge(
+            label = "THINKING",
+            height = 22.dp,
+            testTag = "model_thinking_badge_${step.stepNumber}"
+          )
+        } else {
+          AragonStepBadge(
+            stepNumber = step.stepNumber,
+            type = step.type,
+            toolStatus = step.toolStatus,
+            isActive = false
+          )
+        }
 
         AragonFeedCopyButton(
           textToCopy = step.content,
@@ -308,7 +317,7 @@ fun ToolCallBoxView(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
       ) {
-        // LEFT: Tool name and execution metrics
+        // LEFT: Tool name, telemetry loading glyph, and execution metrics
         Row(
           verticalAlignment = Alignment.CenterVertically,
           modifier = Modifier
@@ -318,6 +327,39 @@ fun ToolCallBoxView(
               onClickLabel = if (isExpanded) "Collapse tool details" else "Expand tool details"
             ) { isExpanded = !isExpanded }
         ) {
+          // Non-standard creative telemetry indicator for every tool call card
+          Box(modifier = Modifier.padding(end = 8.dp)) {
+            if (isActive || step.toolStatus == "RUNNING" || step.toolStatus == "ACTIVE" || !step.isCompleted) {
+              CreativeAmoledLoadingBadge(
+                label = "",
+                showLabel = false,
+                height = 20.dp,
+                accentColor = AmoledActionPrimary,
+                testTag = "tool_glyph_loading_${step.stepNumber}"
+              )
+            } else {
+              Surface(
+                shape = RoundedCornerShape(4.dp),
+                color = if (step.exitCode == 0 || step.toolStatus == ToolStatus.SUCCEEDED.name) Color(0xFF102014) else Color(0xFF161618),
+                border = BorderStroke(1.dp, if (step.exitCode == 0 || step.toolStatus == ToolStatus.SUCCEEDED.name) AmoledStatusSuccess.copy(alpha = 0.5f) else AmoledBorderSubtle),
+                modifier = Modifier.height(20.dp)
+              ) {
+                Box(
+                  modifier = Modifier.padding(horizontal = 6.dp),
+                  contentAlignment = Alignment.Center
+                ) {
+                  Text(
+                    text = if (step.exitCode == 0 || step.toolStatus == ToolStatus.SUCCEEDED.name) "⚡ OK" else "⚡ CALL",
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (step.exitCode == 0 || step.toolStatus == ToolStatus.SUCCEEDED.name) AmoledStatusSuccess else AmoledIconGreyLight
+                  )
+                }
+              }
+            }
+          }
+
           Column(modifier = Modifier.padding(end = 4.dp)) {
             Text(
               text = formatToolDisplayName(step.toolName ?: step.title),
@@ -378,13 +420,21 @@ fun ToolCallBoxView(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-          // Status badge on the RIGHT
-          AragonStepBadge(
-            stepNumber = step.stepNumber,
-            type = step.type,
-            toolStatus = step.toolStatus,
-            isActive = isActive
-          )
+          // Status badge on the RIGHT with non-standard creative loading badge when active or running
+          if (isActive || step.toolStatus == "RUNNING" || step.toolStatus == "ACTIVE" || step.toolStatus == "WAITING" || !step.isCompleted) {
+            CreativeAmoledLoadingBadge(
+              label = if (step.toolStatus == "WAITING") "WAIT" else "RUN",
+              height = 22.dp,
+              testTag = "tool_running_badge_${step.stepNumber}"
+            )
+          } else {
+            AragonStepBadge(
+              stepNumber = step.stepNumber,
+              type = step.type,
+              toolStatus = step.toolStatus,
+              isActive = false
+            )
+          }
 
           // VIEW / HIDE toggle button with consistent 22dp height and tactile feedback
           AragonFeedButton(

@@ -277,6 +277,10 @@ fun WorkspaceFileExplorer(
         }
       }
     } else {
+      val directoryItems = remember(filteredItems) { filteredItems.filter { it.isDirectory } }
+      val deliverableItems = remember(filteredItems) { filteredItems.filter { !it.isDirectory && it.isDeliverable } }
+      val standardFileItems = remember(filteredItems) { filteredItems.filter { !it.isDirectory && !it.isDeliverable } }
+
       if (viewMode == ExplorerViewMode.LIST) {
         LazyColumn(
           modifier = Modifier
@@ -284,20 +288,72 @@ fun WorkspaceFileExplorer(
             .weight(1f)
             .testTag("workspace_explorer_list"),
           contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 16.dp),
-          verticalArrangement = Arrangement.spacedBy(5.dp)
+          verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-          itemsIndexed(
-            items = filteredItems,
-            key = { _, item -> item.relativePath }
-          ) { _, item ->
-            if (item.isDirectory) {
+          // 1. Deliverables Section
+          if (deliverableItems.isNotEmpty()) {
+            item(key = "section_header_deliverables") {
+              ExplorerSectionHeader(
+                title = "VERIFIED ARTIFACTS & DELIVERABLES",
+                count = deliverableItems.size,
+                icon = "★",
+                accent = AmoledStatusSuccess
+              )
+            }
+            itemsIndexed(
+              items = deliverableItems,
+              key = { _, item -> "deliv_${item.relativePath}" }
+            ) { _, item ->
+              FileItemRow(
+                item = item,
+                onClick = { onPreviewItem(item) },
+                onSave = { onSaveItem(item) },
+                onShare = { onShareItem(item) },
+                onRename = { itemToRename = item },
+                onDuplicate = { onDuplicateItem?.invoke(item) },
+                onInspect = { itemToInspect = item },
+                onDelete = { itemToDelete = item }
+              )
+            }
+          }
+
+          // 2. Directories Section
+          if (directoryItems.isNotEmpty()) {
+            item(key = "section_header_directories") {
+              ExplorerSectionHeader(
+                title = "DIRECTORIES & PACKAGES",
+                count = directoryItems.size,
+                icon = "📁",
+                accent = AmoledAccentAmber
+              )
+            }
+            itemsIndexed(
+              items = directoryItems,
+              key = { _, item -> "dir_${item.relativePath}" }
+            ) { _, item ->
               DirectoryItemRow(
                 item = item,
                 onClick = { onNavigateToFolder(item.name) },
                 onRename = { itemToRename = item },
                 onDelete = { itemToDelete = item }
               )
-            } else {
+            }
+          }
+
+          // 3. Regular Files Section
+          if (standardFileItems.isNotEmpty()) {
+            item(key = "section_header_files") {
+              ExplorerSectionHeader(
+                title = "WORKSPACE FILES & CODE",
+                count = standardFileItems.size,
+                icon = "📄",
+                accent = AmoledIconGreyLight
+              )
+            }
+            itemsIndexed(
+              items = standardFileItems,
+              key = { _, item -> "file_${item.relativePath}" }
+            ) { _, item ->
               FileItemRow(
                 item = item,
                 onClick = { onPreviewItem(item) },
@@ -312,29 +368,75 @@ fun WorkspaceFileExplorer(
           }
         }
       } else {
-        // High density Grid mode
+        // High density Grid mode with sectioning
         LazyVerticalGrid(
-          columns = GridCells.Adaptive(minSize = 145.dp),
+          columns = GridCells.Adaptive(minSize = 150.dp),
           modifier = Modifier
             .fillMaxWidth()
             .weight(1f)
             .testTag("workspace_explorer_grid"),
           contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 16.dp),
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
-          verticalArrangement = Arrangement.spacedBy(6.dp)
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-          items(
-            items = filteredItems,
-            key = { it.relativePath }
-          ) { item ->
-            if (item.isDirectory) {
+          if (deliverableItems.isNotEmpty()) {
+            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }, key = "grid_section_deliverables") {
+              ExplorerSectionHeader(
+                title = "VERIFIED ARTIFACTS & DELIVERABLES",
+                count = deliverableItems.size,
+                icon = "★",
+                accent = AmoledStatusSuccess
+              )
+            }
+            items(
+              items = deliverableItems,
+              key = { "grid_deliv_${it.relativePath}" }
+            ) { item ->
+              FileGridCard(
+                item = item,
+                onClick = { onPreviewItem(item) },
+                onSave = { onSaveItem(item) },
+                onInspect = { itemToInspect = item },
+                onDelete = { itemToDelete = item }
+              )
+            }
+          }
+
+          if (directoryItems.isNotEmpty()) {
+            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }, key = "grid_section_directories") {
+              ExplorerSectionHeader(
+                title = "DIRECTORIES & PACKAGES",
+                count = directoryItems.size,
+                icon = "📁",
+                accent = AmoledAccentAmber
+              )
+            }
+            items(
+              items = directoryItems,
+              key = { "grid_dir_${it.relativePath}" }
+            ) { item ->
               DirectoryGridCard(
                 item = item,
                 onClick = { onNavigateToFolder(item.name) },
                 onRename = { itemToRename = item },
                 onDelete = { itemToDelete = item }
               )
-            } else {
+            }
+          }
+
+          if (standardFileItems.isNotEmpty()) {
+            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }, key = "grid_section_files") {
+              ExplorerSectionHeader(
+                title = "WORKSPACE FILES & CODE",
+                count = standardFileItems.size,
+                icon = "📄",
+                accent = AmoledIconGreyLight
+              )
+            }
+            items(
+              items = standardFileItems,
+              key = { "grid_file_${it.relativePath}" }
+            ) { item ->
               FileGridCard(
                 item = item,
                 onClick = { onPreviewItem(item) },
@@ -444,6 +546,60 @@ fun WorkspaceFileExplorer(
         }
       }
     )
+  }
+}
+
+/**
+ * Modern AMOLED Section Header for the Workspace Explorer.
+ * Separates Deliverables, Directories, and Files with crisp typography, icons, and counts.
+ */
+@Composable
+fun ExplorerSectionHeader(
+  title: String,
+  count: Int,
+  icon: String,
+  accent: Color,
+  modifier: Modifier = Modifier
+) {
+  Row(
+    modifier = modifier
+      .fillMaxWidth()
+      .padding(top = 8.dp, bottom = 4.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.SpaceBetween
+  ) {
+    Row(
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+      Text(
+        text = icon,
+        fontSize = 11.sp,
+        color = accent
+      )
+      Text(
+        text = title,
+        fontFamily = JetBrainsMonoFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 10.sp,
+        letterSpacing = 0.8.sp,
+        color = accent
+      )
+    }
+    Surface(
+      shape = RoundedCornerShape(3.dp),
+      color = accent.copy(alpha = 0.12f),
+      border = BorderStroke(1.dp, accent.copy(alpha = 0.35f))
+    ) {
+      Text(
+        text = "$count",
+        fontFamily = JetBrainsMonoFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 9.sp,
+        color = accent,
+        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+      )
+    }
   }
 }
 
