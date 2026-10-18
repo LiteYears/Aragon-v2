@@ -538,8 +538,8 @@ fun TaskObjectiveView(step: ExecutionStep) {
   ) {
     Surface(
       shape = RoundedCornerShape(18.dp),
-      color = Color(0xFF131318),
-      border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF242430)),
+      color = Color(0xFF09090D),
+      border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1A1A22)),
       modifier = Modifier
         .widthIn(max = 560.dp)
         .testTag("task_objective_bubble")

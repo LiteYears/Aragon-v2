@@ -44,16 +44,26 @@ object DocumentDetector {
       return DetectionResult(DocumentType.IMAGE, MIME_IMAGE, "Image signature")
     }
 
-    if (looksLikeText(file)) {
-      val name = (nameHint ?: file.name).lowercase()
+    val name = (nameHint ?: file.name).lowercase()
+    val isKnownTextExt = name.endsWith(".txt") || name.endsWith(".csv") || name.endsWith(".tsv") ||
+      name.endsWith(".md") || name.endsWith(".markdown") || name.endsWith(".json") || name.endsWith(".xml") ||
+      name.endsWith(".kt") || name.endsWith(".kts") || name.endsWith(".java") || name.endsWith(".py") ||
+      name.endsWith(".js") || name.endsWith(".ts") || name.endsWith(".html") || name.endsWith(".css") ||
+      name.endsWith(".sh") || name.endsWith(".yml") || name.endsWith(".yaml") || name.endsWith(".sql") ||
+      name.endsWith(".env") || name.endsWith(".gradle") || name.endsWith(".properties") || name.endsWith(".c") ||
+      name.endsWith(".cpp") || name.endsWith(".h") || name.endsWith(".rs") || name.endsWith(".go") ||
+      name.endsWith(".log") || name.endsWith(".ini") || name.endsWith(".toml")
+
+    if (isKnownTextExt || looksLikeText(file)) {
       val isCsv = name.endsWith(".csv") || (mimeHint?.contains("csv", ignoreCase = true) == true)
       if (isCsv) {
         return DetectionResult(DocumentType.CSV, "text/csv", "Delimited text")
       }
-      return DetectionResult(DocumentType.TXT, "text/plain", "Plain text")
+      return DetectionResult(DocumentType.TXT, mimeHint ?: "text/plain", "Text document")
     }
 
-    throw DocumentException("Unsupported file format. Supported: PDF, DOCX, XLSX, CSV, TXT, and images.")
+    // Accept generic files (archives, binaries, unknown formats) so upload never fails
+    return DetectionResult(DocumentType.UNSUPPORTED, mimeHint ?: "application/octet-stream", "Workspace file")
   }
 
   private fun startsWith(source: ByteArray, prefix: ByteArray): Boolean {

@@ -518,7 +518,25 @@ class DocumentIntelligenceService(
       DocumentType.XLSX -> XlsxTextExtractor.extract(original, docId, entity.displayName)
       DocumentType.CSV -> CsvTextExtractor.extract(original, docId, entity.displayName)
       DocumentType.TXT -> TxtTextExtractor.extract(original, docId, entity.displayName)
-      DocumentType.UNSUPPORTED -> throw DocumentException("Unsupported document type")
+      DocumentType.UNSUPPORTED -> {
+        runCatching {
+          TxtTextExtractor.extract(original, docId, entity.displayName)
+        }.getOrElse {
+          DocumentStructure(
+            blocks = listOf(
+              DocumentBlock(
+                kind = BlockKind.PARAGRAPH,
+                text = "Attached file: ${entity.displayName} (${entity.sizeBytes / 1024} KB). Available in workspace.",
+                page = 1,
+                direction = TextDirection.LTR,
+                sourceEngine = "direct-model-upload"
+              )
+            ),
+            metadata = mapOf("file" to entity.displayName),
+            textLength = entity.displayName.length
+          )
+        }
+      }
     }
     val effectiveStructure = if (structure.blocks.isEmpty() && structure.sheets.isEmpty()) {
       val fallbackBlock = DocumentBlock(

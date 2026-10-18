@@ -95,6 +95,9 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -207,16 +210,7 @@ import com.example.ui.theme.JetBrainsMonoFontFamily
  * octet-stream entry keeps documents from file providers that do not declare
  * a precise MIME type selectable.
  */
-private val DOCUMENT_MIME_FILTERS = arrayOf(
-  "application/pdf",
-  "image/*",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "text/csv",
-  "text/comma-separated-values",
-  "text/plain",
-  "application/octet-stream"
-)
+private val DOCUMENT_MIME_FILTERS = arrayOf("*/*")
 
 /**
  * Formats the entire execution session into a clean, comprehensive structured Markdown log
@@ -350,6 +344,20 @@ fun AgentScreen(
   ) { uris ->
     if (uris.isNotEmpty()) {
       viewModel.onDocumentsPicked(uris)
+    }
+  }
+  val photoPickerLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.PickMultipleVisualMedia()
+  ) { uris ->
+    if (uris.isNotEmpty()) {
+      viewModel.onDocumentsPicked(uris)
+    }
+  }
+  val folderPickerLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.OpenDocumentTree()
+  ) { uri ->
+    if (uri != null) {
+      viewModel.onFolderPicked(uri)
     }
   }
   val documents by viewModel.documents.collectAsStateWithLifecycle()
