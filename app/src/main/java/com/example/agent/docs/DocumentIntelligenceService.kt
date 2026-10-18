@@ -184,34 +184,41 @@ class DocumentIntelligenceService(
       val existing = repository.findBySha(sha)
       if (existing != null) {
         temp.delete()
-        return@withContext ImportOutcome(existing.id, existing.displayName, true, "Already imported as '${existing.displayName}'")
+        val current = _scope.value.toMutableSet()
+        current.add(existing.id)
+        _scope.value = current
+        prefs.edit().putStringSet("documents_scope_ids", current).apply()
+        refreshDocuments()
+        return@withContext ImportOutcome(existing.id, existing.displayName, true, "Attached '${existing.displayName}'")
       }
       val docId = UUID.randomUUID().toString().replace("-", "").take(16)
       val docDir = File(workspaceDir, "documents/$docId")
       docDir.mkdirs()
       val ext = DocumentDetector.extensionFor(detection.type)
+      val hasExt = displayName.contains('.') && displayName.substringAfterLast('.').length in 1..5
+      val effectiveDisplayName = if (hasExt) displayName else "$displayName.$ext"
       val original = File(docDir, "original.$ext")
       if (!temp.renameTo(original)) {
         temp.copyTo(original, overwrite = true)
         temp.delete()
       }
-      val safeDisplayName = DocumentText.sanitizeDisplayName(displayName)
+      val safeFileName = DocumentText.sanitizeFileName(effectiveDisplayName)
       try {
-        val workspaceCopy = File(workspaceDir, safeDisplayName)
+        val workspaceCopy = File(workspaceDir, safeFileName)
         workspaceCopy.parentFile?.mkdirs()
         original.copyTo(workspaceCopy, overwrite = true)
-        // Automatically sync to active E2B microVM at /home/user/<safeDisplayName>
+        // Automatically sync to active E2B microVM at /home/user/<safeFileName>
         val sandbox = sandboxProviderSupplier()
         val sessId = sessionIdSupplier()
         if (sandbox != null && sandbox.isRemote && sessId.isNotBlank()) {
-          sandbox.pushFileToRemote(sessId, safeDisplayName, workspaceCopy)
+          sandbox.pushFileToRemote(sessId, safeFileName, workspaceCopy)
         }
       } catch (_: Exception) {
       }
       val now = System.currentTimeMillis()
       val entity = DocumentEntity(
         id = docId,
-        displayName = DocumentText.sanitizeDisplayName(displayName),
+        displayName = effectiveDisplayName,
         type = detection.type.name,
         sizeBytes = original.length(),
         sha256 = sha,
@@ -238,7 +245,7 @@ class DocumentIntelligenceService(
       prefs.edit().putStringSet("documents_scope_ids", current).apply()
       refreshDocuments()
       launchProcessing(docId)
-      ImportOutcome(docId, displayName, true, "Import accepted; processing started (${detection.detail})")
+      ImportOutcome(docId, effectiveDisplayName, true, "Import accepted; processing started (${detection.detail})")
     } catch (e: Exception) {
       temp.delete()
       ImportOutcome(null, displayName, false, e.message ?: "Import failed")
@@ -434,11 +441,13 @@ class DocumentIntelligenceService(
 
   fun getOriginalFile(docId: String): File? {
     val doc = _documents.value.firstOrNull { it.id == docId } ?: return null
-    val ext = DocumentDetector.extensionFor(doc.type)
-    val orig = File(workspaceDir, "documents/${doc.id}/original.$ext")
-    if (orig.exists()) return orig
+    val docDir = File(workspaceDir, "documents/${doc.id}")
+    val candidates = docDir.listFiles()?.filter { it.isFile && it.name.startsWith("original") }
+    if (!candidates.isNullOrEmpty()) return candidates.first()
     val ws = File(workspaceDir, doc.displayName)
     if (ws.exists()) return ws
+    val safeWs = File(workspaceDir, DocumentText.sanitizeFileName(doc.displayName))
+    if (safeWs.exists()) return safeWs
     return null
   }
 
@@ -523,6 +532,9 @@ class DocumentIntelligenceService(
           TxtTextExtractor.extract(original, docId, entity.displayName)
         }.getOrElse {
           DocumentStructure(
+            docId = docId,
+            displayName = entity.displayName,
+            type = DocumentType.UNSUPPORTED,
             blocks = listOf(
               DocumentBlock(
                 kind = BlockKind.PARAGRAPH,
@@ -532,7 +544,6 @@ class DocumentIntelligenceService(
                 sourceEngine = "direct-model-upload"
               )
             ),
-            metadata = mapOf("file" to entity.displayName),
             textLength = entity.displayName.length
           )
         }

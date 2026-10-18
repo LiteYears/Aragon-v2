@@ -441,6 +441,7 @@ class AgentViewModel(
         if (outcome.ok) "${outcome.displayName}: ${outcome.message}"
         else "${outcome.displayName}: FAILED - ${outcome.message}"
       }
+      refreshExplorer()
     }
   }
 
@@ -451,6 +452,7 @@ class AgentViewModel(
         if (outcome.ok) "${outcome.displayName}: ${outcome.message}"
         else "${outcome.displayName}: FAILED - ${outcome.message}"
       }
+      refreshExplorer()
     }
   }
 

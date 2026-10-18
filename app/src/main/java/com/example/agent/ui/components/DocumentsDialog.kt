@@ -61,6 +61,8 @@ fun DocumentsDialog(
   embeddingLabel: String,
   onDismiss: () -> Unit,
   onAttach: () -> Unit,
+  onAttachPhotos: (() -> Unit)? = null,
+  onAttachFolder: (() -> Unit)? = null,
   onToggleScope: (String, Boolean) -> Unit,
   onCancelJob: (String) -> Unit,
   onDelete: (String) -> Unit,
@@ -110,12 +112,39 @@ fun DocumentsDialog(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        AragonFeedButton(
-          text = "+ ATTACH FILES",
-          onClick = onAttach,
-          variant = AragonButtonVariant.PRIMARY,
-          testTag = "attach_documents_dialog_btn"
-        )
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+          Box(modifier = Modifier.weight(1.2f)) {
+            AragonFeedButton(
+              text = "+ ATTACH FILES",
+              onClick = onAttach,
+              variant = AragonButtonVariant.PRIMARY,
+              testTag = "attach_documents_dialog_btn"
+            )
+          }
+          if (onAttachPhotos != null) {
+            Box(modifier = Modifier.weight(1f)) {
+              AragonFeedButton(
+                text = "PHOTOS",
+                onClick = onAttachPhotos,
+                variant = AragonButtonVariant.DEFAULT,
+                testTag = "attach_photos_dialog_btn"
+              )
+            }
+          }
+          if (onAttachFolder != null) {
+            Box(modifier = Modifier.weight(1f)) {
+              AragonFeedButton(
+                text = "FOLDER",
+                onClick = onAttachFolder,
+                variant = AragonButtonVariant.DEFAULT,
+                testTag = "attach_folder_dialog_btn"
+              )
+            }
+          }
+        }
 
         Spacer(modifier = Modifier.height(10.dp))
 

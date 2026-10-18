@@ -346,6 +346,13 @@ fun AgentScreen(
       viewModel.onDocumentsPicked(uris)
     }
   }
+  val getContentLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.GetMultipleContents()
+  ) { uris ->
+    if (uris.isNotEmpty()) {
+      viewModel.onDocumentsPicked(uris)
+    }
+  }
   val photoPickerLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.PickMultipleVisualMedia()
   ) { uris ->
@@ -360,6 +367,40 @@ fun AgentScreen(
       viewModel.onFolderPicked(uri)
     }
   }
+
+  fun launchDocumentPicker() {
+    try {
+      documentPickerLauncher.launch(DOCUMENT_MIME_FILTERS)
+    } catch (_: Throwable) {
+      try {
+        getContentLauncher.launch("*/*")
+      } catch (e: Throwable) {
+        android.widget.Toast.makeText(context, "Could not open file picker: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+      }
+    }
+  }
+
+  fun launchPhotoPicker() {
+    try {
+      photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+    } catch (_: Throwable) {
+      try {
+        getContentLauncher.launch("image/*")
+      } catch (e: Throwable) {
+        android.widget.Toast.makeText(context, "Could not open gallery: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+      }
+    }
+  }
+
+  fun launchFolderPicker() {
+    try {
+      folderPickerLauncher.launch(null)
+    } catch (e: Throwable) {
+      android.widget.Toast.makeText(context, "Folder picker unavailable: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+    }
+  }
+
+  var showAttachmentMenu by rememberSaveable { mutableStateOf(false) }
   val documents by viewModel.documents.collectAsStateWithLifecycle()
   val documentScope by viewModel.documentScope.collectAsStateWithLifecycle()
   val documentMessages by viewModel.documentMessages.collectAsStateWithLifecycle()
@@ -615,12 +656,14 @@ fun AgentScreen(
             }
           }
 
-          // Screenshot 2: Transformed user prompt input field container (AMOLED style)
+          // Transformed user prompt input field container (AMOLED pure black with crisp white outline)
           Surface(
             shape = RoundedCornerShape(22.dp),
-            color = Color(0xFF0D0D11),
-            border = androidx.compose.foundation.BorderStroke(1.2.dp, if (isInputActive) Color(0xFF38BDF8).copy(alpha = 0.75f) else Color(0xFF1E1E26)),
-            modifier = Modifier.fillMaxWidth()
+            color = Color.Black,
+            border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White),
+            modifier = Modifier
+              .fillMaxWidth()
+              .testTag("prompt_input_container")
           ) {
             Column(
               modifier = Modifier
@@ -795,7 +838,7 @@ fun AgentScreen(
                     style = TextStyle(
                       fontFamily = InterFontFamily,
                       fontSize = 15.sp,
-                      color = Color(0xFF71717A),
+                      color = Color(0xFF9CA3AF),
                       lineHeight = 21.sp,
                       fontWeight = FontWeight.Normal
                     )
@@ -808,11 +851,11 @@ fun AgentScreen(
                   textStyle = TextStyle(
                     fontFamily = InterFontFamily,
                     fontSize = 15.sp,
-                    color = AmoledTextPrimary,
+                    color = Color.White,
                     lineHeight = 21.sp,
                     fontWeight = FontWeight.Normal
                   ),
-                  cursorBrush = SolidColor(Color(0xFF38BDF8)),
+                  cursorBrush = SolidColor(Color.White),
                   maxLines = 6,
                   keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                   keyboardActions = KeyboardActions(onSend = {
@@ -843,25 +886,100 @@ fun AgentScreen(
                   verticalAlignment = Alignment.CenterVertically,
                   horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                  // Attachment button
-                  Box(
-                    modifier = Modifier
-                      .size(32.dp)
-                      .clip(CircleShape)
-                      .background(Color(0xFF181820))
-                      .border(BorderStroke(1.dp, Color(0xFF262632)), CircleShape)
-                      .clickable(role = Role.Button, onClickLabel = "Attach document or file") {
-                        documentPickerLauncher.launch(DOCUMENT_MIME_FILTERS)
-                      }
-                      .testTag("add_attachment_btn"),
-                    contentAlignment = Alignment.Center
-                  ) {
-                    Icon(
-                      imageVector = Icons.Default.Add,
-                      contentDescription = "Attach files",
-                      tint = Color(0xFFE2E8F0),
-                      modifier = Modifier.size(18.dp)
-                    )
+                  // Attachment button with options menu
+                  Box {
+                    Box(
+                      modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF181820))
+                        .border(BorderStroke(1.dp, Color(0xFF262632)), CircleShape)
+                        .clickable(role = Role.Button, onClickLabel = "Attach document, photo, or folder") {
+                          showAttachmentMenu = true
+                        }
+                        .testTag("add_attachment_btn"),
+                      contentAlignment = Alignment.Center
+                    ) {
+                      Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Attach files",
+                        tint = Color(0xFFE2E8F0),
+                        modifier = Modifier.size(18.dp)
+                      )
+                    }
+
+                    DropdownMenu(
+                      expanded = showAttachmentMenu,
+                      onDismissRequest = { showAttachmentMenu = false },
+                      modifier = Modifier
+                        .background(Color(0xFF121216))
+                        .border(BorderStroke(1.dp, Color(0xFF2C2C34)), RoundedCornerShape(12.dp))
+                    ) {
+                      DropdownMenuItem(
+                        text = {
+                          Column {
+                            Text("Upload Documents & Files", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color.White)
+                            Text("PDF, DOCX, XLSX, CSV, Code, Text", fontFamily = InterFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+                          }
+                        },
+                        leadingIcon = {
+                          Icon(Icons.Default.FolderOpen, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(18.dp))
+                        },
+                        onClick = {
+                          showAttachmentMenu = false
+                          launchDocumentPicker()
+                        },
+                        modifier = Modifier.testTag("upload_documents_option")
+                      )
+                      DropdownMenuItem(
+                        text = {
+                          Column {
+                            Text("Upload Photos & Gallery", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color.White)
+                            Text("Images, diagrams, screenshots", fontFamily = InterFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+                          }
+                        },
+                        leadingIcon = {
+                          Icon(Icons.Default.GraphicEq, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(18.dp))
+                        },
+                        onClick = {
+                          showAttachmentMenu = false
+                          launchPhotoPicker()
+                        },
+                        modifier = Modifier.testTag("upload_photos_option")
+                      )
+                      DropdownMenuItem(
+                        text = {
+                          Column {
+                            Text("Upload Folder", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color.White)
+                            Text("Directory tree or project codebase", fontFamily = InterFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+                          }
+                        },
+                        leadingIcon = {
+                          Icon(Icons.Default.Inventory2, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(18.dp))
+                        },
+                        onClick = {
+                          showAttachmentMenu = false
+                          launchFolderPicker()
+                        },
+                        modifier = Modifier.testTag("upload_folder_option")
+                      )
+                      DropdownMenuItem(
+                        text = {
+                          Column {
+                            Text("Manage Documents (${documents.size})", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color.White)
+                            Text("OCR, search indexing, and scope", fontFamily = InterFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+                          }
+                        },
+                        leadingIcon = {
+                          Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFA78BFA), modifier = Modifier.size(18.dp))
+                        },
+                        onClick = {
+                          showAttachmentMenu = false
+                          showDocumentsDialog = true
+                        },
+                        modifier = Modifier.testTag("manage_documents_option")
+                      )
+                    }
                   }
 
                   // MCP tools button
@@ -1583,7 +1701,15 @@ fun AgentScreen(
       onDismiss = { showDocumentsDialog = false },
       onAttach = {
         showDocumentsDialog = false
-        documentPickerLauncher.launch(DOCUMENT_MIME_FILTERS)
+        launchDocumentPicker()
+      },
+      onAttachPhotos = {
+        showDocumentsDialog = false
+        launchPhotoPicker()
+      },
+      onAttachFolder = {
+        showDocumentsDialog = false
+        launchFolderPicker()
       },
       onToggleScope = { docId, inScope -> viewModel.setDocumentInScope(docId, inScope) },
       onCancelJob = { docId -> viewModel.cancelDocumentJob(docId) },
