@@ -81,7 +81,15 @@ import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Power
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.UnfoldMore
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.material3.IconButton
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -601,9 +609,9 @@ fun AgentScreen(
 
           // Screenshot 2: Transformed user prompt input field container (AMOLED style)
           Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = Color(0xFF16161A),
-            border = androidx.compose.foundation.BorderStroke(1.2.dp, containerBorderColor),
+            shape = RoundedCornerShape(22.dp),
+            color = Color(0xFF0D0D11),
+            border = androidx.compose.foundation.BorderStroke(1.2.dp, if (isInputActive) Color(0xFF38BDF8).copy(alpha = 0.75f) else Color(0xFF1E1E26)),
             modifier = Modifier.fillMaxWidth()
           ) {
             Column(
@@ -621,18 +629,18 @@ fun AgentScreen(
               ) {
                 // Cloud pill selector
                 Surface(
-                  shape = RoundedCornerShape(12.dp),
-                  color = Color(0xFF202026),
-                  border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF32323C)),
+                  shape = RoundedCornerShape(14.dp),
+                  color = Color(0xFF17171E),
+                  border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF262632)),
                   modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(14.dp))
                     .clickable(role = Role.Button, onClickLabel = "Sandbox Configuration") {
                       showSettingsDialog = true
                     }
                     .testTag("cloud_environment_pill")
                 ) {
                   Row(
-                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                   ) {
                     Icon(
@@ -641,7 +649,7 @@ fun AgentScreen(
                       tint = Color(0xFFCBD5E1),
                       modifier = Modifier.size(14.dp)
                     )
-                    Spacer(modifier = Modifier.width(5.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                       text = if (sandboxMode == SandboxMode.E2B_CLOUD) "Cloud" else "Local",
                       fontFamily = InterFontFamily,
@@ -649,30 +657,30 @@ fun AgentScreen(
                       fontWeight = FontWeight.Medium,
                       color = Color(0xFFE2E8F0)
                     )
-                    Spacer(modifier = Modifier.width(3.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
                     Icon(
-                      imageVector = Icons.Default.UnfoldMore,
+                      imageVector = Icons.Default.KeyboardArrowDown,
                       contentDescription = "Switch environment",
-                      tint = AmoledIconGreyDark,
-                      modifier = Modifier.size(13.dp)
+                      tint = Color(0xFF71717A),
+                      modifier = Modifier.size(14.dp)
                     )
                   }
                 }
 
                 // Project pill selector
                 Surface(
-                  shape = RoundedCornerShape(12.dp),
-                  color = Color(0xFF202026),
-                  border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF32323C)),
+                  shape = RoundedCornerShape(14.dp),
+                  color = Color(0xFF17171E),
+                  border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF262632)),
                   modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(14.dp))
                     .clickable(role = Role.Button, onClickLabel = "Select Project") {
                       showFilesDialog = true
                     }
                     .testTag("project_selector_pill")
                 ) {
                   Row(
-                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                   ) {
                     Icon(
@@ -681,7 +689,7 @@ fun AgentScreen(
                       tint = Color(0xFFCBD5E1),
                       modifier = Modifier.size(13.dp)
                     )
-                    Spacer(modifier = Modifier.width(5.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                       text = if (currentExplorerPath.isNotBlank()) currentExplorerPath.substringAfterLast('/').ifEmpty { "Project" } else "No project",
                       fontFamily = InterFontFamily,
@@ -689,12 +697,12 @@ fun AgentScreen(
                       fontWeight = FontWeight.Medium,
                       color = Color(0xFFE2E8F0)
                     )
-                    Spacer(modifier = Modifier.width(3.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
                     Icon(
-                      imageVector = Icons.Default.UnfoldMore,
+                      imageVector = Icons.Default.KeyboardArrowDown,
                       contentDescription = "Select project",
-                      tint = AmoledIconGreyDark,
-                      modifier = Modifier.size(13.dp)
+                      tint = Color(0xFF71717A),
+                      modifier = Modifier.size(14.dp)
                     )
                   }
                 }
@@ -766,87 +774,74 @@ fun AgentScreen(
                 }
               }
 
-              // Text Input Area with Screenshot 2's blue accent cursor line and placeholder
-              Row(
+              // Text Input Area (Clean text area with Flutter fluidity, without static blue side line)
+              Box(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .heightIn(min = 46.dp)
-                  .padding(horizontal = 14.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.Top
+                  .heightIn(min = 44.dp)
+                  .padding(horizontal = 14.dp, vertical = 4.dp)
               ) {
-                // Vertical accent line
-                Box(
-                  modifier = Modifier
-                    .width(2.5.dp)
-                    .height(20.dp)
-                    .padding(top = 2.dp)
-                    .background(Color(0xFF00A3FF), RoundedCornerShape(1.dp))
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Box(
-                  modifier = Modifier
-                    .weight(1f)
-                    .padding(top = 1.dp)
-                ) {
-                  if (inputText.isEmpty()) {
-                    Text(
-                      text = "Assign a task or type / for more",
-                      style = TextStyle(
-                        fontFamily = InterFontFamily,
-                        fontSize = 14.5.sp,
-                        color = Color(0xFF6B7280),
-                        lineHeight = 20.sp,
-                        fontWeight = FontWeight.Normal
-                      )
-                    )
-                  }
-
-                  BasicTextField(
-                    value = inputText,
-                    onValueChange = { inputText = it },
-                    textStyle = TextStyle(
+                if (inputText.isEmpty()) {
+                  Text(
+                    text = "Assign a task or type / for more",
+                    style = TextStyle(
                       fontFamily = InterFontFamily,
-                      fontSize = 14.5.sp,
-                      color = AmoledTextPrimary,
-                      lineHeight = 20.sp,
+                      fontSize = 15.sp,
+                      color = Color(0xFF71717A),
+                      lineHeight = 21.sp,
                       fontWeight = FontWeight.Normal
-                    ),
-                    cursorBrush = SolidColor(Color(0xFF00A3FF)),
-                    maxLines = 6,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = {
-                      if (inputText.isNotBlank()) {
-                        val taskText = inputText
-                        inputText = ""
-                        viewModel.submitTask(taskText)
-                      }
-                    }),
-                    modifier = Modifier
-                      .fillMaxWidth()
-                      .focusRequester(inputFocusRequester)
-                      .onFocusChanged { isInputFocused = it.isFocused }
-                      .testTag("agent_input_field")
+                    )
                   )
                 }
+
+                BasicTextField(
+                  value = inputText,
+                  onValueChange = { inputText = it },
+                  textStyle = TextStyle(
+                    fontFamily = InterFontFamily,
+                    fontSize = 15.sp,
+                    color = AmoledTextPrimary,
+                    lineHeight = 21.sp,
+                    fontWeight = FontWeight.Normal
+                  ),
+                  cursorBrush = SolidColor(Color(0xFF38BDF8)),
+                  maxLines = 6,
+                  keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                  keyboardActions = KeyboardActions(onSend = {
+                    if (inputText.isNotBlank()) {
+                      val taskText = inputText
+                      inputText = ""
+                      viewModel.submitTask(taskText)
+                    }
+                  }),
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(inputFocusRequester)
+                    .onFocusChanged { isInputFocused = it.isFocused }
+                    .testTag("agent_input_field")
+                )
               }
 
-              // Bottom Actions Row: Left (+, 🔌) and Right (💬|||, 🎙, ↑)
+              // Bottom Actions Row: Left (+, 🔌) and Right (💬|||, 🎙, ↑) with Flutter fluid styling
               Row(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .padding(start = 10.dp, end = 10.dp, top = 2.dp, bottom = 4.dp),
+                  .padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
               ) {
                 // Left action buttons: + (attachment) and 🔌 (MCP / tools)
                 Row(
                   verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(4.dp)
+                  horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                  // Attachment button
                   Box(
                     modifier = Modifier
-                      .size(34.dp)
+                      .size(32.dp)
                       .clip(CircleShape)
+                      .background(Color(0xFF181820))
+                      .border(BorderStroke(1.dp, Color(0xFF262632)), CircleShape)
                       .clickable(role = Role.Button, onClickLabel = "Attach document or file") {
                         documentPickerLauncher.launch(DOCUMENT_MIME_FILTERS)
                       }
@@ -856,16 +851,22 @@ fun AgentScreen(
                     Icon(
                       imageVector = Icons.Default.Add,
                       contentDescription = "Attach files",
-                      tint = Color(0xFFCBD5E1),
-                      modifier = Modifier.size(19.dp)
+                      tint = Color(0xFFE2E8F0),
+                      modifier = Modifier.size(18.dp)
                     )
                   }
 
+                  // MCP tools button
                   val activeMcpCount = remember(mcpServers) { mcpServers.count { it.enabled } }
                   Box(
                     modifier = Modifier
-                      .size(34.dp)
+                      .size(32.dp)
                       .clip(CircleShape)
+                      .background(Color(0xFF181820))
+                      .border(
+                        BorderStroke(1.dp, if (activeMcpCount > 0) Color(0xFF38BDF8).copy(alpha = 0.6f) else Color(0xFF262632)),
+                        CircleShape
+                      )
                       .clickable(role = Role.Button, onClickLabel = "Open MCP tools") {
                         showMcpDialog = true
                       }
@@ -875,22 +876,24 @@ fun AgentScreen(
                     Icon(
                       imageVector = Icons.Default.Power,
                       contentDescription = "MCP & Tools",
-                      tint = if (activeMcpCount > 0) AmoledActionPrimary else Color(0xFF94A3B8),
-                      modifier = Modifier.size(18.dp)
+                      tint = if (activeMcpCount > 0) Color(0xFF38BDF8) else Color(0xFF94A3B8),
+                      modifier = Modifier.size(16.dp)
                     )
                   }
                 }
 
-                // Right action buttons: Speech/Voice wave, Mic, and Circular Send Arrow
+                // Right action buttons: Speech wave, Mic, and Circular Send Arrow
                 Row(
                   verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(8.dp)
+                  horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                  // Voice / Audio mode wave icon
+                  // Voice mode wave icon
                   Box(
                     modifier = Modifier
                       .size(32.dp)
                       .clip(CircleShape)
+                      .background(Color(0xFF181820))
+                      .border(BorderStroke(1.dp, Color(0xFF262632)), CircleShape)
                       .clickable(role = Role.Button, onClickLabel = "Voice agent mode") {
                         android.widget.Toast.makeText(context, "Voice agent mode active", android.widget.Toast.LENGTH_SHORT).show()
                       }
@@ -901,7 +904,7 @@ fun AgentScreen(
                       imageVector = Icons.Default.GraphicEq,
                       contentDescription = "Voice mode",
                       tint = Color(0xFF94A3B8),
-                      modifier = Modifier.size(18.dp)
+                      modifier = Modifier.size(17.dp)
                     )
                   }
 
@@ -910,6 +913,8 @@ fun AgentScreen(
                     modifier = Modifier
                       .size(32.dp)
                       .clip(CircleShape)
+                      .background(Color(0xFF181820))
+                      .border(BorderStroke(1.dp, Color(0xFF262632)), CircleShape)
                       .clickable(role = Role.Button, onClickLabel = "Microphone input") {
                         android.widget.Toast.makeText(context, "Listening for voice prompt...", android.widget.Toast.LENGTH_SHORT).show()
                       }
@@ -920,21 +925,34 @@ fun AgentScreen(
                       imageVector = Icons.Default.Mic,
                       contentDescription = "Voice input",
                       tint = Color(0xFF94A3B8),
-                      modifier = Modifier.size(18.dp)
+                      modifier = Modifier.size(17.dp)
                     )
                   }
 
-                  // Circular send / stop button matching Screenshot 2
+                  // Circular send / stop button with Flutter dynamic spring scale
                   val canSend = inputText.isNotBlank()
                   val isRunning = state.canCancel
+                  val sendScale by animateFloatAsState(
+                    targetValue = if (canSend || isRunning) 1.05f else 1.0f,
+                    animationSpec = spring(dampingRatio = 0.65f, stiffness = 450f),
+                    label = "send_btn_scale"
+                  )
                   Box(
                     modifier = Modifier
                       .size(34.dp)
+                      .graphicsLayer {
+                        scaleX = sendScale
+                        scaleY = sendScale
+                      }
                       .clip(CircleShape)
                       .background(
-                        if (isRunning) Color(0xFF7F1D1D)
-                        else if (canSend) Color(0xFFE2E8F0)
-                        else Color(0xFF26262E)
+                        if (isRunning) Color(0xFF991B1B)
+                        else if (canSend) Color(0xFFF8FAFC)
+                        else Color(0xFF1A1A22)
+                      )
+                      .border(
+                        BorderStroke(1.dp, if (isRunning) Color(0xFFEF4444) else if (canSend) Color.White else Color(0xFF282834)),
+                        CircleShape
                       )
                       .clickable(
                         enabled = canSend || isRunning,
@@ -955,7 +973,7 @@ fun AgentScreen(
                     if (isRunning) {
                       Text(
                         text = "◼",
-                        color = Color(0xFFFCA5A5),
+                        color = Color(0xFFFECDD3),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                       )
@@ -963,7 +981,7 @@ fun AgentScreen(
                       Icon(
                         imageVector = Icons.Default.ArrowUpward,
                         contentDescription = "Send",
-                        tint = if (canSend) Color(0xFF0F172A) else Color(0xFF64748B),
+                        tint = if (canSend) Color(0xFF0F172A) else Color(0xFF475569),
                         modifier = Modifier.size(17.dp)
                       )
                     }
@@ -1266,79 +1284,136 @@ fun AgentScreen(
 
                   if (state.status == AgentStatus.COMPLETED) {
                     item(key = "continuation_prompt_banner") {
+                      var taskRating by rememberSaveable(state.task?.id) { mutableIntStateOf(0) }
+                      val checkScale by animateFloatAsState(
+                        targetValue = 1f,
+                        animationSpec = spring(dampingRatio = 0.5f, stiffness = 380f),
+                        label = "completion_check_scale"
+                      )
+
                       Column(
                         modifier = Modifier
                           .fillMaxWidth()
                           .padding(horizontal = 14.dp, vertical = 6.dp)
                       ) {
-                        // Prominent "✔ Task completed" effect matching Screenshot 1
+                        // Animated "✔ Task completed" with interactive Rating Stars at the right
                         Row(
                           verticalAlignment = Alignment.CenterVertically,
+                          horizontalArrangement = Arrangement.SpaceBetween,
                           modifier = Modifier
                             .fillMaxWidth()
-                            .padding(bottom = 8.dp)
+                            .padding(bottom = 6.dp)
                             .testTag("task_completed_badge_row")
                         ) {
-                          Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = "Task completed",
-                            tint = Color(0xFF22C55E),
-                            modifier = Modifier.size(24.dp)
-                          )
-                          Spacer(modifier = Modifier.width(8.dp))
-                          Text(
-                            text = "Task completed",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontFamily = InterFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
-                            color = Color(0xFF22C55E)
-                          )
+                          Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f, fill = false)
+                          ) {
+                            Icon(
+                              imageVector = Icons.Default.Check,
+                              contentDescription = "Task completed",
+                              tint = Color(0xFF22C55E),
+                              modifier = Modifier
+                                .size(24.dp)
+                                .graphicsLayer {
+                                  scaleX = checkScale
+                                  scaleY = checkScale
+                                }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                              text = "Task completed",
+                              style = MaterialTheme.typography.titleMedium,
+                              fontFamily = InterFontFamily,
+                              fontWeight = FontWeight.Bold,
+                              fontSize = 17.sp,
+                              color = Color(0xFF22C55E)
+                            )
+                          }
+
+                          // 5 Rating Stars at right
+                          Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(1.dp),
+                            modifier = Modifier.testTag("task_rating_stars_row")
+                          ) {
+                            (1..5).forEach { starIndex ->
+                              val isFilled = starIndex <= taskRating
+                              val starScale by animateFloatAsState(
+                                targetValue = if (isFilled) 1.15f else 1f,
+                                animationSpec = spring(dampingRatio = 0.6f, stiffness = 450f),
+                                label = "star_scale_$starIndex"
+                              )
+                              IconButton(
+                                onClick = {
+                                  taskRating = if (taskRating == starIndex) 0 else starIndex
+                                  if (taskRating > 0) {
+                                    android.widget.Toast.makeText(context, "Rated $taskRating star${if (taskRating > 1) "s" else ""}! Thank you.", android.widget.Toast.LENGTH_SHORT).show()
+                                  }
+                                },
+                                modifier = Modifier
+                                  .size(28.dp)
+                                  .graphicsLayer {
+                                    scaleX = starScale
+                                    scaleY = starScale
+                                  }
+                                  .testTag("rate_star_$starIndex")
+                              ) {
+                                Icon(
+                                  imageVector = if (isFilled) Icons.Default.Star else Icons.Default.StarBorder,
+                                  contentDescription = "Rate $starIndex star",
+                                  tint = if (isFilled) Color(0xFFFBBF24) else Color(0xFF52525B),
+                                  modifier = Modifier.size(19.dp)
+                                )
+                              }
+                            }
+                          }
                         }
 
+                        // Reduced, sleek follow-up status strip (no duplicate markdown wall)
                         Surface(
                           shape = RoundedCornerShape(10.dp),
-                          color = Color(0xFF0F1810),
-                          border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF22C55E).copy(alpha = 0.4f)),
+                          color = Color(0xFF0C140D),
+                          border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF22C55E).copy(alpha = 0.25f)),
                           modifier = Modifier
                             .fillMaxWidth()
                             .testTag("conversation_active_banner")
                         ) {
-                          Column(
+                          Row(
                             modifier = Modifier
                               .fillMaxWidth()
-                              .padding(12.dp)
+                              .padding(horizontal = 12.dp, vertical = 7.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                           ) {
                             Row(
-                              modifier = Modifier.fillMaxWidth(),
-                              horizontalArrangement = Arrangement.SpaceBetween,
-                              verticalAlignment = Alignment.CenterVertically
+                              verticalAlignment = Alignment.CenterVertically,
+                              modifier = Modifier.weight(1f, fill = false)
                             ) {
-                              Text(
-                                text = "CONVERSATION ACTIVE",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = JetBrainsMonoFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                color = AmoledStatusSuccess,
-                                fontSize = 10.sp
+                              Box(
+                                modifier = Modifier
+                                  .size(6.dp)
+                                  .clip(CircleShape)
+                                  .background(Color(0xFF22C55E))
                               )
+                              Spacer(modifier = Modifier.width(8.dp))
                               Text(
-                                text = "READY FOR FOLLOW-UP",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = JetBrainsMonoFontFamily,
-                                color = AmoledIconGreyLight,
-                                fontSize = 9.sp
+                                text = "Conversation active • Ready for follow-up",
+                                fontFamily = InterFontFamily,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color(0xFF86EFAC),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                               )
                             }
-                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                              text = state.completionSummary
-                                ?: "Session context and deliverables remain loaded. Enter follow-up instructions, request code modifications, tests, or optimizations below.",
-                              style = MaterialTheme.typography.bodySmall,
-                              fontFamily = InterFontFamily,
-                              color = AmoledTextSecondary,
-                              fontSize = 11.sp,
-                              lineHeight = 15.sp
+                              text = "READY",
+                              fontFamily = JetBrainsMonoFontFamily,
+                              fontSize = 9.sp,
+                              fontWeight = FontWeight.Bold,
+                              color = Color(0xFF22C55E).copy(alpha = 0.8f),
+                              modifier = Modifier.padding(start = 6.dp)
                             )
                           }
                         }

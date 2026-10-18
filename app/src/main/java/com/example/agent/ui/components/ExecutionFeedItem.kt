@@ -537,9 +537,9 @@ fun TaskObjectiveView(step: ExecutionStep) {
     contentAlignment = Alignment.CenterEnd
   ) {
     Surface(
-      shape = RoundedCornerShape(16.dp),
-      color = Color(0xFF1E1E24),
-      border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2E2E38)),
+      shape = RoundedCornerShape(18.dp),
+      color = Color(0xFF131318),
+      border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF242430)),
       modifier = Modifier
         .widthIn(max = 560.dp)
         .testTag("task_objective_bubble")
