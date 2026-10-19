@@ -284,12 +284,22 @@ class UnifiedLoopDetector(val maxHistorySize: Int = 20) {
       )
     }
     if (currentConsecutive >= 2) {
-      val alt = getAlternativeTool(sig.toolName)
-      return PreFlightDecision.SkipLoop(
-        reason = "Loop Guard: Tool '${sig.toolName}' with identical arguments was repeated $currentConsecutive times consecutively. Action skipped to protect execution budget.",
-        strategy = RecoveryStrategy.SWITCH_EQUIVALENT_TOOL,
-        suggestedTool = alt
-      )
+      val matchingRecentEvents = history.takeLast(currentConsecutive).filter { it.signature.callHash == sig.callHash }
+      val allObservationsIdentical = matchingRecentEvents.size >= 2 && matchingRecentEvents.map { it.observationHash }.distinct().size <= 1
+      val isZeroProgress = matchingRecentEvents.isNotEmpty() && matchingRecentEvents.all {
+        it.outcome == ToolExecutionOutcome.SUCCESS_EMPTY ||
+        it.outcome == ToolExecutionOutcome.CONDITION_NOT_FOUND ||
+        it.outcome == ToolExecutionOutcome.EXECUTION_FAILED
+      }
+
+      if (allObservationsIdentical || isZeroProgress || currentConsecutive >= 4) {
+        val alt = getAlternativeTool(sig.toolName)
+        return PreFlightDecision.SkipLoop(
+          reason = "Loop Guard: Tool '${sig.toolName}' with identical arguments was repeated $currentConsecutive times consecutively without new progress. Action skipped to protect execution budget.",
+          strategy = RecoveryStrategy.SWITCH_EQUIVALENT_TOOL,
+          suggestedTool = alt
+        )
+      }
     }
 
     // 2. Cycle Detection (Ping-Pong A -> B -> A -> B or 3-step A -> B -> C -> A -> B -> C)

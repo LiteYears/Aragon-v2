@@ -259,14 +259,24 @@ class TaskPlanner(private val goal: String) {
           summaryLower.contains("written") ||
           summaryLower.contains("saved") ||
           summaryLower.contains("created") ||
-          summaryLower.contains("verified")
+          summaryLower.contains("verified") ||
+          summaryLower.contains("succeeded") ||
+          summaryLower.contains("generated") ||
+          summaryLower.contains("compiled")
         )
         val isDeliverableAction = summaryLower.contains("written to") ||
                                   summaryLower.contains("saved '") ||
                                   summaryLower.contains("successfully wrote") ||
-                                  summaryLower.contains("successfully saved")
+                                  summaryLower.contains("successfully saved") ||
+                                  summaryLower.contains("generated document") ||
+                                  summaryLower.contains("compiled pdf") ||
+                                  result.artifacts.isNotEmpty()
 
-        val isDone = isExplicitlyCompleted || isDeliverableAction || (
+        val isAssignedToolSuccess = targetItem.assignedTool != null &&
+                                    targetItem.assignedTool == toolName &&
+                                    result.outcome == ToolExecutionOutcome.SUCCESS_WITH_RESULTS
+
+        val isDone = isExplicitlyCompleted || isDeliverableAction || isAssignedToolSuccess || (
           !boundTodoId.isNullOrBlank() && summaryLower.contains("completed successfully")
         )
 

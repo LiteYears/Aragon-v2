@@ -580,7 +580,12 @@ class AgentViewModel(
         return ProviderType.valueOf(saved)
       } catch (_: Exception) {}
     }
-    return if (hasNvidiaKey) ProviderType.NVIDIA_NIM else ProviderType.SANDBOX_ENGINE
+    val hasGeminiKey = getInitialGeminiApiKey().isNotBlank()
+    return when {
+      hasNvidiaKey -> ProviderType.NVIDIA_NIM
+      hasGeminiKey -> ProviderType.GEMINI_LIVE_API
+      else -> ProviderType.SANDBOX_ENGINE
+    }
   }
 
   private fun getInitialNvidiaModel(): String {

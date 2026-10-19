@@ -484,7 +484,7 @@ class InternalMcpTransport(
         })
       })
     } else if (isMathServer()) {
-      // 1. calculate
+      // 1. calculate / calculate_expression
       arr.put(JSONObject().apply {
         put("name", "calculate")
         put("description", "Evaluate mathematical expressions, scientific functions (sin, cos, sqrt, log, pow), and statistical calculations.")
@@ -494,6 +494,21 @@ class InternalMcpTransport(
             put("expression", JSONObject().apply {
               put("type", "string")
               put("description", "Math expression (e.g. 'sqrt(256) * 1.5 + log(100)', 'mean([12, 18, 25, 30])')")
+            })
+          })
+          put("required", JSONArray().apply { put("expression") })
+        })
+      })
+
+      arr.put(JSONObject().apply {
+        put("name", "calculate_expression")
+        put("description", "Evaluate mathematical expressions, scientific functions (sin, cos, sqrt, log, pow), and statistical calculations.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("expression", JSONObject().apply {
+              put("type", "string")
+              put("description", "Math expression (e.g. '2 * 3 + 10')")
             })
           })
           put("required", JSONArray().apply { put("expression") })
@@ -1492,7 +1507,7 @@ class InternalMcpTransport(
 
   private fun executeMathTool(name: String, args: JSONObject): JSONObject {
     when (name) {
-      "calculate" -> {
+      "calculate", "calculate_expression" -> {
         val expr = args.optString("expression").trim()
         if (expr.isBlank()) throw IllegalArgumentException("Missing required parameter 'expression'")
 

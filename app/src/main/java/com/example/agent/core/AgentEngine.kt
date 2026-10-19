@@ -2719,12 +2719,11 @@ class AgentEngine(
       sb.appendLine("EXPECTED DELIVERABLE: ${task.expectedArtifact}")
     }
 
-    // Immutable Workspace Environment
+    // Authoritative Execution Environment & Active Sandbox
     sb.appendLine()
-    sb.appendLine("IMMUTABLE WORKSPACE ENVIRONMENT:")
-    sb.appendLine("- EXECUTION ENVIRONMENT: E2B Cloud MicroVM is the ONLY execution environment. There is no local execution sandbox.")
-    sb.appendLine("- \$WORKSPACE PATH (inside the E2B microVM): /home/user")
-    sb.appendLine("- WORKSPACE LOCK: All created scripts, recon outputs, and deliverables must reside in \$WORKSPACE (/home/user) or /tmp scratch. Writing outside will be rejected.")
+    sb.appendLine("ACTIVE EXECUTION ENVIRONMENT:")
+    sb.appendLine("- Sandbox: ${sandboxProvider.name} (${sandboxProvider.mode.name}) at /home/user (Hardware-isolated Linux MicroVM)")
+    sb.appendLine("- Workspace: All scripts, outputs, and deliverables must reside in /home/user or /tmp")
 
     // Execution Turn & Deliverable Tracker
     sb.appendLine()
@@ -2735,15 +2734,6 @@ class AgentEngine(
     }
     sb.appendLine()
     sb.appendLine(deliverableTracker.generatePromptSummary(deliverableReport))
-
-    // Prominently highlight active execution sandbox environment
-    sb.appendLine()
-    sb.appendLine("ACTIVE EXECUTION SANDBOX:")
-    sb.appendLine("- Sandbox Mode: ${sandboxProvider.mode.name}")
-    sb.appendLine("- Provider Name: ${sandboxProvider.name}")
-    val boundaryDesc = "Dedicated E2B Cloud Firecracker MicroVM (Hardware-isolated Linux with Python3, Bash, pip, and outbound network access)"
-    sb.appendLine("- Execution Boundary: $boundaryDesc")
-    sb.appendLine("- Workflow Directive: All tool calls execute inside the E2B Cloud MicroVM; adapt scripting to this sandbox, never assume a local device shell.")
 
     // Inject compact machine-readable capability manifest generated from reality
     val manifest = CapabilityManifest.build(registry, sandboxProvider)

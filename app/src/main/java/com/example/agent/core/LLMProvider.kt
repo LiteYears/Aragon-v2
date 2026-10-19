@@ -223,11 +223,14 @@ sealed class LLMDecision {
  *    responses to be preceded by their originating assistant tool call).
  */
 object MessageHistoryBounder {
-  /** Messages are only trimmed beyond this total size. */
-  const val TRIGGER_SIZE = 36
+  /** Messages are windowed or compacted beyond this total size. */
+  const val TRIGGER_SIZE = 28
 
-  /** Number of trailing messages kept verbatim once trimming engages. */
-  const val TAIL_SIZE = 30
+  /** Number of trailing messages kept verbatim once windowing engages. */
+  const val TAIL_SIZE = 20
+
+  /** Length ceiling above which older tool observation responses are safely compacted. */
+  const val MAX_COMPACTED_OBSERVATION_CHARS = 400
 
   fun bound(messages: List<AgentMessage>): List<AgentMessage> {
     if (messages.size <= TRIGGER_SIZE) return messages
@@ -243,15 +246,27 @@ object MessageHistoryBounder {
         AgentMessage(
           role = MessageRole.USER,
           content = "[Execution History Note]: Prior $tailStartIndex step(s) were executed successfully. " +
-            "Refer to WORKSPACE DELIVERABLES and research notes in system instructions for accumulated state."
+            "Refer to WORKSPACE DELIVERABLES, active todo items, and findings for accumulated state."
         )
       )
     } else emptyList()
 
+    // Compact older tool observations within the window to prevent context saturation
+    val compactedTail = recentTail.mapIndexed { idx, msg ->
+      val isRecent = idx >= (recentTail.size - 6)
+      if (!isRecent && msg.role == MessageRole.TOOL && msg.content.length > MAX_COMPACTED_OBSERVATION_CHARS) {
+        val excerpt = msg.content.take(MAX_COMPACTED_OBSERVATION_CHARS)
+        val omitted = msg.content.length - MAX_COMPACTED_OBSERVATION_CHARS
+        msg.copy(content = "$excerpt\n[... $omitted characters omitted for context efficiency; consult disk deliverables for state ...]")
+      } else {
+        msg
+      }
+    }
+
     return if (initialUserMsg != null && !recentTail.contains(initialUserMsg)) {
-      listOf(initialUserMsg) + contextBridge + recentTail
+      listOf(initialUserMsg) + contextBridge + compactedTail
     } else {
-      contextBridge + recentTail
+      contextBridge + compactedTail
     }
   }
 }
