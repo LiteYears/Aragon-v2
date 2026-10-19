@@ -502,7 +502,6 @@ class ReadFileTool(
           )
         }
 
-        }
         val errText = exec.stderrText().ifBlank { exec.error?.value ?: "Exit code $exitCode" }
         ToolResult(
           callId = callId,

@@ -7,10 +7,6 @@ import android.net.Uri
 import com.alibaba.opensandbox.sandbox.domain.models.execd.executions.RunCommandRequest
 import com.example.agent.core.E2BSandboxProvider
 import com.example.agent.core.SandboxProvider
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.Text
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -68,117 +64,17 @@ data class ActiveVisionModelConfig(
 )
 
 /**
- * Universal on-device OCR engine backed by Google ML Kit.
- * Enhanced with automatic EXIF rotation normalization, multi-angle orientation detection,
- * and high-contrast preprocessing to recognize text from any image format.
+ * On-device OCR engine placeholder.
+ * On-device ML Kit OCR has been replaced by native multimodal vision (Gemini / NVIDIA NIM)
+ * and E2B sandbox Python document processing.
  */
 class MlKitOcrEngine(private val context: Context) : OcrEngine {
 
-  override val label: String = "On-device OCR (ML Kit Universal)"
+  override val label: String = "On-device OCR (Multimodal Routed)"
 
-  private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
-
-  override suspend fun recognize(imageFile: File, hintArabic: Boolean): OcrResult = withContext(Dispatchers.IO) {
-    val normalized = UniversalImageHelper.decodeNormalizedBitmap(imageFile)
-      ?: throw DocumentException("On-device OCR could not decode image '${imageFile.name}'")
-
-    var bestResult = try {
-      recognizeBitmap(normalized)
-    } catch (e: Exception) {
-      normalized.recycle()
-      throw e
-    }
-
-    var bestWords = countWords(bestResult.fullText)
-
-    // If word count is low, try multiple rotation passes (90°, 180°, 270°)
-    if (bestWords < 4) {
-      val angles = listOf(90, 180, 270)
-      for (angle in angles) {
-        val rotated = UniversalImageHelper.rotateBitmap(normalized, angle)
-        try {
-          val candidate = recognizeBitmap(rotated)
-          val candidateWords = countWords(candidate.fullText)
-          if (candidateWords > bestWords) {
-            bestResult = candidate
-            bestWords = candidateWords
-          }
-        } catch (_: Throwable) {
-        } finally {
-          if (rotated !== normalized) rotated.recycle()
-        }
-      }
-
-      // If still low, try contrast-enhanced grayscale binarization
-      if (bestWords < 4) {
-        val enhanced = UniversalImageHelper.enhanceForOcr(normalized)
-        try {
-          val candidate = recognizeBitmap(enhanced)
-          val candidateWords = countWords(candidate.fullText)
-          if (candidateWords > bestWords) {
-            bestResult = candidate
-          }
-        } catch (_: Throwable) {
-        } finally {
-          enhanced.recycle()
-        }
-      }
-    }
-
-    normalized.recycle()
-
-    val warnings = bestResult.warnings.toMutableList()
-    if (bestResult.fullText.isBlank()) warnings.add("No text detected on-device")
-    if (hintArabic) warnings.add("Image requested Arabic-capable OCR; on-device model is Latin-script only")
-
-    bestResult.copy(warnings = warnings)
+  override suspend fun recognize(imageFile: File, hintArabic: Boolean): OcrResult {
+    throw DocumentException("On-device OCR disabled in favor of native multimodal vision & E2B document processing")
   }
-
-  private suspend fun recognizeBitmap(bitmap: Bitmap): OcrResult {
-    val image = InputImage.fromBitmap(bitmap, 0)
-    val text = suspendCancellableCoroutine<Text> { continuation ->
-      recognizer.process(image)
-        .addOnSuccessListener { continuation.resume(it) }
-        .addOnFailureListener { continuation.resumeWithException(DocumentException("On-device OCR failed: ${it.message ?: "unknown error"}")) }
-    }
-
-    val lines = mutableListOf<OcrLine>()
-    val confidences = mutableListOf<Float>()
-    for (block in text.textBlocks) {
-      for (line in block.lines) {
-        val lineConfidences = mutableListOf<Float>()
-        for (element in line.elements) {
-          val c = try { element.confidence } catch (_: Throwable) { null }
-          if (c != null && c > 0f) lineConfidences.add(c)
-        }
-        val avg = if (lineConfidences.isEmpty()) null else lineConfidences.average().toFloat()
-        val box = line.boundingBox
-        lines.add(
-          OcrLine(
-            text = line.text.trim(),
-            confidence = avg,
-            left = box?.left ?: 0,
-            top = box?.top ?: 0,
-            right = box?.right ?: 0,
-            bottom = box?.bottom ?: 0
-          )
-        )
-        if (avg != null) confidences.add(avg)
-      }
-    }
-    val avgAll = if (confidences.isEmpty()) null else confidences.average().toFloat()
-    return OcrResult(
-      fullText = text.text.trim(),
-      lines = lines.filter { it.text.isNotBlank() },
-      tables = emptyList(),
-      engine = "mlkit-universal",
-      averageConfidence = avgAll,
-      warnings = emptyList(),
-      usedCloud = false
-    )
-  }
-
-  private fun countWords(str: String): Int = str.split(Regex("\\s+")).count { it.length >= 2 }
 }
 
 /**
