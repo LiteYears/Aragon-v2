@@ -124,8 +124,10 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -410,6 +412,7 @@ fun AgentScreen(
   val ocrEnabled by viewModel.ocrEnabled.collectAsStateWithLifecycle()
 
   val listState = rememberLazyListState()
+  val coroutineScope = rememberCoroutineScope()
   val inputFocusRequester = remember { FocusRequester() }
   var isInputFocused by remember { mutableStateOf(false) }
 
@@ -1249,10 +1252,20 @@ fun AgentScreen(
                     .padding(horizontal = 16.dp, vertical = 20.dp),
                   contentAlignment = Alignment.TopCenter
                 ) {
+                  val taskStartPulse by rememberInfiniteTransition(label = "task_start_pulse").animateFloat(
+                    initialValue = 0.55f,
+                    targetValue = 0.95f,
+                    animationSpec = infiniteRepeatable(
+                      animation = tween(1100, easing = FastOutSlowInEasing),
+                      repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "start_pulse_border"
+                  )
+
                   Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = Color(0xFF100E0A),
-                    border = androidx.compose.foundation.BorderStroke(1.2.dp, AmoledActionPrimary.copy(alpha = 0.7f)),
+                    border = androidx.compose.foundation.BorderStroke(1.2.dp, AmoledActionPrimary.copy(alpha = taskStartPulse)),
                     modifier = Modifier
                       .fillMaxWidth()
                       .widthIn(max = 680.dp)
@@ -1268,15 +1281,24 @@ fun AgentScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                       ) {
-                        Text(
-                          text = if (state.status == AgentStatus.PLANNING) "PREPARING EXECUTION PLAN" else "AUTONOMOUS ENGINE REASONING",
-                          style = MaterialTheme.typography.labelSmall,
-                          fontFamily = JetBrainsMonoFontFamily,
-                          fontWeight = FontWeight.Bold,
-                          fontSize = 11.sp,
-                          letterSpacing = 1.sp,
-                          color = AmoledActionPrimary
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                          Box(
+                            modifier = Modifier
+                              .size(7.dp)
+                              .clip(CircleShape)
+                              .background(AmoledActionPrimary)
+                          )
+                          Spacer(modifier = Modifier.width(7.dp))
+                          Text(
+                            text = if (state.status == AgentStatus.PLANNING) "PREPARING EXECUTION PLAN" else "AUTONOMOUS ENGINE REASONING",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = AmoledActionPrimary
+                          )
+                        }
                         com.example.agent.ui.components.CreativeAmoledLoadingBadge(
                           label = if (state.status == AgentStatus.PLANNING) "PLAN" else "REASON",
                           height = 24.dp,
@@ -1297,7 +1319,7 @@ fun AgentScreen(
 
                       Spacer(modifier = Modifier.height(10.dp))
                       Text(
-                        text = state.currentAction ?: "Evaluating instructions, provisioning tools, and synthesizing reasoning trajectory...",
+                        text = state.currentAction ?: "Initializing autonomous kernel, provisioning sandboxed tools, and synthesizing reasoning trajectory...",
                         style = MaterialTheme.typography.bodySmall,
                         fontFamily = JetBrainsMonoFontFamily,
                         color = AmoledTextSecondary,
@@ -1332,11 +1354,12 @@ fun AgentScreen(
                     modifier = Modifier
                       .fillMaxSize()
                       .testTag("execution_feed_list"),
-                    contentPadding = PaddingValues(vertical = 4.dp, horizontal = 0.dp)
+                    contentPadding = PaddingValues(top = 4.dp, bottom = 54.dp)
                   ) {
                     itemsIndexed(
                       items = filteredFeed,
-                      key = { _, step -> step.id }
+                      key = { _, step -> step.id },
+                      contentType = { _, step -> step.type }
                     ) { index, step ->
                       ExecutionFeedItem(
                         step = step,
@@ -1347,10 +1370,20 @@ fun AgentScreen(
                     // Active Model Reasoning Indicator Card (Displayed when model is actively reasoning/thinking)
                     if (state.status == AgentStatus.THINKING || state.status == AgentStatus.PLANNING || (state.status == AgentStatus.EXECUTING_TOOL && filteredFeed.lastOrNull()?.isCompleted == true)) {
                       item(key = "active_model_reasoning_indicator") {
+                        val activePulse by rememberInfiniteTransition(label = "active_reasoning_pulse").animateFloat(
+                          initialValue = 0.5f,
+                          targetValue = 0.95f,
+                          animationSpec = infiniteRepeatable(
+                            animation = tween(900, easing = FastOutSlowInEasing),
+                            repeatMode = RepeatMode.Reverse
+                          ),
+                          label = "reasoning_border_pulse"
+                        )
+
                         Surface(
                           shape = RoundedCornerShape(10.dp),
                           color = Color(0xFF14120E),
-                          border = androidx.compose.foundation.BorderStroke(1.dp, AmoledActionPrimary.copy(alpha = 0.6f)),
+                          border = androidx.compose.foundation.BorderStroke(1.dp, AmoledActionPrimary.copy(alpha = activePulse)),
                           modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 14.dp, vertical = 6.dp)
@@ -1534,6 +1567,81 @@ fun AgentScreen(
                           }
                         }
 
+                        // Deliverable discovery banner if files were synthesized
+                        if (state.trackedDeliverables.isNotEmpty()) {
+                          val delivInteraction = remember { MutableInteractionSource() }
+                          Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFF0F141A),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.45f)),
+                            modifier = Modifier
+                              .fillMaxWidth()
+                              .padding(top = 6.dp)
+                              .tactilePress(delivInteraction)
+                              .clickable(
+                                interactionSource = delivInteraction,
+                                indication = ripple(color = Color(0xFF38BDF8).copy(alpha = 0.3f)),
+                                role = Role.Button,
+                                onClickLabel = "View generated deliverables"
+                              ) {
+                                showFilesDialog = true
+                              }
+                              .testTag("completion_deliverables_banner")
+                          ) {
+                            Row(
+                              modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 9.dp),
+                              verticalAlignment = Alignment.CenterVertically,
+                              horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                              Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f, fill = false)
+                              ) {
+                                Surface(
+                                  shape = RoundedCornerShape(4.dp),
+                                  color = Color(0xFF162534),
+                                  modifier = Modifier.size(24.dp)
+                                ) {
+                                  Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                      imageVector = Icons.Default.Inventory2,
+                                      contentDescription = null,
+                                      tint = Color(0xFF38BDF8),
+                                      modifier = Modifier.size(14.dp)
+                                    )
+                                  }
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                  Text(
+                                    text = "${state.trackedDeliverables.size} workspace deliverable${if (state.trackedDeliverables.size > 1) "s" else ""} ready",
+                                    fontFamily = InterFontFamily,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFFE0F2FE)
+                                  )
+                                  Text(
+                                    text = "Tap to preview, inspect, or export in files explorer",
+                                    fontFamily = InterFontFamily,
+                                    fontSize = 10.sp,
+                                    color = Color(0xFF7DD3FC)
+                                  )
+                                }
+                              }
+                              Text(
+                                text = "EXPLORE →",
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF38BDF8),
+                                modifier = Modifier.padding(start = 6.dp)
+                              )
+                            }
+                          }
+                        }
+
                         // Quick Follow-up continuation chips for seamless chat
                         Spacer(modifier = Modifier.height(8.dp))
                         Row(
@@ -1586,10 +1694,21 @@ fun AgentScreen(
                     item(key = "resume_task_banner") {
                       val isPartial = state.status == AgentStatus.PARTIAL_COMPLETION
                       val bannerAccent = if (isPartial) AmoledActionPrimary else AmoledStatusError
+
+                      val haltPulse by rememberInfiniteTransition(label = "halt_pulse").animateFloat(
+                        initialValue = 0.4f,
+                        targetValue = 0.85f,
+                        animationSpec = infiniteRepeatable(
+                          animation = tween(1200, easing = FastOutSlowInEasing),
+                          repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "halt_pulse_border"
+                      )
+
                       Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = if (isPartial) Color(0xFF141208) else Color(0xFF1A0F0F),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, bannerAccent.copy(alpha = 0.4f)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, bannerAccent.copy(alpha = haltPulse)),
                         modifier = Modifier
                           .fillMaxWidth()
                           .padding(horizontal = 14.dp, vertical = 10.dp)
@@ -1636,19 +1755,96 @@ fun AgentScreen(
                             lineHeight = 15.sp
                           )
                           Spacer(modifier = Modifier.height(8.dp))
-                          AragonFeedButton(
-                            text = "RESUME TASK",
-                            onClick = { viewModel.resumeTask() },
-                            variant = AragonButtonVariant.PRIMARY,
-                            testTag = "resume_task_button"
-                          )
+                          Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                          ) {
+                            AragonFeedButton(
+                              text = "RESUME TASK",
+                              onClick = { viewModel.resumeTask() },
+                              variant = AragonButtonVariant.PRIMARY,
+                              testTag = "resume_task_button"
+                            )
+                            AragonFeedButton(
+                              text = "NEW MISSION",
+                              onClick = {
+                                viewModel.startNewTask()
+                                inputFocusRequester.requestFocus()
+                              },
+                              variant = AragonButtonVariant.MUTED,
+                              testTag = "new_mission_after_halt_btn"
+                            )
+                          }
                         }
                       }
                     }
                   }
                 }
               }
-            }
+
+              // Floating 'Jump to Latest' pill when user scrolls away from bottom
+              androidx.compose.animation.AnimatedVisibility(
+                  visible = !isNearBottom && filteredFeed.isNotEmpty(),
+                  enter = fadeIn(tween(140)) + slideInVertically { it / 2 },
+                  exit = fadeOut(tween(120)) + slideOutVertically { it / 2 },
+                  modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 12.dp)
+                ) {
+                  val pillInteraction = remember { MutableInteractionSource() }
+                  Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFF141418),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledActionPrimary.copy(alpha = 0.7f)),
+                    shadowElevation = 4.dp,
+                    modifier = Modifier
+                      .tactilePress(pillInteraction)
+                      .clickable(
+                        interactionSource = pillInteraction,
+                        indication = ripple(color = AmoledActionPrimary.copy(alpha = 0.3f)),
+                        role = Role.Button,
+                        onClickLabel = "Scroll to latest step"
+                      ) {
+                        coroutineScope.launch {
+                          try {
+                            listState.animateScrollToItem(filteredFeed.size - 1)
+                          } catch (_: Exception) {}
+                        }
+                      }
+                      .testTag("scroll_to_latest_btn")
+                  ) {
+                    Row(
+                      modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                      verticalAlignment = Alignment.CenterVertically
+                    ) {
+                      Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Scroll down",
+                        tint = AmoledActionPrimary,
+                        modifier = Modifier.size(15.dp)
+                      )
+                      Spacer(modifier = Modifier.width(5.dp))
+                      Text(
+                        text = "LATEST STEP",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.8.sp,
+                        color = AmoledActionPrimary
+                      )
+                      if (state.status == AgentStatus.RUNNING || state.status == AgentStatus.EXECUTING_TOOL || state.status == AgentStatus.THINKING) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Box(
+                          modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(AmoledActionPrimary)
+                        )
+                      }
+                    }
+                  }
+                }
+              }
           }
         }
 

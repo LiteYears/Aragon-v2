@@ -3,6 +3,7 @@ package com.example.agent.ui.components
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -293,11 +294,26 @@ fun ToolCallBoxView(
     else -> if (step.isCompleted) "FINISHED" else "WAITING"
   }
 
+  val activeBorderAlpha by if (toolState == "ACTIVE") {
+    val infiniteTransition = androidx.compose.animation.core.rememberInfiniteTransition(label = "tool_active_pulse")
+    infiniteTransition.animateFloat(
+      initialValue = 0.45f,
+      targetValue = 0.95f,
+      animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+        animation = androidx.compose.animation.core.tween<Float>(900, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+        repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+      ),
+      label = "border_alpha"
+    )
+  } else {
+    androidx.compose.runtime.rememberUpdatedState(1.0f)
+  }
+
   // Minimalist AMOLED styling: quiet obsidian background with razor-thin hairline borders
   val borderColor = when (toolState) {
-    "ACTIVE" -> AmoledActionPrimary.copy(alpha = 0.55f)
+    "ACTIVE" -> AmoledActionPrimary.copy(alpha = activeBorderAlpha)
     "WAITING" -> Color(0xFF262632)
-    "FAILED" -> AmoledStatusError.copy(alpha = 0.45f)
+    "FAILED" -> AmoledStatusError.copy(alpha = 0.55f)
     "FINISHED" -> Color(0xFF1F1F28)
     else -> Color(0xFF1A1A22)
   }
@@ -314,7 +330,12 @@ fun ToolCallBoxView(
     border = androidx.compose.foundation.BorderStroke(0.75.dp, borderColor),
     modifier = Modifier
       .fillMaxWidth()
-      .animateContentSize(animationSpec = tween(180, easing = FastOutSlowInEasing))
+      .animateContentSize(
+        animationSpec = androidx.compose.animation.core.spring(
+          dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
+          stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+        )
+      )
       .testTag("tool_call_box_${step.stepNumber}")
   ) {
     Column(
@@ -614,7 +635,14 @@ fun ObservationStepView(step: ExecutionStep) {
     shape = RoundedCornerShape(8.dp),
     color = cardBg,
     border = androidx.compose.foundation.BorderStroke(1.dp, cardBorder),
-    modifier = Modifier.fillMaxWidth()
+    modifier = Modifier
+      .fillMaxWidth()
+      .animateContentSize(
+        animationSpec = androidx.compose.animation.core.spring(
+          dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
+          stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+        )
+      )
   ) {
     Column(modifier = Modifier.padding(9.dp)) {
       Row(

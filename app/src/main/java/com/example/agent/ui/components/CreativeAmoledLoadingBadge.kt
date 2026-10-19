@@ -9,6 +9,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -17,14 +18,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -92,6 +96,9 @@ fun CreativeAmoledLoadingBadge(
     label = "wave_phase"
   )
 
+  val outerRingStroke = remember { Stroke(width = 2f) }
+  val arcStroke = remember { Stroke(width = 3.2f, cap = StrokeCap.Round) }
+
   Surface(
     shape = RoundedCornerShape(4.dp),
     color = Color(0xFF121214),
@@ -105,41 +112,55 @@ fun CreativeAmoledLoadingBadge(
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.Center
     ) {
-      // 1. Non-standard geometric telemetry canvas
+      // 1. Non-standard geometric telemetry canvas with zero per-frame CPU allocations
       Box(
         modifier = Modifier.size(12.dp),
         contentAlignment = Alignment.Center
       ) {
+        // Base static ring
         Canvas(modifier = Modifier.size(12.dp)) {
           val center = Offset(size.width / 2f, size.height / 2f)
           val radius = (size.width / 2f) - 1.dp.toPx()
 
-          // Subtle outer dashed ring
           drawCircle(
             color = Color(0xFF2E2E34),
             radius = radius,
-            style = Stroke(width = 1.dp.toPx())
+            style = outerRingStroke
           )
+        }
 
-          // Sweeping orbital arc
+        // Hardware-accelerated rotating orbital arc (GPU transformed)
+        Canvas(
+          modifier = Modifier
+            .size(12.dp)
+            .graphicsLayer {
+              rotationZ = rotationAngle
+            }
+        ) {
+          val center = Offset(size.width / 2f, size.height / 2f)
+          val radius = (size.width / 2f) - 1.dp.toPx()
+
           drawArc(
             color = accentColor,
-            startAngle = rotationAngle,
+            startAngle = 0f,
             sweepAngle = 110f,
             useCenter = false,
             topLeft = Offset(center.x - radius, center.y - radius),
             size = Size(radius * 2f, radius * 2f),
-            style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round)
-          )
-
-          // Center pulsing core dot
-          val coreRadius = 1.5.dp.toPx() * (0.7f + 0.5f * pulseScale)
-          drawCircle(
-            color = Color.White,
-            radius = coreRadius,
-            center = center
+            style = arcStroke
           )
         }
+
+        // Center pulsing core dot (hardware-scaled)
+        Box(
+          modifier = Modifier
+            .size(4.dp)
+            .graphicsLayer {
+              scaleX = 0.6f + 0.5f * pulseScale
+              scaleY = 0.6f + 0.5f * pulseScale
+            }
+            .background(Color.White, CircleShape)
+        )
       }
 
       Spacer(modifier = Modifier.width(5.dp))

@@ -83,9 +83,18 @@ fun Modifier.tactilePress(
     ),
     label = "tactile_press_scale"
   )
+  val alpha by animateFloatAsState(
+    targetValue = if (isPressed) 0.88f else 1.0f,
+    animationSpec = spring(
+      dampingRatio = Spring.DampingRatioNoBouncy,
+      stiffness = Spring.StiffnessHigh
+    ),
+    label = "tactile_press_alpha"
+  )
   return this.graphicsLayer {
     scaleX = scale
     scaleY = scale
+    this.alpha = alpha
   }
 }
 
