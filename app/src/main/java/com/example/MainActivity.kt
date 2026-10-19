@@ -33,16 +33,19 @@ class MainActivity : ComponentActivity() {
     setContent {
       MyApplicationTheme {
         var showSplash by rememberSaveable { mutableStateOf(true) }
+        var mainMounted by rememberSaveable { mutableStateOf(false) }
 
         Surface(
           modifier = Modifier.fillMaxSize(),
           color = AmoledBackground
         ) {
           Box(modifier = Modifier.fillMaxSize()) {
-            AgentScreen(
-              viewModel = viewModel,
-              onReplaySplash = { showSplash = true }
-            )
+            if (mainMounted || !showSplash) {
+              AgentScreen(
+                viewModel = viewModel,
+                onReplaySplash = { showSplash = true }
+              )
+            }
 
             AnimatedVisibility(
               visible = showSplash,
@@ -50,7 +53,10 @@ class MainActivity : ComponentActivity() {
               exit = fadeOut(animationSpec = tween(400))
             ) {
               AragonMonochromeSplashScreen(
-                onDismiss = { showSplash = false }
+                onDismiss = {
+                  mainMounted = true
+                  showSplash = false
+                }
               )
             }
           }

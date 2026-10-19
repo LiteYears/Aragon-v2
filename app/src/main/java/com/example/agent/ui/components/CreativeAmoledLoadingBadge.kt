@@ -64,7 +64,7 @@ fun CreativeAmoledLoadingBadge(
   val infiniteTransition = rememberInfiniteTransition(label = "creative_loader_transition")
 
   // Orbital rotation
-  val rotationAngle by infiniteTransition.animateFloat(
+  val rotationAngle = infiniteTransition.animateFloat(
     initialValue = 0f,
     targetValue = 360f,
     animationSpec = infiniteRepeatable(
@@ -75,7 +75,7 @@ fun CreativeAmoledLoadingBadge(
   )
 
   // Quantum core pulse
-  val pulseScale by infiniteTransition.animateFloat(
+  val pulseScale = infiniteTransition.animateFloat(
     initialValue = 0.35f,
     targetValue = 1.0f,
     animationSpec = infiniteRepeatable(
@@ -86,7 +86,7 @@ fun CreativeAmoledLoadingBadge(
   )
 
   // Scanning wave offset (for micro-spectrum ticks)
-  val wavePhase by infiniteTransition.animateFloat(
+  val wavePhase = infiniteTransition.animateFloat(
     initialValue = 0f,
     targetValue = (2 * Math.PI).toFloat(),
     animationSpec = infiniteRepeatable(
@@ -134,7 +134,7 @@ fun CreativeAmoledLoadingBadge(
           modifier = Modifier
             .size(12.dp)
             .graphicsLayer {
-              rotationZ = rotationAngle
+              rotationZ = rotationAngle.value
             }
         ) {
           val center = Offset(size.width / 2f, size.height / 2f)
@@ -156,8 +156,9 @@ fun CreativeAmoledLoadingBadge(
           modifier = Modifier
             .size(4.dp)
             .graphicsLayer {
-              scaleX = 0.6f + 0.5f * pulseScale
-              scaleY = 0.6f + 0.5f * pulseScale
+              val p = pulseScale.value
+              scaleX = 0.6f + 0.5f * p
+              scaleY = 0.6f + 0.5f * p
             }
             .background(Color.White, CircleShape)
         )
@@ -170,9 +171,10 @@ fun CreativeAmoledLoadingBadge(
         val barWidth = 1.6.dp.toPx()
         val spacing = 2.4.dp.toPx()
         val maxHeight = size.height
+        val currentWave = wavePhase.value
 
         for (i in 0 until 3) {
-          val hFactor = 0.35f + 0.65f * ((sin(wavePhase + i * 1.5f) + 1f) / 2f)
+          val hFactor = 0.35f + 0.65f * ((sin(currentWave + i * 1.5f) + 1f) / 2f)
           val barHeight = maxHeight * hFactor
           val x = i * (barWidth + spacing)
           val y = (maxHeight - barHeight) / 2f

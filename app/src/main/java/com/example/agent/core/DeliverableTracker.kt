@@ -440,7 +440,9 @@ class DeliverableTracker(
     fun computeDeliverableMetrics(file: File): DeliverableFileMetrics {
       if (!file.exists() || !file.isFile) return DeliverableFileMetrics()
       val lines = try {
-        if (file.length() < 5_000_000) file.readLines().size else 0
+        if (file.length() < 5_000_000) {
+          file.bufferedReader().useLines { linesSeq -> linesSeq.count() }
+        } else 0
       } catch (_: Exception) { 0 }
       val sha = try {
         val digest = java.security.MessageDigest.getInstance("SHA-256")

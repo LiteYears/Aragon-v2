@@ -86,7 +86,7 @@ class ReasoningDedupPipeline(
   }
 
   private fun deduplicateAdjacentSentences(text: String): String {
-    val sentences = text.split(Regex("""(?<=[.!?])\s+""")).filter { it.isNotBlank() }
+    val sentences = text.split(SENTENCE_SPLIT_REGEX).filter { it.isNotBlank() }
     val result = mutableListOf<String>()
     for (s in sentences) {
       if (result.isEmpty() || !result.last().trim().equals(s.trim(), ignoreCase = true)) {
@@ -97,12 +97,23 @@ class ReasoningDedupPipeline(
   }
 
   private fun calculateJaccardSimilarity(s1: String, s2: String): Double {
-    val set1 = s1.lowercase().split(Regex("""\s+""")).filter { it.length > 2 }.toSet()
-    val set2 = s2.lowercase().split(Regex("""\s+""")).filter { it.length > 2 }.toSet()
+    val set1 = s1.lowercase().split(WHITESPACE_SPLIT_REGEX).filter { it.length > 2 }.toSet()
+    val set2 = s2.lowercase().split(WHITESPACE_SPLIT_REGEX).filter { it.length > 2 }.toSet()
     if (set1.isEmpty() && set2.isEmpty()) return 1.0
-    val intersection = set1.intersect(set2).size
-    val union = set1.union(set2).size
+    if (set1.isEmpty() || set2.isEmpty()) return 0.0
+
+    var intersection = 0
+    val (smaller, larger) = if (set1.size <= set2.size) set1 to set2 else set2 to set1
+    for (word in smaller) {
+      if (larger.contains(word)) intersection++
+    }
+    val union = set1.size + set2.size - intersection
     if (union == 0) return 1.0
     return intersection.toDouble() / union.toDouble()
+  }
+
+  companion object {
+    private val SENTENCE_SPLIT_REGEX = Regex("""(?<=[.!?])\s+""")
+    private val WHITESPACE_SPLIT_REGEX = Regex("""\s+""")
   }
 }

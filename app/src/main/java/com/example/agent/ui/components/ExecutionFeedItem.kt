@@ -851,7 +851,7 @@ fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
     }
 
     // 6. Numbered list item
-    val numMatch = Regex("^(\\d+[.)])\\s+(.*)").find(trimmed)
+    val numMatch = NUMBERED_LIST_ITEM_REGEX.find(trimmed)
     if (numMatch != null) {
       val num = numMatch.groupValues[1]
       val content = numMatch.groupValues[2]
@@ -885,7 +885,7 @@ fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
         curTrimmed.startsWith("- ") ||
         curTrimmed.startsWith("* ") ||
         curTrimmed.startsWith("+ ") ||
-        Regex("^(\\d+[.)])\\s+").containsMatchIn(curTrimmed)
+        NUMBERED_LIST_START_REGEX.containsMatchIn(curTrimmed)
       ) {
         break
       }
@@ -900,8 +900,22 @@ fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
   return blocks
 }
 
+private val NUMBERED_LIST_ITEM_REGEX = Regex("^(\\d+[.)])\\s+(.*)")
+private val NUMBERED_LIST_START_REGEX = Regex("^(\\d+[.)])\\s+")
+
+private val inlineMarkdownCache = java.util.Collections.synchronizedMap(
+  object : java.util.LinkedHashMap<String, AnnotatedString>(128, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, AnnotatedString>?): Boolean {
+      return size > 256
+    }
+  }
+)
+
 fun parseInlineMarkdown(text: String): AnnotatedString {
-  return buildAnnotatedString {
+  val cached = inlineMarkdownCache[text]
+  if (cached != null) return cached
+
+  val result = buildAnnotatedString {
     var i = 0
     while (i < text.length) {
       // Bold + Italic: ***text***
@@ -979,6 +993,8 @@ fun parseInlineMarkdown(text: String): AnnotatedString {
       i++
     }
   }
+  inlineMarkdownCache[text] = result
+  return result
 }
 
 /**
@@ -1017,13 +1033,19 @@ fun StreamingTextContent(
   }
 
   LaunchedEffect(wordEndIndices.size, isCompleted) {
-    if (isCompleted && displayedWordCount >= wordEndIndices.size) {
+    if (isCompleted) {
       displayedWordCount = wordEndIndices.size
     } else {
-      // Chatty word-by-word streaming cadence (35ms per word: natural, readable, lively pace)
+      // Adaptive streaming cadence: smoothly batches words when falling behind to prevent hundreds of UI recompositions
       while (displayedWordCount < wordEndIndices.size) {
-        delay(35L)
-        displayedWordCount++
+        val remaining = wordEndIndices.size - displayedWordCount
+        val step = when {
+          remaining > 35 -> 4
+          remaining > 15 -> 2
+          else -> 1
+        }
+        delay(32L)
+        displayedWordCount = minOf(displayedWordCount + step, wordEndIndices.size)
       }
     }
   }

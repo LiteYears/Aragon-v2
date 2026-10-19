@@ -456,12 +456,22 @@ fun AgentScreen(
   }
 
   val filterCounts = remember(state.executionFeed) {
+    var tools = 0
+    var reasoning = 0
+    var outputs = 0
+    var errors = 0
+    for (step in state.executionFeed) {
+      if (step.type == StepType.TOOL_CALL || step.type == StepType.TOOL_EXECUTION) tools++
+      if (step.type == StepType.THINKING || step.type == StepType.PLAN || step.type == StepType.CONCLUSION) reasoning++
+      if (!step.stdout.isNullOrBlank() || !step.stderr.isNullOrBlank() || step.type == StepType.OBSERVATION) outputs++
+      if (step.type == StepType.ERROR || (step.exitCode != null && step.exitCode != 0)) errors++
+    }
     mapOf(
       FeedFilter.ALL to state.executionFeed.size,
-      FeedFilter.TOOLS to state.executionFeed.count { it.type == StepType.TOOL_CALL || it.type == StepType.TOOL_EXECUTION },
-      FeedFilter.REASONING to state.executionFeed.count { it.type == StepType.THINKING || it.type == StepType.PLAN || it.type == StepType.CONCLUSION },
-      FeedFilter.OUTPUTS to state.executionFeed.count { !it.stdout.isNullOrBlank() || !it.stderr.isNullOrBlank() || it.type == StepType.OBSERVATION },
-      FeedFilter.ERRORS to state.executionFeed.count { it.type == StepType.ERROR || (it.exitCode != null && it.exitCode != 0) }
+      FeedFilter.TOOLS to tools,
+      FeedFilter.REASONING to reasoning,
+      FeedFilter.OUTPUTS to outputs,
+      FeedFilter.ERRORS to errors
     )
   }
 
@@ -1370,64 +1380,10 @@ fun AgentScreen(
                     // Active Model Reasoning Indicator Card (Displayed when model is actively reasoning/thinking)
                     if (state.status == AgentStatus.THINKING || state.status == AgentStatus.PLANNING || (state.status == AgentStatus.EXECUTING_TOOL && filteredFeed.lastOrNull()?.isCompleted == true)) {
                       item(key = "active_model_reasoning_indicator") {
-                        val activePulse by rememberInfiniteTransition(label = "active_reasoning_pulse").animateFloat(
-                          initialValue = 0.5f,
-                          targetValue = 0.95f,
-                          animationSpec = infiniteRepeatable(
-                            animation = tween(900, easing = FastOutSlowInEasing),
-                            repeatMode = RepeatMode.Reverse
-                          ),
-                          label = "reasoning_border_pulse"
+                        ActiveReasoningIndicatorCard(
+                          isPlanning = state.status == AgentStatus.PLANNING,
+                          currentAction = state.currentAction
                         )
-
-                        Surface(
-                          shape = RoundedCornerShape(10.dp),
-                          color = Color(0xFF14120E),
-                          border = androidx.compose.foundation.BorderStroke(1.dp, AmoledActionPrimary.copy(alpha = activePulse)),
-                          modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 6.dp)
-                            .testTag("active_reasoning_card")
-                        ) {
-                          Row(
-                            modifier = Modifier
-                              .fillMaxWidth()
-                              .padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                          ) {
-                            Row(
-                              verticalAlignment = Alignment.CenterVertically,
-                              modifier = Modifier.weight(1f)
-                            ) {
-                              Column {
-                                Text(
-                                  text = if (state.status == AgentStatus.PLANNING) "PREPARING EXECUTION PLAN" else "REASONING & SYNTHESIZING",
-                                  style = MaterialTheme.typography.labelSmall,
-                                  fontFamily = JetBrainsMonoFontFamily,
-                                  fontWeight = FontWeight.Bold,
-                                  fontSize = 10.5.sp,
-                                  color = AmoledActionPrimary
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                  text = state.currentAction ?: "Evaluating context and executing next action...",
-                                  style = MaterialTheme.typography.bodySmall,
-                                  fontFamily = InterFontFamily,
-                                  fontSize = 11.sp,
-                                  color = AmoledTextSecondary,
-                                  maxLines = 1,
-                                  overflow = TextOverflow.Ellipsis
-                                )
-                              }
-                            }
-                            com.example.agent.ui.components.CreativeAmoledLoadingBadge(
-                              label = if (state.status == AgentStatus.PLANNING) "PLAN" else "REASON",
-                              height = 22.dp,
-                              testTag = "waiting_reasoning_loading_badge"
-                            )
-                          }
-                        }
                       }
                     }
 
@@ -4951,6 +4907,72 @@ fun TaskFullConversationHistoryView(
       )
 
       Spacer(modifier = Modifier.height(20.dp))
+    }
+  }
+}
+
+@Composable
+private fun ActiveReasoningIndicatorCard(
+  isPlanning: Boolean,
+  currentAction: String?,
+  modifier: Modifier = Modifier
+) {
+  val activePulse by rememberInfiniteTransition(label = "active_reasoning_pulse").animateFloat(
+    initialValue = 0.5f,
+    targetValue = 0.95f,
+    animationSpec = infiniteRepeatable(
+      animation = tween(900, easing = FastOutSlowInEasing),
+      repeatMode = RepeatMode.Reverse
+    ),
+    label = "reasoning_border_pulse"
+  )
+
+  Surface(
+    shape = RoundedCornerShape(10.dp),
+    color = Color(0xFF14120E),
+    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledActionPrimary.copy(alpha = activePulse)),
+    modifier = modifier
+      .fillMaxWidth()
+      .padding(horizontal = 14.dp, vertical = 6.dp)
+      .testTag("active_reasoning_card")
+  ) {
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 12.dp, vertical = 10.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.weight(1f)
+      ) {
+        Column {
+          Text(
+            text = if (isPlanning) "PREPARING EXECUTION PLAN" else "REASONING & SYNTHESIZING",
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = JetBrainsMonoFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 10.5.sp,
+            color = AmoledActionPrimary
+          )
+          Spacer(modifier = Modifier.height(2.dp))
+          Text(
+            text = currentAction ?: "Evaluating context and executing next action...",
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = InterFontFamily,
+            fontSize = 11.sp,
+            color = AmoledTextSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+          )
+        }
+      }
+      com.example.agent.ui.components.CreativeAmoledLoadingBadge(
+        label = if (isPlanning) "PLAN" else "REASON",
+        height = 22.dp,
+        testTag = "waiting_reasoning_loading_badge"
+      )
     }
   }
 }

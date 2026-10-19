@@ -288,11 +288,7 @@ class GeminiLLMProvider(
 
   fun hasApiKey(): Boolean = apiKey.isNotBlank()
 
-  private val httpClient = OkHttpClient.Builder()
-    .connectTimeout(60, TimeUnit.SECONDS)
-    .readTimeout(60, TimeUnit.SECONDS)
-    .writeTimeout(60, TimeUnit.SECONDS)
-    .build()
+  private val httpClient = AgentHttp.client
 
   override suspend fun decideNextAction(
     systemPrompt: String,
