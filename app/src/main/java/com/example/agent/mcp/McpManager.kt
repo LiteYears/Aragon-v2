@@ -350,7 +350,7 @@ class McpManager(
       override val category: ToolCategory = ToolCategory.UTILITY
       override val target: ToolTarget = ToolTarget.HOST_NETWORK
       override val permissions: Set<ToolPermission> = emptySet()
-      override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.E2B_CLOUD
+      override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.MCP_BRIDGE
       override val environmentIdentity: EnvironmentIdentity = EnvironmentIdentity(
         type = owningBackend,
         name = "MCP Subsystem",

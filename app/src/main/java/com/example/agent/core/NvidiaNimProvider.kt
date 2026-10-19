@@ -783,8 +783,15 @@ class NvidiaNimProvider(
 
   private fun formatToolsTextDescription(tools: List<Tool>): String {
     return tools.joinToString("\n\n") { tool ->
-      val params = tool.schema.parameters.joinToString(", ") { "${it.name}: ${it.type}${if (it.required) " (required)" else ""}" }
-      "- ${tool.name}($params): ${tool.description}"
+      val meta = tool.getMetadata()
+      val mode = if (meta.mutatesWorkspace) "mutating" else "read-only"
+      val perms = if (meta.permissions.isEmpty()) "NONE" else meta.permissions.joinToString(", ") { it.name }
+      val params = tool.schema.parameters.joinToString(", ") {
+        val req = if (it.required) "required" else "optional"
+        val enums = if (it.enumValues != null) " [${it.enumValues.joinToString(",")}]" else ""
+        "${it.name}: ${it.type} ($req$enums)"
+      }
+      "- ${tool.name}($params) [${meta.owningBackend.name} | $mode | perms: $perms]: ${tool.description}"
     }
   }
 
@@ -794,12 +801,15 @@ class NvidiaNimProvider(
   private fun buildToolsJson(tools: List<Tool>): JSONArray {
     val toolsArray = JSONArray()
     for (tool in tools) {
+      val meta = tool.getMetadata()
       val toolObj = JSONObject()
       toolObj.put("type", "function")
 
       val funcObj = JSONObject()
       funcObj.put("name", tool.name)
-      funcObj.put("description", tool.description)
+      val mode = if (meta.mutatesWorkspace) "mutating" else "read-only"
+      val permsStr = if (meta.permissions.isEmpty()) "NONE" else meta.permissions.joinToString(",") { it.name }
+      funcObj.put("description", "[${meta.owningBackend.name} | $mode | perms: $permsStr] ${meta.description}")
 
       val parametersObj = JSONObject()
       parametersObj.put("type", "object")
@@ -814,6 +824,14 @@ class NvidiaNimProvider(
           val enumArr = JSONArray()
           param.enumValues.forEach { enumArr.put(it) }
           pObj.put("enum", enumArr)
+        }
+        if (param.defaultValue != null) {
+          pObj.put("default", param.defaultValue)
+        }
+        if (param.aliases.isNotEmpty()) {
+          val aliasArr = JSONArray()
+          param.aliases.forEach { aliasArr.put(it) }
+          pObj.put("aliases", aliasArr)
         }
         propertiesObj.put(param.name, pObj)
         if (param.required) {

@@ -23,6 +23,23 @@ data class ToolValidationError(
  */
 class ToolRegistry {
   private val tools = LinkedHashMap<String, Tool>()
+  private val changeListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
+
+  fun addOnToolsChangedListener(listener: () -> Unit) {
+    changeListeners.add(listener)
+  }
+
+  fun removeOnToolsChangedListener(listener: () -> Unit) {
+    changeListeners.remove(listener)
+  }
+
+  private fun notifyToolsChanged() {
+    for (listener in changeListeners) {
+      try {
+        listener.invoke()
+      } catch (_: Exception) {}
+    }
+  }
 
   /**
    * Registers a canonical tool. Overwrites if same tool name is registered.
@@ -30,13 +47,18 @@ class ToolRegistry {
   fun register(tool: Tool) {
     require(tool.name.isNotBlank()) { "Tool name cannot be blank" }
     tools[tool.name] = tool
+    notifyToolsChanged()
   }
 
   /**
    * Unregisters a tool by name.
    */
   fun unregister(name: String): Tool? {
-    return tools.remove(name)
+    val removed = tools.remove(name)
+    if (removed != null) {
+      notifyToolsChanged()
+    }
+    return removed
   }
 
   /**
@@ -47,6 +69,7 @@ class ToolRegistry {
     require(tool.name.isNotBlank()) { "Tool name cannot be blank" }
     val old = tools.remove(tool.name)
     tools[tool.name] = tool
+    notifyToolsChanged()
     return old
   }
 
@@ -461,23 +484,36 @@ class ToolRegistry {
   /**
    * Generates a concise, authoritative description of all available tools formatted for LLM consumption.
    */
+  /**
+   * Generates a concise, authoritative description of all available tools formatted for LLM consumption.
+   */
   fun formatToolsPrompt(): String {
     val available = getAvailableTools()
     val sb = StringBuilder()
-    sb.appendLine("AVAILABLE CANONICAL TOOLS (${available.size}):")
+    sb.appendLine("AUTHORITATIVE RUNTIME REGISTRY TOOLS (${available.size} currently available):")
     for (tool in available) {
       val meta = tool.getMetadata()
       val mutStr = if (meta.mutatesWorkspace) "mutating" else "read-only"
       val cancelStr = if (meta.supportsCancellation) "cancellable" else "non-cancellable"
+      val permsStr = if (meta.permissions.isEmpty()) "NONE" else meta.permissions.joinToString(", ") { it.name }
+      val backendDesc = when (meta.owningBackend) {
+        ExecutionEnvironmentType.E2B_CLOUD -> "E2B Cloud MicroVM (/home/user)"
+        ExecutionEnvironmentType.ANDROID_NATIVE -> "Android Native Device Runtime"
+        ExecutionEnvironmentType.MCP_BRIDGE -> "External MCP Server Bridge"
+      }
       sb.appendLine("- Tool: ${meta.name}")
-      sb.appendLine("  Environment: ${meta.owningBackend.name} | WorkingDir: ${meta.workingDirectoryRequirement} | Category: ${meta.category.name} | Mode: $mutStr, $cancelStr | Timeout: ${meta.defaultTimeoutMs}ms")
+      sb.appendLine("  Execution Environment: ${meta.owningBackend.name} ($backendDesc)")
+      sb.appendLine("  Category: ${meta.category.name} | Mode: $mutStr, $cancelStr | Permissions: [$permsStr] | Timeout: ${meta.defaultTimeoutMs}ms")
+      if (meta.workingDirectoryRequirement.isNotBlank()) {
+        sb.appendLine("  Working Directory: ${meta.workingDirectoryRequirement}")
+      }
       sb.appendLine("  Description: ${meta.description}")
       sb.appendLine("  Parameters:")
       if (meta.schema.parameters.isEmpty()) {
         sb.appendLine("    (none)")
       } else {
         for (p in meta.schema.parameters) {
-          val req = if (p.required) "required" else "optional"
+          val req = if (p.required) "REQUIRED" else "optional"
           val enums = if (p.enumValues != null) " [allowed: ${p.enumValues.joinToString(", ")}]" else ""
           val def = if (p.defaultValue != null) " [default: ${p.defaultValue}]" else ""
           val aliases = if (p.aliases.isNotEmpty()) " [aliases: ${p.aliases.joinToString(", ")}]" else ""
@@ -502,7 +538,8 @@ class ToolRegistry {
       val funcObj = JSONObject()
       funcObj.put("name", meta.name)
       val mode = if (meta.mutatesWorkspace) "mutating" else "read-only"
-      funcObj.put("description", "[${meta.owningBackend.name} | $mode] ${meta.description}")
+      val permsStr = if (meta.permissions.isEmpty()) "NONE" else meta.permissions.joinToString(",") { it.name }
+      funcObj.put("description", "[${meta.owningBackend.name} | $mode | perms: $permsStr] ${meta.description}")
       funcObj.put("parameters", meta.schema.toJsonObject())
 
       toolObj.put("function", funcObj)
@@ -521,7 +558,8 @@ class ToolRegistry {
       val funcObj = JSONObject()
       funcObj.put("name", meta.name)
       val mode = if (meta.mutatesWorkspace) "mutating" else "read-only"
-      funcObj.put("description", "[${meta.owningBackend.name} | $mode] ${meta.description}")
+      val permsStr = if (meta.permissions.isEmpty()) "NONE" else meta.permissions.joinToString(",") { it.name }
+      funcObj.put("description", "[${meta.owningBackend.name} | $mode | perms: $permsStr] ${meta.description}")
       funcObj.put("parameters", meta.schema.toJsonObject())
       arr.put(funcObj)
     }

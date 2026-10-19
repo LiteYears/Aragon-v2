@@ -557,14 +557,14 @@ class WriteFileTool(
 ) : Tool {
   override val name: String = "write_file"
   override val description: String =
-    "Create, overwrite, or append to a file inside the E2B Cloud MicroVM workspace (/home/user). When target path ends with .docx or .doc, natively compiles formatted Markdown into an authentic Microsoft Word document. When target path ends with .xlsx or .xls, natively compiles CSV/tables into an authentic Microsoft Excel spreadsheet."
+    "Create, overwrite, or append text content to a file inside the E2B Cloud MicroVM workspace (/home/user). For Microsoft Word (.docx) or Excel (.xlsx) documents, author them via Python scripts in the sandbox using 'python-docx' or 'openpyxl'. For verified PDF documents, use 'build_pdf_document'."
 
   override val schema: ToolSchema = ToolSchema(
     listOf(
       ToolParameter(
         name = "path",
         type = "string",
-        description = "Path where the file should be saved relative to workspace (e.g. 'report.md', 'output.json', 'document.docx', 'metrics.xlsx'). Note: .docx natively compiles Word documents and .xlsx natively compiles Excel spreadsheets.",
+        description = "Path where the file should be saved relative to workspace (e.g. 'report.md', 'output.json', 'script.py', 'data.csv'). Note: Word (.docx) and Excel (.xlsx) files must be authored via Python script in the microVM.",
         required = true,
         aliases = listOf("file", "filename", "file_path", "filePath", "target")
       ),
@@ -1570,6 +1570,7 @@ class DiffFilesTool(
   override val category: ToolCategory = ToolCategory.FILESYSTEM
   override val target: ToolTarget = ToolTarget.SANDBOX_FILESYSTEM
   override val permissions: Set<ToolPermission> = setOf(ToolPermission.READ_ONLY)
+  override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.ANDROID_NATIVE
 
   override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
     withContext(Dispatchers.IO) {

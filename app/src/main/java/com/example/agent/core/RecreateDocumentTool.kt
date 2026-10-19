@@ -43,6 +43,7 @@ class RecreateDocumentTool(
     "Recreates, replicates, or transforms any source (an image or screenshot of a Word document, photo of paper, Word .docx, PDF .pdf, Excel .xlsx, CSV, or text) into a verified, styled deliverable (.docx, .xlsx, or .pdf). Automatically runs OCR on screenshots, applies requested changes (such as changing title, author name, and date to the current date, or specific text replacements), and builds a pristine target file."
 
   override val category: ToolCategory = ToolCategory.FILESYSTEM
+  override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.ANDROID_NATIVE
   override val defaultTimeoutMs: Long = 180000L
 
   override val schema: ToolSchema = ToolSchema(

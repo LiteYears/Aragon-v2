@@ -40,10 +40,12 @@ enum class ToolPermission {
 
 /**
  * Explicit execution environment identity for tool routing.
- * The E2B Cloud MicroVM is the only execution environment.
+ * Delineates between remote E2B MicroVM, local on-device Android runtime, and external MCP bridges.
  */
 enum class ExecutionEnvironmentType {
-  E2B_CLOUD      // Dedicated E2B Cloud Firecracker MicroVM
+  E2B_CLOUD,      // Dedicated E2B Cloud Firecracker MicroVM
+  ANDROID_NATIVE, // On-device Android runtime (local filesystem, native builders, OCR, web requests)
+  MCP_BRIDGE      // Model Context Protocol bridged server
 }
 
 /**
@@ -613,7 +615,11 @@ interface Tool {
 
   val environmentIdentity: EnvironmentIdentity get() = EnvironmentIdentity(
     type = owningBackend,
-    name = "E2B Cloud MicroVM",
+    name = when (owningBackend) {
+      ExecutionEnvironmentType.E2B_CLOUD -> "E2B Cloud MicroVM"
+      ExecutionEnvironmentType.ANDROID_NATIVE -> "Android Native Runtime"
+      ExecutionEnvironmentType.MCP_BRIDGE -> "MCP Subsystem"
+    },
     sessionId = "default",
     workingDirectory = workingDirectoryRequirement,
     capabilities = requiredCapabilities

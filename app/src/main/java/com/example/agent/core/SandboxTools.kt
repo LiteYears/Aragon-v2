@@ -378,6 +378,7 @@ class BrowserAutomationTool(
   override val category: ToolCategory = ToolCategory.WEB
   override val target: ToolTarget = ToolTarget.HOST_NETWORK
   override val permissions: Set<ToolPermission> = setOf(ToolPermission.NETWORK_ACCESS)
+  override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.ANDROID_NATIVE
   override val defaultTimeoutMs: Long = 30000L
 
   override fun isAvailable(): Boolean = isConfigured
@@ -919,6 +920,7 @@ class DeepWebResearchTool(
   override val category: ToolCategory = ToolCategory.WEB
   override val target: ToolTarget = ToolTarget.HOST_NETWORK
   override val permissions: Set<ToolPermission> = setOf(ToolPermission.NETWORK_ACCESS)
+  override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.ANDROID_NATIVE
   override val defaultTimeoutMs: Long = 45000L
 
   override fun isAvailable(): Boolean = isConfigured

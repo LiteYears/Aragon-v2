@@ -25,6 +25,7 @@ class BuildPdfDocumentTool(
     "Creates a verified, native PDF (.pdf) document. Accepts either a Markdown document string ('markdown') or structured sections ('sections'). Supports headings H1-H3, styled tables with zebra striping, callout boxes, bullet/numbered lists, running headers and footers with page numbers, and custom accent colors."
 
   override val category: ToolCategory = ToolCategory.FILESYSTEM
+  override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.ANDROID_NATIVE
 
   override val schema: ToolSchema = ToolSchema(
     listOf(

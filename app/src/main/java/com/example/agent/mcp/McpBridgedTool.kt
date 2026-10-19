@@ -49,7 +49,7 @@ class McpBridgedTool(
 
   override val permissions: Set<ToolPermission> = setOf(ToolPermission.NETWORK_ACCESS)
 
-  override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.E2B_CLOUD
+  override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.MCP_BRIDGE
 
   override val defaultTimeoutMs: Long = client.config.timeoutSeconds * 1000L
 

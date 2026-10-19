@@ -401,6 +401,34 @@ class ScratchpadMemoryManager(val workspaceDir: File) {
   }
 
   /**
+   * Deletes a specific task record from notes/tasks/<id>.json and notes/task_history.jsonl.
+   */
+  @Synchronized
+  fun deleteTaskRecord(taskId: String) {
+    try {
+      val dedicatedFile = File(tasksDir, "$taskId.json")
+      if (dedicatedFile.exists()) {
+        dedicatedFile.delete()
+      }
+
+      val existing = loadTaskHistory().filter { it.id != taskId }
+      val notesBase = File(workspaceDir, "notes")
+      val tmpFile = File(notesBase, "task_history.jsonl.tmp")
+      tmpFile.writeText(
+        existing.joinToString("\n") { it.toJsonString() } + "\n",
+        StandardCharsets.UTF_8
+      )
+      if (!tmpFile.renameTo(taskHistoryFile)) {
+        taskHistoryFile.writeText(
+          existing.joinToString("\n") { it.toJsonString() } + "\n",
+          StandardCharsets.UTF_8
+        )
+        tmpFile.delete()
+      }
+    } catch (_: Exception) {}
+  }
+
+  /**
    * Reads all recorded tasks from notes/task_history.jsonl and notes/tasks/<id>.json.
    */
   fun loadTaskHistory(): List<TaskRecord> {

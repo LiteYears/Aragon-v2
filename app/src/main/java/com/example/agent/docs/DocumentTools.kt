@@ -11,6 +11,7 @@ import com.example.agent.core.ToolResult
 import com.example.agent.core.ToolSchema
 import com.example.agent.core.ToolStatus
 import com.example.agent.core.ToolExecutionOutcome
+import com.example.agent.core.ExecutionEnvironmentType
 import java.io.File
 
 class DocumentListTool(
@@ -21,6 +22,7 @@ class DocumentListTool(
     "List every imported document with its exact processing status, type, chunk count, OCR/extraction engine, embedding availability, scope state, and warnings. Use this before making any claim about an uploaded document or when a document reference needs to be resolved."
 
   override val category: ToolCategory = ToolCategory.FILESYSTEM
+  override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.ANDROID_NATIVE
 
   override val schema: ToolSchema = ToolSchema(emptyList())
 
@@ -67,6 +69,7 @@ class DocumentSearchTool(
     "Search the user's imported documents (RAG hybrid retrieval: keyword index + semantic embeddings when available) and return the most relevant ground-truth passages with document, page/sheet, and row references. Use this to answer questions about uploaded files, cross-document reasoning, or to locate content before generating a deliverable. Never guess document content without searching first."
 
   override val category: ToolCategory = ToolCategory.FILESYSTEM
+  override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.ANDROID_NATIVE
 
   override val schema: ToolSchema = ToolSchema(
     listOf(
@@ -220,6 +223,7 @@ class DocumentProcessTool(
     "Generate a real, verified deliverable (DOCX with RTL support, XLSX with typed cells, or Markdown) from an imported document's extracted structure, OCR output, and tables. The output file is natively constructed on-device, reopened for structural verification, and registered as a workspace artifact. Requires a processed document (status READY or READY (LEXICAL)) - use document_list first."
 
   override val category: ToolCategory = ToolCategory.FILESYSTEM
+  override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.ANDROID_NATIVE
   override val defaultTimeoutMs: Long = 120000L
 
   override val schema: ToolSchema = ToolSchema(
@@ -388,6 +392,7 @@ class ReadImageTool(
     "Transcribes and extracts text, numbers, handwriting, and tables from any image file in the workspace (.png, .jpg, .webp, .bmp, .gif, .heic). If the active model has vision, it processes the image directly. If not, it uses the advanced multi-pass OCR engine with auto-orientation and contrast correction, then cloud fallbacks."
 
   override val category: ToolCategory = ToolCategory.FILESYSTEM
+  override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.ANDROID_NATIVE
 
   override val schema: ToolSchema = ToolSchema(
     listOf(

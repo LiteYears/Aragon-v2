@@ -348,6 +348,7 @@ class WebSearchTool(private val isConfigured: Boolean = true) : Tool {
 
   override val category: ToolCategory = ToolCategory.WEB
   override val target: ToolTarget = ToolTarget.HOST_NETWORK
+  override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.ANDROID_NATIVE
   override val permissions: Set<ToolPermission> = setOf(ToolPermission.NETWORK_ACCESS)
   override val defaultTimeoutMs: Long = 25000L
 
@@ -491,6 +492,7 @@ class WebOpenTool(private val isConfigured: Boolean = true, var workspaceDir: Fi
   override val category: ToolCategory = ToolCategory.WEB
   override val target: ToolTarget = ToolTarget.HOST_NETWORK
   override val permissions: Set<ToolPermission> = setOf(ToolPermission.NETWORK_ACCESS)
+  override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.ANDROID_NATIVE
   override val defaultTimeoutMs: Long = 30000L
 
   override fun isAvailable(): Boolean = isConfigured
@@ -651,6 +653,7 @@ class WebExtractTool(private val isConfigured: Boolean = true) : Tool {
   override val category: ToolCategory = ToolCategory.WEB
   override val target: ToolTarget = ToolTarget.HOST_NETWORK
   override val permissions: Set<ToolPermission> = setOf(ToolPermission.NETWORK_ACCESS)
+  override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.ANDROID_NATIVE
   override val defaultTimeoutMs: Long = 25000L
 
   override fun isAvailable(): Boolean = isConfigured
@@ -779,6 +782,7 @@ class WebCrawlTool(private val isConfigured: Boolean = true) : Tool {
   override val category: ToolCategory = ToolCategory.WEB
   override val target: ToolTarget = ToolTarget.HOST_NETWORK
   override val permissions: Set<ToolPermission> = setOf(ToolPermission.NETWORK_ACCESS)
+  override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.ANDROID_NATIVE
   override val defaultTimeoutMs: Long = 45000L
 
   override fun isAvailable(): Boolean = isConfigured
@@ -937,6 +941,7 @@ class WebFetchTool(private val isConfigured: Boolean = true, var workspaceDir: F
   override val category: ToolCategory = ToolCategory.NETWORK
   override val target: ToolTarget = ToolTarget.HOST_NETWORK
   override val permissions: Set<ToolPermission> = setOf(ToolPermission.NETWORK_ACCESS)
+  override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.ANDROID_NATIVE
   override val defaultTimeoutMs: Long = 30000L
 
   override fun isAvailable(): Boolean = isConfigured
