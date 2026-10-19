@@ -197,18 +197,12 @@ class TerminalTool(
 
     val provider = sandboxProvider
     if (provider == null) {
-      return@withContext ToolResult(
+      return@withContext executeLocalWorkspaceCommand(
         callId = callId,
-        toolName = name,
-        status = ToolStatus.FAILED,
         arguments = arguments,
-        output = null,
-        error = "E2B Cloud Sandbox is not configured or offline. Please configure your E2B API Key in Settings.",
-        errorType = ToolErrorCode.SANDBOX_INFRA_ERROR,
-        duration = System.currentTimeMillis() - startTime,
-        stdout = "",
-        stderr = "E2B Cloud Sandbox is not configured or offline. Please configure your E2B API Key in Settings.",
-        exitCode = 1
+        command = effectiveCommand,
+        startTime = startTime,
+        isBestEffort = isBestEffort
       )
     }
 
@@ -436,5 +430,230 @@ class TerminalTool(
         artifacts = artifactManager.getArtifacts()
       )
     }
+  }
+
+  private fun executeLocalWorkspaceCommand(
+    callId: String,
+    arguments: Map<String, Any?>,
+    command: String,
+    startTime: Long,
+    isBestEffort: Boolean
+  ): ToolResult {
+    val clean = command.trim()
+    val parts = clean.split(Regex("\\s+"))
+    val baseCmd = parts.firstOrNull()?.lowercase() ?: ""
+    val cmdArgs = parts.drop(1)
+
+    var stdout = ""
+    var stderr = ""
+    var exitCode = 0
+
+    try {
+      when (baseCmd) {
+        "pwd" -> {
+          stdout = "/workspace"
+        }
+        "date" -> {
+          stdout = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+        }
+        "ls", "dir" -> {
+          val files = workspaceDir.listFiles() ?: emptyArray()
+          val sb = StringBuilder()
+          for (f in files.sortedBy { it.name }) {
+            val type = if (f.isDirectory) "d" else "-"
+            val size = if (f.isFile) f.length() else 4096
+            sb.appendLine(String.format(java.util.Locale.US, "%s %8d  %s", type, size, f.name))
+          }
+          stdout = sb.toString().trimEnd()
+          if (stdout.isEmpty()) stdout = "(empty directory)"
+        }
+        "cat" -> {
+          val targetPath = cmdArgs.firstOrNull() ?: ""
+          if (targetPath.isBlank()) {
+            stderr = "cat: missing file operand"
+            exitCode = 1
+          } else {
+            val file = PathSecurity.resolveSafe(workspaceDir, targetPath)
+            if (!file.exists() || !file.isFile) {
+              stderr = "cat: $targetPath: No such file"
+              exitCode = 1
+            } else {
+              stdout = file.readText(java.nio.charset.StandardCharsets.UTF_8)
+            }
+          }
+        }
+        "head" -> {
+          val nArg = if (cmdArgs.contains("-n")) {
+            val idx = cmdArgs.indexOf("-n")
+            cmdArgs.getOrNull(idx + 1)?.toIntOrNull() ?: 10
+          } else 10
+          val targetPath = cmdArgs.lastOrNull { !it.startsWith("-") && it.toIntOrNull() == null } ?: ""
+          if (targetPath.isBlank()) {
+            stderr = "head: missing file operand"
+            exitCode = 1
+          } else {
+            val file = PathSecurity.resolveSafe(workspaceDir, targetPath)
+            if (!file.exists() || !file.isFile) {
+              stderr = "head: $targetPath: No such file"
+              exitCode = 1
+            } else {
+              val lines = file.readLines()
+              stdout = lines.take(nArg).joinToString("\n")
+            }
+          }
+        }
+        "tail" -> {
+          val nArg = if (cmdArgs.contains("-n")) {
+            val idx = cmdArgs.indexOf("-n")
+            cmdArgs.getOrNull(idx + 1)?.toIntOrNull() ?: 10
+          } else 10
+          val targetPath = cmdArgs.lastOrNull { !it.startsWith("-") && it.toIntOrNull() == null } ?: ""
+          if (targetPath.isBlank()) {
+            stderr = "tail: missing file operand"
+            exitCode = 1
+          } else {
+            val file = PathSecurity.resolveSafe(workspaceDir, targetPath)
+            if (!file.exists() || !file.isFile) {
+              stderr = "tail: $targetPath: No such file"
+              exitCode = 1
+            } else {
+              val lines = file.readLines()
+              stdout = lines.takeLast(nArg).joinToString("\n")
+            }
+          }
+        }
+        "wc" -> {
+          val targetPath = cmdArgs.lastOrNull { !it.startsWith("-") } ?: ""
+          if (targetPath.isBlank()) {
+            stderr = "wc: missing file operand"
+            exitCode = 1
+          } else {
+            val file = PathSecurity.resolveSafe(workspaceDir, targetPath)
+            if (!file.exists() || !file.isFile) {
+              stderr = "wc: $targetPath: No such file"
+              exitCode = 1
+            } else {
+              val lines = file.readLines()
+              val wordCount = lines.sumOf { it.split(Regex("\\s+")).filter { w -> w.isNotBlank() }.size }
+              val charCount = file.length()
+              stdout = "${lines.size}  $wordCount  $charCount  $targetPath"
+            }
+          }
+        }
+        "grep" -> {
+          val ignoreCase = cmdArgs.contains("-i")
+          val nonFlags = cmdArgs.filter { !it.startsWith("-") }
+          val pattern = nonFlags.firstOrNull() ?: ""
+          val targetPath = nonFlags.getOrNull(1) ?: "."
+          if (pattern.isBlank()) {
+            stderr = "grep: missing pattern"
+            exitCode = 1
+          } else {
+            val file = PathSecurity.resolveSafe(workspaceDir, targetPath)
+            val regex = Regex(pattern, if (ignoreCase) setOf(RegexOption.IGNORE_CASE) else emptySet())
+            val sb = StringBuilder()
+            if (file.isFile) {
+              file.readLines().forEachIndexed { i, line ->
+                if (regex.containsMatchIn(line)) sb.appendLine("${i + 1}:$line")
+              }
+            } else if (file.isDirectory) {
+              file.walkTopDown().filter { it.isFile }.forEach { f ->
+                val rel = f.relativeTo(workspaceDir).path
+                f.readLines().forEachIndexed { i, line ->
+                  if (regex.containsMatchIn(line)) sb.appendLine("$rel:${i + 1}:$line")
+                }
+              }
+            }
+            stdout = sb.toString().trimEnd()
+            if (stdout.isBlank()) exitCode = 1
+          }
+        }
+        "mkdir" -> {
+          val targetPath = cmdArgs.lastOrNull { !it.startsWith("-") } ?: ""
+          if (targetPath.isBlank()) {
+            stderr = "mkdir: missing operand"
+            exitCode = 1
+          } else {
+            val dir = PathSecurity.resolveSafe(workspaceDir, targetPath)
+            dir.mkdirs()
+            stdout = "Created directory $targetPath"
+          }
+        }
+        "rm" -> {
+          val targetPath = cmdArgs.lastOrNull { !it.startsWith("-") } ?: ""
+          if (targetPath.isBlank()) {
+            stderr = "rm: missing operand"
+            exitCode = 1
+          } else {
+            val file = PathSecurity.resolveSafe(workspaceDir, targetPath)
+            if (file.exists()) {
+              if (file.isDirectory) file.deleteRecursively() else file.delete()
+              artifactManager.syncWorkspace()
+              stdout = "Removed $targetPath"
+            } else {
+              if (!cmdArgs.contains("-f")) {
+                stderr = "rm: cannot remove '$targetPath': No such file"
+                exitCode = 1
+              }
+            }
+          }
+        }
+        "touch" -> {
+          val targetPath = cmdArgs.firstOrNull() ?: ""
+          if (targetPath.isBlank()) {
+            stderr = "touch: missing file operand"
+            exitCode = 1
+          } else {
+            val file = PathSecurity.resolveSafe(workspaceDir, targetPath)
+            file.parentFile?.mkdirs()
+            if (!file.exists()) file.createNewFile() else file.setLastModified(System.currentTimeMillis())
+            artifactManager.syncWorkspace()
+            stdout = "Updated timestamp for $targetPath"
+          }
+        }
+        "echo" -> {
+          if (clean.contains(">")) {
+            val isAppend = clean.contains(">>")
+            val sep = if (isAppend) ">>" else ">"
+            val textPart = clean.substringBefore(sep).removePrefix("echo").trim().removeSurrounding("\"").removeSurrounding("'")
+            val filePart = clean.substringAfter(sep).trim()
+            val file = PathSecurity.resolveSafe(workspaceDir, filePart)
+            file.parentFile?.mkdirs()
+            if (isAppend) file.appendText(textPart + "\n") else file.writeText(textPart + "\n")
+            artifactManager.syncWorkspace()
+            stdout = ""
+          } else {
+            stdout = clean.removePrefix("echo").trim().removeSurrounding("\"").removeSurrounding("'")
+          }
+        }
+        else -> {
+          stderr = "Command '$baseCmd' requires E2B Cloud MicroVM. Supported local commands: ls, cat, head, tail, wc, grep, mkdir, rm, touch, echo, pwd, date."
+          exitCode = 1
+        }
+      }
+    } catch (e: Exception) {
+      stderr = e.message ?: "Execution error"
+      exitCode = 1
+    }
+
+    val isSuccess = exitCode == 0
+    val duration = System.currentTimeMillis() - startTime
+    val tag = "[env=local_workspace]"
+    val combinedStdout = if (stdout.isBlank()) "" else "$tag\n$stdout"
+
+    return ToolResult(
+      callId = callId,
+      toolName = name,
+      status = if (isSuccess || isBestEffort) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
+      arguments = arguments,
+      output = if (isSuccess) stdout else null,
+      error = if (!isSuccess && !isBestEffort) stderr else null,
+      duration = duration,
+      stdout = combinedStdout,
+      stderr = stderr,
+      exitCode = exitCode,
+      artifacts = artifactManager.getArtifacts(),
+      outcome = if (isSuccess) ToolExecutionOutcome.SUCCESS_WITH_RESULTS else ToolExecutionOutcome.EXECUTION_FAILED
+    )
   }
 }

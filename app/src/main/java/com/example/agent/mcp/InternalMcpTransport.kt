@@ -49,6 +49,25 @@ class InternalMcpTransport(
   private var onCloseCallback: (suspend (Throwable?) -> Unit)? = null
 
   private var sqliteDb: SQLiteDatabase? = null
+  private val playwrightPageCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, String>>()
+
+  private fun getOrFetchHtml(url: String): String {
+    val cached = playwrightPageCache[url]
+    if (cached != null && System.currentTimeMillis() - cached.first < 300_000L && cached.second.isNotBlank()) {
+      return cached.second
+    }
+    val req = Request.Builder()
+      .url(url)
+      .get()
+      .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+      .build()
+    val resp = httpClient.newCall(req).execute()
+    return resp.use { r ->
+      val body = r.body?.string().orEmpty()
+      playwrightPageCache[url] = Pair(System.currentTimeMillis(), body)
+      body
+    }
+  }
 
   override val isConnected: Boolean get() = connected.get()
 
@@ -372,22 +391,46 @@ class InternalMcpTransport(
       // 6. browser_evaluate
       arr.put(JSONObject().apply {
         put("name", "browser_evaluate")
-        put("description", "Evaluate a regex pattern or data extraction query over the DOM text of a web page.")
+        put("description", "Evaluate a JavaScript expression, script, DOM query, or regex pattern in the context of the page DOM (e.g. 'document.title', 'document.querySelectorAll(\"h2\").map(e => e.textContent)', or Math/JSON expressions).")
         put("inputSchema", JSONObject().apply {
           put("type", "object")
           put("properties", JSONObject().apply {
             put("url", JSONObject().apply {
               put("type", "string")
-              put("description", "Web page URL")
+              put("description", "Web page URL to evaluate JavaScript on")
+            })
+            put("script", JSONObject().apply {
+              put("type", "string")
+              put("description", "JavaScript expression or code to evaluate (e.g. 'document.title', 'document.querySelectorAll(\"a\").map(a => a.href)')")
             })
             put("pattern", JSONObject().apply {
               put("type", "string")
-              put("description", "Regular expression pattern to extract matches from HTML/DOM")
+              put("description", "Optional regex pattern or JavaScript expression to evaluate")
+            })
+          })
+          put("required", JSONArray().apply { put("url") })
+        })
+      })
+
+      // 7. browser_run_javascript
+      arr.put(JSONObject().apply {
+        put("name", "browser_run_javascript")
+        put("description", "Execute multi-line JavaScript code in the browser context with full DOM access (document, window, querySelector, querySelectorAll, Array.from, map, filter, JSON, Math) and return structured results.")
+        put("inputSchema", JSONObject().apply {
+          put("type", "object")
+          put("properties", JSONObject().apply {
+            put("url", JSONObject().apply {
+              put("type", "string")
+              put("description", "Web page URL to execute JavaScript against")
+            })
+            put("script", JSONObject().apply {
+              put("type", "string")
+              put("description", "JavaScript code, function, or script block to run")
             })
           })
           put("required", JSONArray().apply {
             put("url")
-            put("pattern")
+            put("script")
           })
         })
       })
@@ -1238,16 +1281,31 @@ class InternalMcpTransport(
         }
       }
 
-      "browser_evaluate" -> {
+      "browser_run_javascript", "browser_evaluate" -> {
+        val script = args.optString("script", "").ifBlank {
+          args.optString("javascript", "").ifBlank {
+            args.optString("expression", "")
+          }
+        }.trim()
         val pattern = args.optString("pattern").trim()
-        if (pattern.isBlank()) throw IllegalArgumentException("Missing parameter 'pattern'")
-        val req = Request.Builder().url(url).get().build()
-        val resp = httpClient.newCall(req).execute()
-        resp.use { r ->
-          val raw = r.body?.string().orEmpty()
+
+        val rawHtml = getOrFetchHtml(url)
+
+        if (script.isNotBlank()) {
+          val jsEngine = PlaywrightJsEngine(url = url, html = rawHtml)
+          val evalResult = jsEngine.evaluate(script)
+          return buildToolSuccessResult(evalResult.toJson().toString(2))
+        } else if (pattern.isNotBlank()) {
+          // If pattern is a JavaScript expression (e.g. document.title, document.querySelector, Math.*)
+          if (pattern.startsWith("document.") || pattern.startsWith("window.") || pattern.startsWith("Math.") || pattern.contains("=>") || pattern.contains(";")) {
+            val jsEngine = PlaywrightJsEngine(url = url, html = rawHtml)
+            val evalResult = jsEngine.evaluate(pattern)
+            return buildToolSuccessResult(evalResult.toJson().toString(2))
+          }
+          // Otherwise regex matching pass
           val regex = Regex(pattern, RegexOption.IGNORE_CASE)
           val matches = JSONArray()
-          regex.findAll(raw).take(50).forEach { m ->
+          regex.findAll(rawHtml).take(50).forEach { m ->
             matches.put(m.value)
           }
           val outObj = JSONObject().apply {
@@ -1257,6 +1315,11 @@ class InternalMcpTransport(
             put("matches", matches)
           }
           return buildToolSuccessResult(outObj.toString(2))
+        } else {
+          // Default: execute DOM metadata extraction script
+          val jsEngine = PlaywrightJsEngine(url = url, html = rawHtml)
+          val evalResult = jsEngine.evaluate("({ title: document.title, url: document.URL, linksCount: document.links.length })")
+          return buildToolSuccessResult(evalResult.toJson().toString(2))
         }
       }
 

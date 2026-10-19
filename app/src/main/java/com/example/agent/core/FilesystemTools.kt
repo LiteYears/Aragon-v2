@@ -249,21 +249,57 @@ class ListDirectoryTool(
       val maxEntries = ((arguments["maxEntries"] as? Number)?.toInt() ?: 100).coerceIn(1, 500)
 
       val provider = sandboxProviderSupplier?.invoke() ?: sandboxProvider
+      val resolvedLocal = try { PathSecurity.resolveSafe(workspaceDir, pathStr) } catch (_: Exception) { File(workspaceDir, ".") }
+
       if (provider == null || !provider.isRemote) {
+        val targetDir = resolvedLocal
+        if (!targetDir.exists()) {
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.FAILED,
+            arguments = arguments,
+            output = null,
+            error = "Directory '$pathStr' does not exist in workspace.",
+            errorType = ToolErrorCode.SANDBOX_ERROR,
+            duration = System.currentTimeMillis() - startTime,
+            exitCode = 1
+          )
+        }
+        val entries = mutableListOf<JSONObject>()
+        val files = if (recursive) targetDir.walkTopDown().filter { it != targetDir }.take(maxEntries).toList()
+                    else (targetDir.listFiles() ?: emptyArray()).take(maxEntries).toList()
+        for (f in files) {
+          val rel = PathSecurity.getRelativePath(targetDir, f)
+          entries.add(
+            JSONObject().apply {
+              put("name", rel)
+              put("isDirectory", f.isDirectory)
+              put("isSymlink", false)
+              put("sizeBytes", if (f.isFile) f.length() else 0L)
+            }
+          )
+        }
+        val outJson = JSONObject().apply {
+          put("exists", true)
+          put("path", pathStr)
+          put("entries", JSONArray(entries))
+        }
+        val stdout = outJson.toString(2)
         return@withContext ToolResult(
           callId = callId,
           toolName = name,
-          status = ToolStatus.FAILED,
+          status = ToolStatus.SUCCEEDED,
           arguments = arguments,
-          output = null,
-          error = "E2B Cloud Sandbox is not configured or offline. Configure your E2B API Key in Settings.",
-          errorType = ToolErrorCode.SANDBOX_INFRA_ERROR,
+          output = stdout,
+          error = null,
           duration = System.currentTimeMillis() - startTime,
-          exitCode = 1
+          stdout = stdout,
+          exitCode = 0,
+          outcome = if (entries.isEmpty()) ToolExecutionOutcome.SUCCESS_EMPTY else ToolExecutionOutcome.SUCCESS_WITH_RESULTS
         )
       }
       val sessionId = sessionIdProvider()
-      val resolvedLocal = try { PathSecurity.resolveSafe(workspaceDir, pathStr) } catch (_: Exception) { File(workspaceDir, ".") }
       val cleanRel = PathSecurity.getRelativePath(workspaceDir, resolvedLocal)
       val cmd = """
 python3 -c "import os, json, sys
@@ -458,17 +494,43 @@ class ReadFileTool(
       }
 
       val provider = sandboxProviderSupplier?.invoke() ?: sandboxProvider
+      val resolvedLocal = try { PathSecurity.resolveSafe(workspaceDir, pathStr) } catch (_: Exception) { File(workspaceDir, pathStr) }
+
       if (provider == null || !provider.isRemote) {
+        val file = resolvedLocal
+        if (!file.exists() || !file.isFile) {
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.FAILED,
+            arguments = arguments,
+            output = null,
+            error = "File '$pathStr' does not exist in workspace.",
+            errorType = ToolErrorCode.SANDBOX_ERROR,
+            duration = System.currentTimeMillis() - startTime,
+            exitCode = 1
+          )
+        }
+        val allLines = file.readLines(StandardCharsets.UTF_8)
+        val startIdx = (offset - 1).coerceAtLeast(0)
+        val count = limit ?: 500
+        val selectedLines = if (startIdx < allLines.size) {
+          allLines.subList(startIdx, (startIdx + count).coerceAtMost(allLines.size))
+        } else emptyList()
+        val formatted = selectedLines.mapIndexed { idx, line -> "${startIdx + idx + 1}: $line" }.joinToString("\n")
+        val content = if (allLines.isEmpty()) "(file exists but is empty, 0 bytes)" else formatted
         return@withContext ToolResult(
           callId = callId,
           toolName = name,
-          status = ToolStatus.FAILED,
+          status = ToolStatus.SUCCEEDED,
           arguments = arguments,
-          output = null,
-          error = "E2B Cloud Sandbox is not configured or offline. Configure your E2B API Key in Settings.",
-          errorType = ToolErrorCode.SANDBOX_INFRA_ERROR,
+          output = content,
+          error = null,
           duration = System.currentTimeMillis() - startTime,
-          exitCode = 1
+          stdout = content,
+          exitCode = 0,
+          artifacts = artifactManager?.getArtifacts() ?: emptyList(),
+          outcome = if (allLines.isEmpty()) ToolExecutionOutcome.SUCCESS_EMPTY else ToolExecutionOutcome.SUCCESS_WITH_RESULTS
         )
       }
       val sessionId = sessionIdProvider()
@@ -620,19 +682,6 @@ class WriteFileTool(
 
       try {
         val provider = sandboxProviderSupplier?.invoke() ?: sandboxProvider
-        if (provider == null || !provider.isRemote) {
-          return@withContext ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.FAILED,
-            arguments = arguments,
-            output = null,
-            error = "E2B Cloud Sandbox is not configured or offline. Configure your E2B API Key in Settings.",
-            errorType = ToolErrorCode.SANDBOX_INFRA_ERROR,
-            duration = System.currentTimeMillis() - startTime,
-            exitCode = 1
-          )
-        }
 
         val file = PathSecurity.resolveSafe(workspaceDir, pathStr)
         if (file.exists() && !overwrite && !append) {
@@ -718,31 +767,33 @@ class WriteFileTool(
         val relPath = PathSecurity.getRelativePath(workspaceDir, file)
         val registeredArtifact = artifactManager?.registerArtifact(relPath, createdByCallId = callId)
 
-        // Push file into the E2B Cloud MicroVM (the only execution environment) and verify receipt
-        val pushed = try {
-          provider.pushFileToRemote(sessionIdProvider(), relPath, file)
-        } catch (_: Exception) {
-          false
-        }
-        if (!pushed) {
-          artifactManager?.unregisterArtifact(relPath)
-          return@withContext ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.FAILED,
-            arguments = arguments,
-            output = null,
-            error = "File '$pathStr' was written to the device-side mirror but failed to sync into the E2B microVM. Verify the E2B API Key and session state, then retry.",
-            errorType = ToolErrorCode.SANDBOX_ERROR,
-            duration = System.currentTimeMillis() - startTime,
-            exitCode = 1
-          )
+        // Push file into the E2B Cloud MicroVM if remote provider is active
+        if (provider != null && provider.isRemote) {
+          val pushed = try {
+            provider.pushFileToRemote(sessionIdProvider(), relPath, file)
+          } catch (_: Exception) {
+            false
+          }
+          if (!pushed) {
+            artifactManager?.unregisterArtifact(relPath)
+            return@withContext ToolResult(
+              callId = callId,
+              toolName = name,
+              status = ToolStatus.FAILED,
+              arguments = arguments,
+              output = null,
+              error = "File '$pathStr' was written to the device-side mirror but failed to sync into the E2B microVM. Verify the E2B API Key and session state, then retry.",
+              errorType = ToolErrorCode.SANDBOX_ERROR,
+              duration = System.currentTimeMillis() - startTime,
+              exitCode = 1
+            )
+          }
         }
 
         val summary = if (append) {
-          "Successfully appended ${content.length} character(s) to '$pathStr' (total size: ${file.length()} bytes) in the E2B microVM (mirrored to the device-side artifact workspace)."
+          "Successfully appended ${content.length} character(s) to '$pathStr' (total size: ${file.length()} bytes)."
         } else {
-          "Successfully saved '$pathStr' (${file.length()} bytes) in the E2B microVM (mirrored to the device-side artifact workspace)."
+          "Successfully saved '$pathStr' (${file.length()} bytes) to workspace."
         }
 
         ToolResult(
@@ -874,23 +925,10 @@ class EditFileTool(
 
       try {
         val provider = sandboxProvider
-        if (provider == null || !provider.isRemote) {
-          return@withContext ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.FAILED,
-            arguments = arguments,
-            output = null,
-            error = "E2B Cloud Sandbox is not configured or offline. Configure your E2B API Key in Settings.",
-            errorType = ToolErrorCode.SANDBOX_INFRA_ERROR,
-            duration = System.currentTimeMillis() - startTime,
-            exitCode = 1
-          )
-        }
         val file = PathSecurity.resolveSafe(workspaceDir, pathStr)
         if (!file.exists() || !file.isFile) {
           try {
-            provider.pullFileFromRemote(sessionIdProvider(), pathStr, file)
+            provider?.pullFileFromRemote(sessionIdProvider(), pathStr, file)
           } catch (_: Exception) {}
         }
         if (!file.exists() || !file.isFile) {
@@ -955,26 +993,28 @@ class EditFileTool(
         val relPath = PathSecurity.getRelativePath(workspaceDir, file)
         artifactManager.registerArtifact(relPath, createdByCallId = callId)
 
-        val pushed = try {
-          provider.pushFileToRemote(sessionIdProvider(), relPath, file)
-        } catch (_: Exception) {
-          false
-        }
-        if (!pushed) {
-          return@withContext ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.FAILED,
-            arguments = arguments,
-            output = null,
-            error = "Edit applied to the device-side mirror but failed to sync into the E2B microVM. Verify the E2B API Key and session state, then retry.",
-            errorType = ToolErrorCode.SANDBOX_ERROR,
-            duration = System.currentTimeMillis() - startTime,
-            exitCode = 1
-          )
+        if (provider != null && provider.isRemote) {
+          val pushed = try {
+            provider.pushFileToRemote(sessionIdProvider(), relPath, file)
+          } catch (_: Exception) {
+            false
+          }
+          if (!pushed) {
+            return@withContext ToolResult(
+              callId = callId,
+              toolName = name,
+              status = ToolStatus.FAILED,
+              arguments = arguments,
+              output = null,
+              error = "Edit applied to the device-side mirror but failed to sync into the E2B microVM. Verify the E2B API Key and session state, then retry.",
+              errorType = ToolErrorCode.SANDBOX_ERROR,
+              duration = System.currentTimeMillis() - startTime,
+              exitCode = 1
+            )
+          }
         }
 
-        val summary = "Successfully updated '$pathStr' in the E2B microVM workspace."
+        val summary = "Successfully updated '$pathStr' in workspace."
         ToolResult(
           callId = callId,
           toolName = name,

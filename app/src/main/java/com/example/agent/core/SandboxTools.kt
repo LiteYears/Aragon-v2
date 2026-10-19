@@ -330,16 +330,16 @@ class BrowserAutomationTool(
 
   override val name: String = "browser_action"
   override val description: String =
-    "Read-only HTTP browser session: navigate to URLs, inspect the fetched DOM, follow resolvable links via click, submit simple HTML forms via fill_form, and page through the fetched document via scroll. No JavaScript execution."
+    "Interactive browser session: navigate to URLs, inspect fetched DOM, follow links via click, submit forms, evaluate JavaScript against page DOM, and scroll document viewport."
 
   override val schema: ToolSchema = ToolSchema(
     listOf(
       ToolParameter(
         name = "action",
         type = "string",
-        description = "Browser action to execute: 'navigate', 'get_dom', 'click', 'fill_form', 'scroll'.",
+        description = "Browser action to execute: 'navigate', 'get_dom', 'click', 'fill_form', 'scroll', 'evaluate_js'.",
         required = true,
-        enumValues = listOf("navigate", "get_dom", "click", "fill_form", "scroll"),
+        enumValues = listOf("navigate", "get_dom", "click", "fill_form", "scroll", "evaluate_js"),
         aliases = listOf("act", "op")
       ),
       ToolParameter(
@@ -777,6 +777,60 @@ class BrowserAutomationTool(
             stdout = out,
             exitCode = 0,
             metadata = mapOf("offsetChars" to scrollOffsetChars, "totalChars" to content.length)
+          )
+        }
+
+        "evaluate_js", "evaluate", "js" -> {
+          val script = arguments["script"]?.toString() ?: arguments["text"]?.toString() ?: arguments["selector"]?.toString() ?: ""
+          if (script.isBlank()) {
+            return@withContext ToolResult(
+              callId = callId,
+              toolName = name,
+              status = ToolStatus.FAILED,
+              arguments = arguments,
+              output = null,
+              error = "Parameter 'script' or 'text' containing JavaScript code is required for evaluate_js.",
+              errorType = ToolErrorCode.INVALID_ARGUMENTS,
+              duration = System.currentTimeMillis() - startTime,
+              exitCode = 1
+            )
+          }
+          val targetUrl = if (url.isNotBlank()) url else currentUrl
+          val targetHtml = if (url.isNotBlank() && url != currentUrl) {
+            try {
+              val req = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0 (Android; Aragon Agent) AppleWebKit/537.36").get().build()
+              httpClient.newCall(req).execute().use { r -> r.body?.string().orEmpty() }
+            } catch (e: Exception) {
+              return@withContext ToolResult(
+                callId = callId,
+                toolName = name,
+                status = ToolStatus.FAILED,
+                arguments = arguments,
+                output = null,
+                error = "Failed to fetch page for JavaScript evaluation: ${e.message}",
+                errorType = ToolErrorCode.NETWORK_ERROR,
+                duration = System.currentTimeMillis() - startTime,
+                exitCode = 1
+              )
+            }
+          } else lastHtmlContent
+
+          val engine = com.example.agent.mcp.PlaywrightJsEngine(url = targetUrl, html = targetHtml)
+          val evalResult = engine.evaluate(script)
+          val outStr = evalResult.toJson().toString(2)
+
+          ToolResult(
+            callId = callId,
+            toolName = name,
+            status = if (evalResult.error == null) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
+            arguments = arguments,
+            output = outStr,
+            error = evalResult.error,
+            duration = System.currentTimeMillis() - startTime,
+            stdout = outStr,
+            exitCode = if (evalResult.error == null) 0 else 1,
+            outcome = if (evalResult.error == null) ToolExecutionOutcome.SUCCESS_WITH_RESULTS else ToolExecutionOutcome.EXECUTION_FAILED,
+            metadata = mapOf("evaluatedType" to evalResult.type, "url" to targetUrl)
           )
         }
 

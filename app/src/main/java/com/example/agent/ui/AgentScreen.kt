@@ -169,6 +169,8 @@ import com.example.agent.ui.components.FiveStagesInspector
 import com.example.agent.ui.components.LittleCopyButton
 import com.example.agent.ui.components.McpServersDialog
 import com.example.agent.ui.components.WorkspaceFileExplorer
+import com.example.agent.ui.components.AmoledWorkflowSuggestions
+import com.example.agent.ui.components.AmoledWorkflowReopenTrigger
 import com.example.agent.ui.components.AragonActionButton
 import com.example.agent.ui.components.AragonButtonVariant
 import com.example.agent.ui.components.AragonFeedButton
@@ -590,86 +592,15 @@ fun AgentScreen(
             }
           }
 
-          // Screenshot 2: Suggested for you section (above input field, dismissible with ✕)
-          AnimatedVisibility(
+          // Advanced Pure-Typography AMOLED Workflow Suggestions (Zero Icons)
+          AmoledWorkflowSuggestions(
             visible = showSuggestions && state.executionFeed.isEmpty(),
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically()
-          ) {
-            Column(
-              modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 6.dp, vertical = 4.dp)
-            ) {
-              Row(
-                modifier = Modifier
-                  .fillMaxWidth()
-                  .padding(bottom = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-              ) {
-                Text(
-                  text = "Suggested for you",
-                  style = MaterialTheme.typography.titleSmall,
-                  fontFamily = InterFontFamily,
-                  fontWeight = FontWeight.SemiBold,
-                  fontSize = 13.5.sp,
-                  color = Color(0xFFE4E4E7)
-                )
-                Box(
-                  modifier = Modifier
-                    .size(24.dp)
-                    .clip(CircleShape)
-                    .clickable(role = Role.Button, onClickLabel = "Dismiss suggestions") {
-                      showSuggestions = false
-                    },
-                  contentAlignment = Alignment.Center
-                ) {
-                  Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Dismiss",
-                    tint = AmoledIconGrey,
-                    modifier = Modifier.size(15.dp)
-                  )
-                }
-              }
-
-              val suggestions = listOf(
-                "Create study materials with effective quizzes",
-                "Solve problems with step-by-step guidance",
-                "Identify contents in images accurately"
-              )
-
-              suggestions.forEachIndexed { index, suggestion ->
-                Box(
-                  modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                      inputText = suggestion
-                      inputFocusRequester.requestFocus()
-                    }
-                    .padding(vertical = 10.dp)
-                ) {
-                  Text(
-                    text = suggestion,
-                    fontFamily = InterFontFamily,
-                    fontSize = 13.5.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color(0xFFD4D4D8)
-                  )
-                }
-                if (index < suggestions.size - 1) {
-                  Box(
-                    modifier = Modifier
-                      .fillMaxWidth()
-                      .height(0.6.dp)
-                      .background(Color(0xFF222226))
-                  )
-                }
-              }
-              Spacer(modifier = Modifier.height(4.dp))
+            onDismiss = { showSuggestions = false },
+            onSelectSuggestion = { prompt, _ ->
+              inputText = prompt
+              inputFocusRequester.requestFocus()
             }
-          }
+          )
 
           // Outside selector pills on the left: Cloud Environment & Workspace Project
           Row(
@@ -765,6 +696,12 @@ fun AgentScreen(
                 )
               }
             }
+
+            // Pure typography trigger to re-open workflow suggestions when hidden
+            AmoledWorkflowReopenTrigger(
+              visible = !showSuggestions && state.executionFeed.isEmpty(),
+              onClick = { showSuggestions = true }
+            )
           }
 
           // Transformed user prompt input field container (AMOLED pure black with thinner crisp white outline)

@@ -250,23 +250,155 @@ object WebSearchEngine {
 
   fun search(query: String, maxCount: Int = 5): List<Map<String, String>> {
     val encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8.toString())
-    val searchUrl = "https://html.duckduckgo.com/html/?q=$encodedQuery"
 
-    val request = Request.Builder()
-      .url(searchUrl)
-      .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-      .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-      .get()
-      .build()
+    // Tier 1: DuckDuckGo HTML
+    try {
+      val searchUrl = "https://html.duckduckgo.com/html/?q=$encodedQuery"
+      val request = Request.Builder()
+        .url(searchUrl)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .get()
+        .build()
 
-    val responseBody = httpClient.newCall(request).execute().use { resp ->
-      if (!resp.isSuccessful) {
-        throw IllegalStateException("Search endpoint returned HTTP ${resp.code}")
+      val responseBody = httpClient.newCall(request).execute().use { resp ->
+        if (resp.isSuccessful) resp.body?.string().orEmpty() else ""
       }
-      resp.body?.string().orEmpty()
-    }
+      if (responseBody.isNotBlank()) {
+        val parsed = parseSearchResults(responseBody, maxCount)
+        if (parsed.isNotEmpty()) return parsed
+      }
+    } catch (_: Exception) {}
 
-    return parseSearchResults(responseBody, maxCount)
+    // Tier 2: DuckDuckGo Lite (resilient to bot/datacenter blocks)
+    try {
+      val liteUrl = "https://lite.duckduckgo.com/lite/"
+      val postBody = okhttp3.FormBody.Builder()
+        .add("q", query)
+        .build()
+      val liteReq = Request.Builder()
+        .url(liteUrl)
+        .post(postBody)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .build()
+      val liteHtml = httpClient.newCall(liteReq).execute().use { resp ->
+        if (resp.isSuccessful) resp.body?.string().orEmpty() else ""
+      }
+      if (liteHtml.isNotBlank()) {
+        val liteResults = parseLiteResults(liteHtml, maxCount)
+        if (liteResults.isNotEmpty()) return liteResults
+      }
+    } catch (_: Exception) {}
+
+    // Tier 3: DuckDuckGo Instant Answer / Topics API
+    try {
+      val apiUrl = "https://api.duckduckgo.com/?q=$encodedQuery&format=json&no_html=1"
+      val apiReq = Request.Builder().url(apiUrl).get().build()
+      val apiJson = httpClient.newCall(apiReq).execute().use { resp ->
+        if (resp.isSuccessful) resp.body?.string().orEmpty() else ""
+      }
+      if (apiJson.isNotBlank()) {
+        val json = JSONObject(apiJson)
+        val apiResults = mutableListOf<Map<String, String>>()
+        val heading = json.optString("Heading", query)
+        val abstract = json.optString("AbstractText", "")
+        val abstractUrl = json.optString("AbstractURL", "")
+        if (abstract.isNotBlank() && abstractUrl.isNotBlank()) {
+          apiResults.add(
+            mapOf(
+              "title" to heading,
+              "url" to abstractUrl,
+              "source" to (try { URI(abstractUrl).host ?: "duckduckgo.com" } catch (_: Exception) { "duckduckgo.com" }),
+              "snippet" to abstract
+            )
+          )
+        }
+        val related = json.optJSONArray("RelatedTopics")
+        if (related != null) {
+          for (i in 0 until related.length()) {
+            if (apiResults.size >= maxCount) break
+            val topic = related.optJSONObject(i) ?: continue
+            val text = topic.optString("Text", "")
+            val firstUrl = topic.optString("FirstURL", "")
+            if (text.isNotBlank() && firstUrl.isNotBlank()) {
+              apiResults.add(
+                mapOf(
+                  "title" to text.take(60),
+                  "url" to firstUrl,
+                  "source" to (try { URI(firstUrl).host ?: "web" } catch (_: Exception) { "web" }),
+                  "snippet" to text
+                )
+              )
+            }
+          }
+        }
+        if (apiResults.isNotEmpty()) return apiResults
+      }
+    } catch (_: Exception) {}
+
+    // Tier 4: Wikipedia Knowledge Search API
+    try {
+      val wikiUrl = "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=$encodedQuery&utf8=&format=json"
+      val wikiReq = Request.Builder().url(wikiUrl).get().build()
+      val wikiJsonStr = httpClient.newCall(wikiReq).execute().use { resp ->
+        if (resp.isSuccessful) resp.body?.string().orEmpty() else ""
+      }
+      if (wikiJsonStr.isNotBlank()) {
+        val wikiObj = JSONObject(wikiJsonStr)
+        val searchArr = wikiObj.optJSONObject("query")?.optJSONArray("search")
+        if (searchArr != null && searchArr.length() > 0) {
+          val wikiResults = mutableListOf<Map<String, String>>()
+          for (i in 0 until searchArr.length()) {
+            if (wikiResults.size >= maxCount) break
+            val item = searchArr.getJSONObject(i)
+            val title = item.optString("title", "")
+            val snippet = item.optString("snippet", "").replace(Regex("<[^>]+>"), "")
+            val articleUrl = "https://en.wikipedia.org/wiki/" + URLEncoder.encode(title.replace(" ", "_"), "UTF-8")
+            wikiResults.add(
+              mapOf(
+                "title" to title,
+                "url" to articleUrl,
+                "source" to "wikipedia.org",
+                "snippet" to WebHtmlParser.decodeEntities(snippet)
+              )
+            )
+          }
+          if (wikiResults.isNotEmpty()) return wikiResults
+        }
+      }
+    } catch (_: Exception) {}
+
+    return emptyList()
+  }
+
+  private fun parseLiteResults(html: String, maxCount: Int): List<Map<String, String>> {
+    val list = mutableListOf<Map<String, String>>()
+    val linkPattern = Pattern.compile("(?is)<a[^>]*class=[\"']result-link[\"'][^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>")
+    val snippetPattern = Pattern.compile("(?is)<td[^>]*class=[\"']result-snippet[\"'][^>]*>(.*?)</td>")
+    val linkMatcher = linkPattern.matcher(html)
+    val snippetMatcher = snippetPattern.matcher(html)
+
+    while (linkMatcher.find() && list.size < maxCount) {
+      val rawUrl = linkMatcher.group(1) ?: continue
+      val title = linkMatcher.group(2)?.replace(Regex("<[^>]+>"), " ")?.trim() ?: ""
+      val snippet = if (snippetMatcher.find()) {
+        snippetMatcher.group(1)?.replace(Regex("<[^>]+>"), " ")?.trim() ?: ""
+      } else ""
+
+      val actualUrl = decodeDdgUrl(rawUrl)
+      val domain = try { URI(actualUrl).host ?: "web" } catch (_: Exception) { "web" }
+
+      list.add(
+        mapOf(
+          "title" to WebHtmlParser.decodeEntities(title),
+          "url" to actualUrl,
+          "source" to domain,
+          "snippet" to WebHtmlParser.decodeEntities(snippet)
+        )
+      )
+    }
+    return list
   }
 
   fun parseSearchResults(html: String, maxCount: Int): List<Map<String, String>> {

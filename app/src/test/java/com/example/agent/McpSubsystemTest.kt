@@ -137,6 +137,44 @@ class McpSubsystemTest {
     val tools = client.tools.value
     assertTrue("Should discover browser_navigate", tools.any { it.name == "browser_navigate" })
     assertTrue("Should discover browser_extract_content", tools.any { it.name == "browser_extract_content" })
+    assertTrue("Should discover browser_evaluate", tools.any { it.name == "browser_evaluate" })
+    assertTrue("Should discover browser_run_javascript", tools.any { it.name == "browser_run_javascript" })
+
+    // Test PlaywrightJsEngine directly
+    val sampleHtml = """
+      <!DOCTYPE html>
+      <html>
+        <head><title>Test Page</title></head>
+        <body>
+          <h1 id="main-title">Playwright Automation</h1>
+          <div class="content">
+            <a href="https://example.com/one">Link One</a>
+            <a href="/two">Link Two</a>
+          </div>
+        </body>
+      </html>
+    """.trimIndent()
+
+    val jsEngine = com.example.agent.mcp.PlaywrightJsEngine(url = "https://example.com", html = sampleHtml)
+    
+    // Evaluate document.title
+    val titleRes = jsEngine.evaluate("document.title")
+    assertEquals("Test Page", titleRes.result)
+
+    // Evaluate querySelector textContent
+    val h1Res = jsEngine.evaluate("document.querySelector('h1').textContent")
+    assertEquals("Playwright Automation", h1Res.result)
+
+    // Evaluate querySelectorAll links map
+    val linksRes = jsEngine.evaluate("document.querySelectorAll('a').map(a => a.href)")
+    assertTrue(linksRes.result is List<*>)
+    val linksList = linksRes.result as List<*>
+    assertEquals(2, linksList.size)
+    assertTrue(linksList[0].toString().contains("https://example.com/one"))
+
+    // Evaluate Math arithmetic
+    val mathRes = jsEngine.evaluate("Math.round(15.7) + 5")
+    assertEquals(21.0, mathRes.result as Double, 0.001)
 
     client.disconnect()
   }

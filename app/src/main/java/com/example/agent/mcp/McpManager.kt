@@ -799,7 +799,7 @@ class McpManager(
     McpServerConfig(
       id = "playwright",
       name = "Playwright Browser MCP",
-      description = "Playwright-grade web browser automation, interactive links, forms submission, DOM extraction, and visual wireframing",
+      description = "Playwright-grade web browser automation, JavaScript DOM evaluation (browser_run_javascript), interactive links, forms submission, and visual wireframing",
       transport = McpTransportType.INTERNAL,
       url = "internal://playwright",
       enabled = true
