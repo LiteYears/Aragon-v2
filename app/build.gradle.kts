@@ -153,7 +153,7 @@ dependencies {
   implementation(libs.retrofit)
   implementation(libs.tukaani.xz)
   implementation(libs.pdfbox.android)
-  implementation(libs.mlkit.text.recognition)
+  // OCR dependencies removed in favor of native multimodal vision & E2B Python document processing
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)

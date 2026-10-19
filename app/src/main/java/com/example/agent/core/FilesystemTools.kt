@@ -502,58 +502,18 @@ class ReadFileTool(
           )
         }
 
-        // Remote read failed: fall back to the device-side artifact mirror if present.
-        val file = PathSecurity.resolveSafe(workspaceDir, pathStr)
-        if (file.exists() && file.isFile) {
-          val allLines = file.readLines(StandardCharsets.UTF_8)
-          val startIdx = (offset - 1).coerceAtLeast(0)
-          val selectedLines = if (startIdx < allLines.size) {
-            val remaining = allLines.drop(startIdx)
-            if (limit != null && limit > 0) remaining.take(limit) else remaining
-          } else {
-            emptyList()
-          }
-
-          val isFileEmpty = allLines.isEmpty()
-          val isTrunc = allLines.size > (startIdx + selectedLines.size)
-          val outcome = when {
-            isFileEmpty -> ToolExecutionOutcome.SUCCESS_EMPTY
-            isTrunc -> ToolExecutionOutcome.TRUNCATED_OR_PARTIAL
-            else -> ToolExecutionOutcome.SUCCESS_WITH_RESULTS
-          }
-          val content = if (isFileEmpty) "(file exists but is empty, 0 bytes)" else selectedLines.joinToString("\n")
-          return@withContext ToolResult(
-            callId = callId,
-            toolName = name,
-            status = ToolStatus.SUCCEEDED,
-            arguments = arguments,
-            output = content,
-            error = null,
-            duration = System.currentTimeMillis() - startTime,
-            stdout = content,
-            exitCode = 0,
-            artifacts = artifactManager?.getArtifacts() ?: emptyList(),
-            outcome = outcome,
-            truncation = TruncationDetails(
-              isTruncated = isTrunc,
-              originalLines = allLines.size,
-              capturedLines = selectedLines.size,
-              omittedLines = (allLines.size - (startIdx + selectedLines.size)).coerceAtLeast(0),
-              inspectionHint = if (isTrunc) "To read next lines: read_file path='$pathStr' offset=${startIdx + selectedLines.size + 1} limit=${limit ?: 100}" else null
-            )
-          )
         }
-
+        val errText = exec.stderrText().ifBlank { exec.error?.value ?: "Exit code $exitCode" }
         ToolResult(
           callId = callId,
           toolName = name,
           status = ToolStatus.FAILED,
           arguments = arguments,
           output = null,
-          error = "File '$pathStr' does not exist inside the E2B microVM (/home/user).",
-          errorType = ToolErrorCode.FILE_NOT_FOUND,
-          duration = System.currentTimeMillis() - startTime,
-          exitCode = 1,
+          error = "File '$pathStr' does not exist inside the E2B microVM (/home/user) or could not be read: $errText",
+          errorType = if (exitCode == 2) ToolErrorCode.FILE_NOT_FOUND else ToolErrorCode.PROCESS_FAILED,
+          duration = duration,
+          exitCode = exitCode,
           outcome = ToolExecutionOutcome.CONDITION_NOT_FOUND
         )
       } catch (se: SecurityException) {
@@ -710,9 +670,29 @@ class WriteFileTool(
 
         file.parentFile?.mkdirs()
         if (pathStr.endsWith(".docx", ignoreCase = true) || pathStr.endsWith(".doc", ignoreCase = true)) {
-          compileMarkdownToDocx(content, file)
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.FAILED,
+            arguments = arguments,
+            output = null,
+            error = "Direct text writing to Word (.docx) files via write_file is not supported. Generate Word files using Python executed in the E2B Cloud Sandbox with 'python-docx' via code_interpreter or terminal.",
+            errorType = ToolErrorCode.UNSUPPORTED_OPERATION,
+            duration = System.currentTimeMillis() - startTime,
+            exitCode = 1
+          )
         } else if (pathStr.endsWith(".xlsx", ignoreCase = true) || pathStr.endsWith(".xls", ignoreCase = true)) {
-          compileContentToXlsx(content, file)
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.FAILED,
+            arguments = arguments,
+            output = null,
+            error = "Direct text writing to Excel (.xlsx) files via write_file is not supported. Generate Excel files using Python executed in the E2B Cloud Sandbox with 'openpyxl' via code_interpreter or terminal.",
+            errorType = ToolErrorCode.UNSUPPORTED_OPERATION,
+            duration = System.currentTimeMillis() - startTime,
+            exitCode = 1
+          )
         } else {
           if (append && file.exists()) {
             file.appendText(content, StandardCharsets.UTF_8)
@@ -805,145 +785,6 @@ class WriteFileTool(
         )
       }
     }
-
-  internal fun compileMarkdownToDocx(markdown: String, outputFile: File) {
-    val builder = DocxBuilder()
-    val lines = markdown.lines()
-    var i = 0
-
-    while (i < lines.size) {
-      val line = lines[i]
-      val trimmed = line.trim()
-
-      if (trimmed.isEmpty()) {
-        i++
-        continue
-      }
-
-      // Check if line is part of a markdown table (e.g. "| Col 1 | Col 2 |")
-      if (trimmed.startsWith("|") && trimmed.endsWith("|") && trimmed.count { it == '|' } >= 2) {
-        val tableLines = mutableListOf<String>()
-        while (i < lines.size) {
-          val currentTrimmed = lines[i].trim()
-          if (currentTrimmed.startsWith("|") && currentTrimmed.endsWith("|") && currentTrimmed.count { it == '|' } >= 2) {
-            tableLines.add(currentTrimmed)
-            i++
-          } else {
-            break
-          }
-        }
-
-        if (tableLines.isNotEmpty()) {
-          addParsedTableToDocx(builder, tableLines)
-        }
-        continue
-      }
-
-      if (trimmed.startsWith("# ")) {
-        builder.addHeading(trimmed.removePrefix("# ").trim(), level = 1)
-      } else if (trimmed.startsWith("## ")) {
-        builder.addHeading(trimmed.removePrefix("## ").trim(), level = 2)
-      } else if (trimmed.startsWith("### ")) {
-        builder.addHeading(trimmed.removePrefix("### ").trim(), level = 3)
-      } else {
-        builder.addParagraph(trimmed)
-      }
-      i++
-    }
-
-    builder.save(outputFile)
-  }
-
-  private fun addParsedTableToDocx(builder: DocxBuilder, tableLines: List<String>) {
-    fun parseCells(line: String): List<String> {
-      val stripped = line.trim().removePrefix("|").removeSuffix("|")
-      return stripped.split("|").map { it.trim() }
-    }
-
-    fun isDivider(cells: List<String>): Boolean {
-      return cells.isNotEmpty() && cells.all { cell ->
-        val clean = cell.replace(":", "").replace("-", "").trim()
-        clean.isEmpty()
-      }
-    }
-
-    if (tableLines.isEmpty()) return
-
-    val firstRowCells = parseCells(tableLines[0])
-    val hasDivider = tableLines.size >= 2 && isDivider(parseCells(tableLines[1]))
-
-    val headers: List<String>
-    val dataRowLines: List<String>
-
-    if (hasDivider) {
-      headers = firstRowCells
-      dataRowLines = tableLines.drop(2).filter { !isDivider(parseCells(it)) }
-    } else {
-      headers = firstRowCells
-      dataRowLines = tableLines.drop(1).filter { !isDivider(parseCells(it)) }
-    }
-
-    val parsedRows = dataRowLines.map { parseCells(it) }
-    val maxCols = maxOf(headers.size, parsedRows.maxOfOrNull { it.size } ?: 0).coerceAtLeast(1)
-
-    val paddedHeaders = if (headers.size < maxCols) {
-      headers + List(maxCols - headers.size) { "" }
-    } else {
-      headers.take(maxCols)
-    }
-
-    val paddedRows = parsedRows.map { row ->
-      if (row.size < maxCols) {
-        row + List(maxCols - row.size) { "" }
-      } else {
-        row.take(maxCols)
-      }
-    }
-
-    builder.addTable(paddedHeaders, paddedRows)
-  }
-
-  internal fun compileContentToXlsx(content: String, outputFile: File) {
-    val builder = XlsxBuilder()
-    val lines = content.lines().filter { it.isNotBlank() }
-    if (lines.isEmpty()) {
-      builder.save(outputFile)
-      return
-    }
-
-    val isMarkdownTable = lines.any { it.trim().startsWith("|") && it.trim().endsWith("|") }
-    if (isMarkdownTable) {
-      val tableLines = lines.filter { it.trim().startsWith("|") && it.trim().endsWith("|") }
-      fun parseCells(line: String): List<String> =
-        line.trim().removePrefix("|").removeSuffix("|").split("|").map { it.trim() }
-      fun isDivider(cells: List<String>): Boolean =
-        cells.isNotEmpty() && cells.all { cell ->
-          val clean = cell.replace(":", "").replace("-", "").trim()
-          clean.isEmpty()
-        }
-
-      if (tableLines.isNotEmpty()) {
-        val firstRow = parseCells(tableLines[0])
-        val hasDivider = tableLines.size >= 2 && isDivider(parseCells(tableLines[1]))
-        val headers = firstRow
-        val dataLines = if (hasDivider) tableLines.drop(2).filter { !isDivider(parseCells(it)) } else tableLines.drop(1)
-        builder.addHeader(headers)
-        dataLines.forEach { builder.addRow(parseCells(it)) }
-      }
-    } else {
-      // CSV or TSV format
-      val delimiter = if (lines[0].contains("\t")) "\t" else ","
-      val rows = lines.map { line ->
-        line.split(delimiter).map { it.trim().removeSurrounding("\"") }
-      }
-      if (rows.isNotEmpty()) {
-        builder.addHeader(rows[0])
-        rows.drop(1).forEach { builder.addRow(it) }
-      }
-    }
-
-    builder.save(outputFile)
-  }
 }
 
 /**

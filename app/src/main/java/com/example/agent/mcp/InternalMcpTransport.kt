@@ -4,8 +4,6 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.os.Build
 import android.util.Base64
-import com.example.agent.core.DocxBuilder
-import com.example.agent.core.XlsxBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
@@ -731,67 +729,7 @@ class InternalMcpTransport(
         })
       })
     } else if (isOfficeServer()) {
-      // 1. create_word_document
-      arr.put(JSONObject().apply {
-        put("name", "create_word_document")
-        put("description", "Generate a verified native Microsoft Word (.docx) document with OpenXML typography, tables, and sections.")
-        put("inputSchema", JSONObject().apply {
-          put("type", "object")
-          put("properties", JSONObject().apply {
-            put("path", JSONObject().apply {
-              put("type", "string")
-              put("description", "Output path ending in .docx (e.g. 'reports/summary.docx')")
-            })
-            put("title", JSONObject().apply {
-              put("type", "string")
-              put("description", "Document title")
-            })
-            put("markdown", JSONObject().apply {
-              put("type", "string")
-              put("description", "Markdown content to convert to Word document")
-            })
-            put("author", JSONObject().apply {
-              put("type", "string")
-              put("description", "Author name (default: 'Aragon Agent')")
-            })
-          })
-          put("required", JSONArray().apply { put("path") })
-        })
-      })
-
-      // 2. create_excel_spreadsheet
-      arr.put(JSONObject().apply {
-        put("name", "create_excel_spreadsheet")
-        put("description", "Generate a verified native Microsoft Excel (.xlsx) workbook with multi-sheets, formulas, and auto-filters.")
-        put("inputSchema", JSONObject().apply {
-          put("type", "object")
-          put("properties", JSONObject().apply {
-            put("path", JSONObject().apply {
-              put("type", "string")
-              put("description", "Output path ending in .xlsx (e.g. 'data/records.xlsx')")
-            })
-            put("sheet_name", JSONObject().apply {
-              put("type", "string")
-              put("description", "Sheet title (default: 'Sheet1')")
-            })
-            put("headers", JSONObject().apply {
-              put("type", "array")
-              put("description", "Array of column header strings, e.g. [\"Item\", \"Price\"]")
-            })
-            put("rows", JSONObject().apply {
-              put("type", "array")
-              put("description", "Array of row value arrays, e.g. [[\"Server\", 120.0]]")
-            })
-            put("csv", JSONObject().apply {
-              put("type", "string")
-              put("description", "Optional CSV string to convert to spreadsheet table")
-            })
-          })
-          put("required", JSONArray().apply { put("path") })
-        })
-      })
-
-      // 3. inspect_office_document
+      // Office document generation uses Python in E2B; inspect_office_document provides metadata inspection.
       arr.put(JSONObject().apply {
         put("name", "inspect_office_document")
         put("description", "Inspect metadata, size, and validity of an existing Word (.docx) or Excel (.xlsx) file in the workspace.")
@@ -2284,12 +2222,6 @@ class InternalMcpTransport(
 
   private fun executeOfficeTool(name: String, args: JSONObject): JSONObject {
     when (name) {
-      "create_word_document" -> {
-        return buildToolErrorResult("Native Word builder is removed. Write and run a Python script in the sandbox using 'python-docx' (`import docx`) via execute_command. When stuck, always use Python!")
-      }
-      "create_excel_spreadsheet" -> {
-        return buildToolErrorResult("Native Excel builder is removed. Write and run a Python script in the sandbox using 'openpyxl' or 'pandas' via execute_command. When stuck, always use Python!")
-      }
       "inspect_office_document" -> {
         val path = args.optString("path").trim()
         val targetFile = File(workspaceDir, path)
