@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import java.io.File
 import java.util.UUID
 
@@ -659,7 +660,8 @@ class AgentEngine(
   private data class BatchDispatchResult(
     val results: List<ExecutedToolResult>,
     val fatalHaltMessage: String? = null,
-    val resetSandboxStep: ExecutionStep? = null
+    val resetSandboxStep: ExecutionStep? = null,
+    val activeSandboxId: String? = null
   )
 
   /**
@@ -1099,7 +1101,12 @@ class AgentEngine(
           )
 
           delay(80)
-          val (toolResult, observation) = dispatcher.dispatch(toolCall, task.id, toolContext)
+          val effectiveContext = if (activeExpectedSandboxId != null && toolContext.sandboxId != activeExpectedSandboxId) {
+            toolContext.copy(sandboxId = activeExpectedSandboxId)
+          } else {
+            toolContext
+          }
+          val (toolResult, observation) = dispatcher.dispatch(toolCall, task.id, effectiveContext)
           results.add(ExecutedToolResult(toolCall, toolResult, observation, isSkippedLoop = false))
 
           if (toolResult.status == ToolStatus.FAILED || toolResult.status == ToolStatus.CANCELLED) {
@@ -1150,10 +1157,12 @@ class AgentEngine(
       }
     }
 
+    val finalActiveId = (sandboxProvider as? E2BSandboxProvider)?.getActiveSession(task.sessionId)?.sandboxId ?: activeExpectedSandboxId
     return BatchDispatchResult(
       results = results,
       fatalHaltMessage = fatalHaltMessage,
-      resetSandboxStep = resetStep
+      resetSandboxStep = resetStep,
+      activeSandboxId = finalActiveId
     )
   }
 
@@ -1788,10 +1797,29 @@ class AgentEngine(
       updateStateIfActive(task, currentState)
     }
 
+    val keepAliveJob = scope.launch(Dispatchers.IO) {
+      val e2b = sandboxProvider as? E2BSandboxProvider
+      while (isActive && e2b != null && e2b.isE2B) {
+        delay(90_000L)
+        try {
+          val activeSess = e2b.getActiveSession(task.sessionId)
+          if (activeSess != null && activeSess.sandboxId.isNotBlank()) {
+            e2b.keepAlive(activeSess.sandboxId)
+          }
+        } catch (_: Exception) {}
+      }
+    }
+
     try {
       while (turnCounter < maxSteps) {
         turnCounter++
         currentCoroutineContext().ensureActive()
+
+        // Keep expectedSandboxId synchronized with any live/reconnected session
+        val liveSessionId = (sandboxProvider as? E2BSandboxProvider)?.getActiveSession(task.sessionId)?.sandboxId
+        if (liveSessionId != null) {
+          expectedSandboxId = liveSessionId
+        }
 
         // =========================================================================
         // PHASE 1: HYDRATE STATE, CONTEXT & DELIVERABLES
@@ -2107,6 +2135,10 @@ class AgentEngine(
             planner = planner,
             stepCounterProvider = { ++stepCounter }
           )
+
+          if (dispatchResult.activeSandboxId != null) {
+            expectedSandboxId = dispatchResult.activeSandboxId
+          }
 
           if (dispatchResult.resetSandboxStep != null) {
             currentState = currentState.copy(
@@ -2465,6 +2497,8 @@ class AgentEngine(
         canCancel = false
       )
       updateStateIfActive(task, currentState)
+    } finally {
+      keepAliveJob.cancel()
     }
   }
 

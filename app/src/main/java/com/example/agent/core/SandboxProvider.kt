@@ -502,7 +502,7 @@ class E2BSandboxProvider(
       val payload = JSONObject().apply {
         put("templateID", templateId.ifBlank { "base" })
         put("timeout", timeoutSeconds)
-        put("autoPause", false)
+        put("autoPause", true)
         if (!taskId.isNullOrBlank()) {
           put("metadata", JSONObject().apply {
             put("taskId", taskId)
