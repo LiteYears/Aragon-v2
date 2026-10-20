@@ -137,25 +137,25 @@ fun AmoledWorkflowSuggestions(
     modifier = modifier
   ) {
     Surface(
-      shape = RoundedCornerShape(22.dp),
+      shape = RoundedCornerShape(18.dp),
       color = Color.White,
       border = null,
-      shadowElevation = 8.dp,
+      shadowElevation = 6.dp,
       modifier = Modifier
         .fillMaxWidth()
-        .padding(horizontal = 2.dp, vertical = 6.dp)
+        .padding(horizontal = 2.dp, vertical = 4.dp)
         .testTag("amoled_workflow_suggestions_panel")
     ) {
       Column(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(14.dp)
+          .padding(10.dp)
       ) {
-        // Modern Header: Title on left, dismiss pill on right
+        // Compact Header: Title on left, collapse pill on right
         Row(
           modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 10.dp),
+            .padding(bottom = 8.dp),
           horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically
         ) {
@@ -164,11 +164,11 @@ fun AmoledWorkflowSuggestions(
               text = "SUGGESTED WORKFLOWS",
               fontFamily = InterFontFamily,
               fontWeight = FontWeight.Bold,
-              fontSize = 11.5.sp,
-              letterSpacing = 1.sp,
+              fontSize = 11.sp,
+              letterSpacing = 0.8.sp,
               color = Color(0xFF0F172A)
             )
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(6.dp))
             Surface(
               shape = CircleShape,
               color = Color(0xFF0F172A),
@@ -178,51 +178,52 @@ fun AmoledWorkflowSuggestions(
                 text = "${filteredSuggestions.size}",
                 fontFamily = JetBrainsMonoFontFamily,
                 fontWeight = FontWeight.Bold,
-                fontSize = 9.sp,
+                fontSize = 8.5.sp,
                 color = Color.White,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
               )
             }
           }
 
-          // Modern flat dismiss pill button
+          // Modern white pill collapse/hide button
           Surface(
             shape = RoundedCornerShape(12.dp),
-            color = Color(0xFFF1F5F9),
-            border = null,
+            color = Color.White,
+            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+            shadowElevation = 1.dp,
             modifier = Modifier
               .clickable(
                 role = Role.Button,
-                onClickLabel = "Dismiss suggestions",
+                onClickLabel = "Collapse suggestions",
                 onClick = onDismiss
               )
               .testTag("dismiss_suggestions_button")
           ) {
             Text(
-              text = "DISMISS",
+              text = "COLLAPSE",
               fontFamily = InterFontFamily,
-              fontWeight = FontWeight.SemiBold,
-              fontSize = 10.sp,
-              letterSpacing = 0.5.sp,
-              color = Color(0xFF475569),
-              modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+              fontWeight = FontWeight.Bold,
+              fontSize = 8.5.sp,
+              letterSpacing = 0.4.sp,
+              color = Color(0xFF0F172A),
+              modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
             )
           }
         }
 
-        // Modern Category Filter Pills
+        // Compact Category Filter Pills
         Row(
           modifier = Modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState())
-            .padding(bottom = 10.dp),
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(bottom = 8.dp),
+          horizontalArrangement = Arrangement.spacedBy(5.dp),
           verticalAlignment = Alignment.CenterVertically
         ) {
           categories.forEach { cat ->
             val isSelected = cat == selectedCategory
             Surface(
-              shape = RoundedCornerShape(14.dp),
+              shape = RoundedCornerShape(12.dp),
               color = if (isSelected) Color(0xFF0F172A) else Color(0xFFF1F5F9),
               border = null,
               modifier = Modifier
@@ -235,28 +236,28 @@ fun AmoledWorkflowSuggestions(
                 text = cat,
                 fontFamily = InterFontFamily,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                fontSize = 10.5.sp,
-                letterSpacing = 0.4.sp,
+                fontSize = 9.5.sp,
+                letterSpacing = 0.3.sp,
                 color = if (isSelected) Color.White else Color(0xFF475569),
-                modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
+                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
               )
             }
           }
         }
 
-        // Workflows List Cards
+        // Workflows List Cards (Compact: up to 2 high-value items)
         Column(
           modifier = Modifier.fillMaxWidth(),
-          verticalArrangement = Arrangement.spacedBy(8.dp)
+          verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
-          filteredSuggestions.take(3).forEach { suggestion ->
+          filteredSuggestions.take(2).forEach { suggestion ->
             Surface(
-              shape = RoundedCornerShape(16.dp),
+              shape = RoundedCornerShape(12.dp),
               color = Color(0xFFF8FAFC),
-              border = null,
+              border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
               modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(12.dp))
                 .clickable {
                   onSelectSuggestion(suggestion.prompt, suggestion.expectedArtifact)
                 }
@@ -265,7 +266,7 @@ fun AmoledWorkflowSuggestions(
               Column(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .padding(12.dp)
+                  .padding(horizontal = 8.dp, vertical = 6.dp)
               ) {
                 // Top row: Category tag + Deliverable indicator
                 Row(
@@ -275,16 +276,16 @@ fun AmoledWorkflowSuggestions(
                 ) {
                   Surface(
                     shape = RoundedCornerShape(6.dp),
-                    color = Color(0xFFE2E8F0),
-                    border = null
+                    color = Color.White,
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0))
                   ) {
                     Text(
                       text = suggestion.categoryTag,
                       fontFamily = JetBrainsMonoFontFamily,
                       fontWeight = FontWeight.Bold,
-                      fontSize = 9.sp,
-                      color = Color(0xFF0369A1),
-                      modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                      fontSize = 8.sp,
+                      color = Color(0xFF0284C7),
+                      modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp)
                     )
                   }
                   if (!suggestion.expectedArtifact.isNullOrBlank()) {
@@ -292,38 +293,42 @@ fun AmoledWorkflowSuggestions(
                       text = "→ ${suggestion.expectedArtifact}",
                       fontFamily = JetBrainsMonoFontFamily,
                       fontWeight = FontWeight.SemiBold,
-                      fontSize = 10.sp,
+                      fontSize = 9.sp,
                       color = Color(0xFF059669)
                     )
                   }
                 }
 
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(2.dp))
 
                 // Suggestion Title
                 Text(
                   text = suggestion.title,
                   fontFamily = InterFontFamily,
                   fontWeight = FontWeight.Bold,
-                  fontSize = 13.5.sp,
-                  color = Color(0xFF0F172A)
+                  fontSize = 11.5.sp,
+                  color = Color(0xFF0F172A),
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis
                 )
 
-                Spacer(modifier = Modifier.height(3.dp))
+                Spacer(modifier = Modifier.height(1.dp))
 
                 // Suggestion Description
                 Text(
                   text = suggestion.description,
                   fontFamily = InterFontFamily,
                   fontWeight = FontWeight.Normal,
-                  fontSize = 11.5.sp,
-                  lineHeight = 16.sp,
-                  color = Color(0xFF475569)
+                  fontSize = 10.sp,
+                  lineHeight = 13.5.sp,
+                  color = Color(0xFF475569),
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(4.dp))
 
-                // Quick Action Bar: "USE PROMPT" and "RUN NOW ➔"
+                // Quick Action Bar: White pill "USE" and "RUN ➔"
                 Row(
                   modifier = Modifier.fillMaxWidth(),
                   horizontalArrangement = Arrangement.End,
@@ -331,8 +336,9 @@ fun AmoledWorkflowSuggestions(
                 ) {
                   Surface(
                     shape = RoundedCornerShape(10.dp),
-                    color = Color(0xFFE2E8F0),
-                    border = null,
+                    color = Color.White,
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                    shadowElevation = 1.dp,
                     modifier = Modifier.clickable {
                       onSelectSuggestion(suggestion.prompt, suggestion.expectedArtifact)
                     }
@@ -341,18 +347,19 @@ fun AmoledWorkflowSuggestions(
                       text = "USE PROMPT",
                       fontFamily = InterFontFamily,
                       fontWeight = FontWeight.SemiBold,
-                      fontSize = 9.5.sp,
+                      fontSize = 8.5.sp,
                       color = Color(0xFF334155),
-                      modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                      modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
                     )
                   }
 
-                  Spacer(modifier = Modifier.width(6.dp))
+                  Spacer(modifier = Modifier.width(5.dp))
 
                   Surface(
                     shape = RoundedCornerShape(10.dp),
-                    color = Color(0xFF0F172A),
-                    border = null,
+                    color = Color.White,
+                    border = BorderStroke(1.dp, Color(0xFF0F172A)),
+                    shadowElevation = 1.dp,
                     modifier = Modifier.clickable {
                       if (onExecuteSuggestion != null) {
                         onExecuteSuggestion(suggestion.prompt, suggestion.expectedArtifact)
@@ -365,9 +372,9 @@ fun AmoledWorkflowSuggestions(
                       text = "RUN ➔",
                       fontFamily = InterFontFamily,
                       fontWeight = FontWeight.Bold,
-                      fontSize = 9.5.sp,
-                      color = Color.White,
-                      modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                      fontSize = 8.5.sp,
+                      color = Color(0xFF0F172A),
+                      modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
                     )
                   }
                 }
@@ -382,6 +389,7 @@ fun AmoledWorkflowSuggestions(
 
 /**
  * Floating Modern Flat Trigger Pill to re-open templates when hidden.
+ * Styled as a sleek white pill moved to the right to suit the prompt input pill.
  */
 @Composable
 fun AmoledWorkflowReopenTrigger(
@@ -390,13 +398,17 @@ fun AmoledWorkflowReopenTrigger(
   modifier: Modifier = Modifier
 ) {
   if (visible) {
+    val interactionSource = remember { MutableInteractionSource() }
     Surface(
       shape = RoundedCornerShape(16.dp),
       color = Color.White,
-      border = null,
-      shadowElevation = 3.dp,
+      border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+      shadowElevation = 2.dp,
       modifier = modifier
+        .tactilePress(interactionSource)
         .clickable(
+          interactionSource = interactionSource,
+          indication = ripple(color = Color(0xFF0F172A).copy(alpha = 0.2f)),
           role = Role.Button,
           onClickLabel = "Show suggested workflows",
           onClick = onClick
@@ -404,16 +416,30 @@ fun AmoledWorkflowReopenTrigger(
         .testTag("reopen_workflow_suggestions")
     ) {
       Row(
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+        modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically
       ) {
+        Box(
+          modifier = Modifier
+            .size(5.dp)
+            .clip(CircleShape)
+            .background(Color(0xFF0284C7))
+        )
+        Spacer(modifier = Modifier.width(5.dp))
         Text(
-          text = "+ WORKFLOWS",
+          text = "WORKFLOWS",
           fontFamily = InterFontFamily,
           fontWeight = FontWeight.Bold,
-          fontSize = 10.5.sp,
-          letterSpacing = 0.5.sp,
+          fontSize = 9.5.sp,
+          letterSpacing = 0.4.sp,
           color = Color(0xFF0F172A)
+        )
+        Spacer(modifier = Modifier.width(3.dp))
+        Text(
+          text = "▾",
+          fontSize = 8.5.sp,
+          fontWeight = FontWeight.Bold,
+          color = Color(0xFF64748B)
         )
       }
     }

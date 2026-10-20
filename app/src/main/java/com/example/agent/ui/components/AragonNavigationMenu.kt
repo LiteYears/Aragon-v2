@@ -174,9 +174,10 @@ fun AragonNavigationMenu(
               interactionSource = remember { MutableInteractionSource() },
               indication = null
             ) { /* Consume taps inside menu surface so dialog background doesn't dismiss */ },
-          shape = RoundedCornerShape(18.dp),
-          color = Color(0xFF000000),
-          border = BorderStroke(1.dp, Color(0xFF26262C))
+          shape = RoundedCornerShape(24.dp),
+          color = Color.White,
+          shadowElevation = 16.dp,
+          border = BorderStroke(1.dp, Color(0xFFE2E8F0))
         ) {
           Column(
             modifier = Modifier
@@ -195,7 +196,7 @@ fun AragonNavigationMenu(
                     modifier = Modifier
                       .size(6.dp)
                       .clip(CircleShape)
-                      .background(AmoledActionPrimary)
+                      .background(Color(0xFF0F172A))
                   )
                   Spacer(modifier = Modifier.width(6.dp))
                   Text(
@@ -205,7 +206,7 @@ fun AragonNavigationMenu(
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.5.sp,
                     letterSpacing = 1.6.sp,
-                    color = Color.White
+                    color = Color(0xFF0F172A)
                   )
                 }
                 Spacer(modifier = Modifier.height(2.dp))
@@ -215,7 +216,7 @@ fun AragonNavigationMenu(
                   fontWeight = FontWeight.Medium,
                   fontSize = 8.5.sp,
                   letterSpacing = 0.8.sp,
-                  color = AmoledTextMuted
+                  color = Color(0xFF64748B)
                 )
               }
 
@@ -444,26 +445,27 @@ private fun TypographyNavigationCard(
 ) {
   val interactionSource = remember { MutableInteractionSource() }
   val targetBg by animateColorAsState(
-    targetValue = if (isSelected) Color(0xFF141418) else Color(0xFF09090C),
+    targetValue = if (isSelected) Color(0xFF0F172A) else Color(0xFFF8FAFC),
     animationSpec = tween(120),
     label = "nav_card_bg"
   )
   val targetBorder by animateColorAsState(
-    targetValue = if (isSelected) AmoledActionPrimary.copy(alpha = 0.65f) else Color(0xFF1F1F24),
+    targetValue = if (isSelected) Color(0xFF0F172A) else Color(0xFFE2E8F0),
     animationSpec = tween(120),
     label = "nav_card_border"
   )
 
   Surface(
-    shape = RoundedCornerShape(10.dp),
+    shape = RoundedCornerShape(14.dp),
     color = targetBg,
     border = BorderStroke(1.dp, targetBorder),
+    shadowElevation = if (isSelected) 3.dp else 1.dp,
     modifier = Modifier
       .fillMaxWidth()
       .tactilePress(interactionSource)
       .clickable(
         interactionSource = interactionSource,
-        indication = ripple(color = AmoledActionPrimary.copy(alpha = 0.2f)),
+        indication = ripple(color = Color(0xFF0F172A).copy(alpha = 0.2f)),
         role = Role.Button,
         onClick = onClick
       )
@@ -482,9 +484,9 @@ private fun TypographyNavigationCard(
       ) {
         // Monospace Index Tag: [01]
         Surface(
-          shape = RoundedCornerShape(4.dp),
-          color = if (isSelected) AmoledActionPrimary.copy(alpha = 0.15f) else Color(0xFF141418),
-          border = BorderStroke(1.dp, if (isSelected) AmoledActionPrimary.copy(alpha = 0.4f) else Color(0xFF222228)),
+          shape = RoundedCornerShape(8.dp),
+          color = if (isSelected) Color(0xFF1E293B) else Color(0xFFE2E8F0),
+          border = null,
           modifier = Modifier.padding(end = 12.dp)
         ) {
           Text(
@@ -492,8 +494,8 @@ private fun TypographyNavigationCard(
             fontFamily = JetBrainsMonoFontFamily,
             fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
-            color = if (isSelected) AmoledActionPrimary else AmoledTextSecondary,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+            color = if (isSelected) Color.White else Color(0xFF334155),
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
           )
         }
 
@@ -501,11 +503,11 @@ private fun TypographyNavigationCard(
           Text(
             text = title,
             style = MaterialTheme.typography.titleSmall,
-            fontFamily = JetBrainsMonoFontFamily,
+            fontFamily = InterFontFamily,
             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
-            fontSize = 11.5.sp,
-            letterSpacing = 0.5.sp,
-            color = if (isSelected) AmoledActionPrimary else AmoledTextPrimary,
+            fontSize = 12.sp,
+            letterSpacing = 0.3.sp,
+            color = if (isSelected) Color.White else Color(0xFF0F172A),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
           )
@@ -514,7 +516,7 @@ private fun TypographyNavigationCard(
             style = MaterialTheme.typography.bodySmall,
             fontFamily = InterFontFamily,
             fontSize = 10.sp,
-            color = AmoledTextMuted,
+            color = if (isSelected) Color(0xFF94A3B8) else Color(0xFF64748B),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
           )
@@ -524,17 +526,17 @@ private fun TypographyNavigationCard(
       if (badge != null) {
         Spacer(modifier = Modifier.width(6.dp))
         Surface(
-          shape = RoundedCornerShape(2.dp),
-          color = if (isSelected) AmoledActionPrimary else Color(0xFF1A1A20),
-          border = BorderStroke(0.8.dp, if (isSelected) AmoledActionPrimary else Color(0xFF26262E))
+          shape = RoundedCornerShape(8.dp),
+          color = if (isSelected) Color.White else Color(0xFF0F172A),
+          border = null
         ) {
           Text(
             text = badge,
             fontFamily = JetBrainsMonoFontFamily,
-            fontSize = 6.5.sp,
+            fontSize = 7.5.sp,
             fontWeight = FontWeight.Bold,
-            color = if (isSelected) AmoledActionPrimaryOn else AmoledIconGreyLight,
-            modifier = Modifier.padding(horizontal = 3.5.dp, vertical = 1.dp)
+            color = if (isSelected) Color(0xFF0F172A) else Color.White,
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
           )
         }
       }
@@ -543,8 +545,7 @@ private fun TypographyNavigationCard(
 }
 
 /**
- * Pure-typography quick tool card.
- * Zero icons, clean label/value hierarchy with monospace tag.
+ * Pure-typography quick tool card in matching white theme.
  */
 @Composable
 private fun TypographyToolCard(
@@ -558,14 +559,15 @@ private fun TypographyToolCard(
   val interactionSource = remember { MutableInteractionSource() }
 
   Surface(
-    shape = RoundedCornerShape(10.dp),
-    color = Color(0xFF09090C),
-    border = BorderStroke(1.dp, Color(0xFF1F1F24)),
+    shape = RoundedCornerShape(14.dp),
+    color = Color(0xFFF8FAFC),
+    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+    shadowElevation = 1.dp,
     modifier = modifier
       .tactilePress(interactionSource)
       .clickable(
         interactionSource = interactionSource,
-        indication = ripple(color = AmoledActionPrimary.copy(alpha = 0.2f)),
+        indication = ripple(color = Color(0xFF0F172A).copy(alpha = 0.15f)),
         role = Role.Button,
         onClick = onClick
       )
@@ -587,14 +589,14 @@ private fun TypographyToolCard(
           fontSize = 9.sp,
           fontWeight = FontWeight.Bold,
           letterSpacing = 0.8.sp,
-          color = AmoledTextMuted
+          color = Color(0xFF64748B)
         )
         Text(
           text = tag,
           fontFamily = JetBrainsMonoFontFamily,
           fontSize = 7.5.sp,
           fontWeight = FontWeight.Bold,
-          color = AmoledActionPrimary
+          color = Color(0xFF0284C7)
         )
       }
 
@@ -605,7 +607,7 @@ private fun TypographyToolCard(
         fontFamily = InterFontFamily,
         fontSize = 11.5.sp,
         fontWeight = FontWeight.SemiBold,
-        color = AmoledTextPrimary,
+        color = Color(0xFF0F172A),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis
       )

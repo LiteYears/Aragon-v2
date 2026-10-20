@@ -78,9 +78,10 @@ fun DocumentsDialog(
     properties = DialogProperties(usePlatformDefaultWidth = false)
   ) {
     Surface(
-      shape = RoundedCornerShape(12.dp),
-      color = AmoledSurfaceElevated,
-      border = BorderStroke(1.dp, AmoledBorder),
+      shape = RoundedCornerShape(22.dp),
+      color = Color.White,
+      shadowElevation = 16.dp,
+      border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
       modifier = Modifier
         .fillMaxWidth()
         .padding(horizontal = 16.dp)
@@ -100,14 +101,17 @@ fun DocumentsDialog(
         ) {
           Text(
             text = "DOCUMENTS (${documents.size})",
-            fontFamily = JetBrainsMonoFontFamily,
+            fontFamily = InterFontFamily,
             fontWeight = FontWeight.Bold,
             fontSize = 14.sp,
-            color = AmoledTextPrimary
+            color = Color(0xFF0F172A)
           )
-          TextButton(onClick = onDismiss, modifier = Modifier.testTag("close_documents_dialog_btn")) {
-            Text("CLOSE", fontFamily = JetBrainsMonoFontFamily, fontSize = 12.sp, color = AmoledTextMuted)
-          }
+          AragonHeaderButton(
+            text = "CLOSE",
+            onClick = onDismiss,
+            variant = AragonButtonVariant.MUTED,
+            testTag = "close_documents_dialog_btn"
+          )
         }
 
         Spacer(modifier = Modifier.height(6.dp))

@@ -115,9 +115,7 @@ enum class AragonButtonVariant {
 
 /**
  * Canonical Feed Action Button.
- * Used for all inline step actions in the execution feed (e.g. VIEW / HIDE toggle).
- * Perfectly matches AragonStepBadge and AragonFeedCopyButton in height (22.dp),
- * corner radius (4.dp), border stroke (1.dp), and typography baseline (9.sp).
+ * Transformed to unified clean White Pill style, floating above the AMOLED feed.
  */
 @Composable
 fun AragonFeedButton(
@@ -129,39 +127,31 @@ fun AragonFeedButton(
   enabled: Boolean = true,
   testTag: String = "feed_button"
 ) {
-  val shape = RoundedCornerShape(4.dp)
+  val shape = RoundedCornerShape(12.dp)
   val interactionSource = remember { MutableInteractionSource() }
 
   val targetBg = when {
-    !enabled -> Color(0xFF101010)
-    isActive -> Color(0xFF221A10)
-    variant == AragonButtonVariant.PRIMARY -> Color(0xFF1C1C1C)
-    variant == AragonButtonVariant.SUCCESS -> Color(0xFF102014)
-    variant == AragonButtonVariant.DANGER -> Color(0xFF221111)
-    variant == AragonButtonVariant.MUTED -> Color(0xFF0F0F0F)
-    variant == AragonButtonVariant.GHOST -> Color.Transparent
-    else -> Color(0xFF141414)
+    !enabled -> Color(0xFFF1F5F9)
+    isActive -> Color(0xFF0F172A)
+    variant == AragonButtonVariant.DANGER -> Color(0xFFFEE2E2)
+    variant == AragonButtonVariant.SUCCESS -> Color(0xFFDCFCE7)
+    else -> Color.White
   }
 
   val targetBorder = when {
-    !enabled -> AmoledBorderSubtle
-    isActive -> AmoledActionPrimary.copy(alpha = 0.6f)
-    variant == AragonButtonVariant.PRIMARY -> AmoledActionPrimary.copy(alpha = 0.5f)
-    variant == AragonButtonVariant.SUCCESS -> AmoledStatusSuccess.copy(alpha = 0.5f)
-    variant == AragonButtonVariant.DANGER -> AmoledStatusError.copy(alpha = 0.5f)
-    variant == AragonButtonVariant.MUTED -> AmoledBorderSubtle
-    variant == AragonButtonVariant.GHOST -> Color.Transparent
-    else -> AmoledBorderSubtle
+    !enabled -> Color(0xFFE2E8F0)
+    isActive -> Color(0xFF0F172A)
+    variant == AragonButtonVariant.DANGER -> Color(0xFFFCA5A5)
+    variant == AragonButtonVariant.SUCCESS -> Color(0xFF86EFAC)
+    else -> Color(0xFFE2E8F0)
   }
 
   val targetText = when {
-    !enabled -> AmoledIconGreyDark
-    isActive -> AmoledActionPrimary
-    variant == AragonButtonVariant.PRIMARY -> AmoledActionPrimary
-    variant == AragonButtonVariant.SUCCESS -> AmoledStatusSuccess
-    variant == AragonButtonVariant.DANGER -> AmoledStatusError
-    variant == AragonButtonVariant.MUTED -> AmoledIconGrey
-    else -> AmoledIconGreyLight
+    !enabled -> Color(0xFF94A3B8)
+    isActive -> Color.White
+    variant == AragonButtonVariant.DANGER -> Color(0xFFDC2626)
+    variant == AragonButtonVariant.SUCCESS -> Color(0xFF16A34A)
+    else -> Color(0xFF0F172A)
   }
 
   val bgAnimated by animateColorAsState(targetValue = targetBg, animationSpec = tween(120), label = "feed_btn_bg")
@@ -172,11 +162,12 @@ fun AragonFeedButton(
     shape = shape,
     color = bgAnimated,
     border = BorderStroke(1.dp, borderAnimated),
+    shadowElevation = if (enabled) 1.5.dp else 0.dp,
     modifier = modifier
       .tactilePress(interactionSource)
       .clickable(
         interactionSource = interactionSource,
-        indication = ripple(color = AmoledActionPrimary.copy(alpha = 0.25f)),
+        indication = ripple(color = Color(0xFF0F172A).copy(alpha = 0.2f)),
         enabled = enabled,
         role = Role.Button,
         onClick = onClick
@@ -186,15 +177,15 @@ fun AragonFeedButton(
     Box(
       contentAlignment = Alignment.Center,
       modifier = Modifier
-        .height(22.dp)
-        .padding(horizontal = 7.dp)
+        .height(24.dp)
+        .padding(horizontal = 9.dp)
     ) {
       Text(
         text = text,
         style = MaterialTheme.typography.labelSmall,
-        fontFamily = JetBrainsMonoFontFamily,
-        fontWeight = if (isActive || variant == AragonButtonVariant.PRIMARY) FontWeight.Bold else FontWeight.Medium,
-        fontSize = 9.sp,
+        fontFamily = InterFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 9.5.sp,
         letterSpacing = 0.5.sp,
         color = textAnimated,
         maxLines = 1
@@ -205,9 +196,7 @@ fun AragonFeedButton(
 
 /**
  * Canonical Copy Button for Feed & Detail Rows.
- * Matches AragonFeedButton and AragonStepBadge line-for-line.
- * Transitions smoothly to "COPIED" with emerald green status feedback.
- * Includes transaction-safe clipping to prevent Android IPC binder crashes.
+ * Transformed to unified clean White Pill style, floating above the AMOLED feed.
  */
 @Composable
 fun AragonFeedCopyButton(
@@ -229,12 +218,12 @@ fun AragonFeedCopyButton(
   }
 
   val displayLabel = if (hasCopied) "COPIED" else (label ?: "COPY")
-  val shape = RoundedCornerShape(4.dp)
+  val shape = RoundedCornerShape(12.dp)
   val interactionSource = remember { MutableInteractionSource() }
 
-  val targetBg = if (hasCopied) Color(0xFF102416) else Color(0xFF141414)
-  val targetBorder = if (hasCopied) AmoledStatusSuccess.copy(alpha = 0.6f) else AmoledBorderSubtle
-  val targetColor = if (hasCopied) AmoledStatusSuccess else (tint ?: AmoledIconGreyLight)
+  val targetBg = if (hasCopied) Color(0xFFDCFCE7) else Color.White
+  val targetBorder = if (hasCopied) Color(0xFF86EFAC) else Color(0xFFE2E8F0)
+  val targetColor = if (hasCopied) Color(0xFF16A34A) else (tint ?: Color(0xFF0F172A))
 
   val bgAnimated by animateColorAsState(targetValue = targetBg, animationSpec = tween(140), label = "copy_bg")
   val borderAnimated by animateColorAsState(targetValue = targetBorder, animationSpec = tween(140), label = "copy_border")
@@ -244,11 +233,12 @@ fun AragonFeedCopyButton(
     shape = shape,
     color = bgAnimated,
     border = BorderStroke(1.dp, borderAnimated),
+    shadowElevation = 1.5.dp,
     modifier = modifier
       .tactilePress(interactionSource)
       .clickable(
         interactionSource = interactionSource,
-        indication = ripple(color = AmoledStatusSuccess.copy(alpha = 0.3f)),
+        indication = ripple(color = Color(0xFF0F172A).copy(alpha = 0.2f)),
         role = Role.Button,
         onClickLabel = "Copy text"
       ) {
@@ -275,15 +265,15 @@ fun AragonFeedCopyButton(
     Box(
       contentAlignment = Alignment.Center,
       modifier = Modifier
-        .height(22.dp)
-        .padding(horizontal = 7.dp)
+        .height(24.dp)
+        .padding(horizontal = 9.dp)
     ) {
       Text(
         text = displayLabel,
         style = MaterialTheme.typography.labelSmall,
-        fontFamily = JetBrainsMonoFontFamily,
-        fontWeight = if (hasCopied) FontWeight.Bold else FontWeight.SemiBold,
-        fontSize = 9.sp,
+        fontFamily = InterFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 9.5.sp,
         letterSpacing = 0.5.sp,
         color = colorAnimated,
         maxLines = 1
@@ -430,11 +420,16 @@ fun AragonHeaderButton(
     else -> Color(0xFF0F172A)
   }
 
+  val border = when (variant) {
+    AragonButtonVariant.DANGER -> BorderStroke(1.dp, Color(0xFFFCA5A5))
+    else -> BorderStroke(1.dp, Color(0xFFE2E8F0))
+  }
+
   Surface(
     shape = shape,
     color = bg,
-    border = null,
-    shadowElevation = 3.dp,
+    border = border,
+    shadowElevation = 2.dp,
     modifier = modifier
       .tactilePress(interactionSource)
       .clickable(
@@ -566,9 +561,8 @@ fun AragonHeaderCopyButton(
 }
 
 /**
- * Standard Action Button for toolbars, dialogs, and artifact items (SAVE, VIEW, CLOSE, RE-RUN, CLEAR).
- * Replaces mismatched OutlinedButton implementations across the app.
- * Provides unified 28.dp height, 6.dp rounded corners, and accessibility-compliant touch padding.
+ * Standard Action Button for toolbars, dialogs, presets, and workspaces.
+ * Transformed to modern White Pill Button theme across the entire app.
  */
 @Composable
 fun AragonActionButton(
@@ -577,45 +571,44 @@ fun AragonActionButton(
   modifier: Modifier = Modifier,
   variant: AragonButtonVariant = AragonButtonVariant.DEFAULT,
   enabled: Boolean = true,
-  height: Dp = 28.dp,
+  height: Dp = 30.dp,
   testTag: String = "action_button"
 ) {
-  val shape = RoundedCornerShape(6.dp)
+  val shape = RoundedCornerShape(16.dp)
   val interactionSource = remember { MutableInteractionSource() }
 
-  val bg = when (variant) {
-    AragonButtonVariant.PRIMARY -> Color(0xFF1E1810)
-    AragonButtonVariant.DANGER -> Color(0xFF241010)
-    AragonButtonVariant.SUCCESS -> Color(0xFF102416)
-    AragonButtonVariant.MUTED -> Color(0xFF0E0E0E)
-    else -> Color(0xFF161616)
+  val bg = when {
+    !enabled -> Color(0xFFF1F5F9)
+    variant == AragonButtonVariant.DANGER -> Color(0xFFFEE2E2)
+    variant == AragonButtonVariant.SUCCESS -> Color(0xFFDCFCE7)
+    else -> Color.White
   }
 
-  val border = when (variant) {
-    AragonButtonVariant.PRIMARY -> AmoledActionPrimary.copy(alpha = 0.7f)
-    AragonButtonVariant.DANGER -> AmoledStatusError.copy(alpha = 0.6f)
-    AragonButtonVariant.SUCCESS -> AmoledStatusSuccess.copy(alpha = 0.6f)
-    AragonButtonVariant.MUTED -> AmoledBorderSubtle
-    else -> AmoledBorder
+  val border = when {
+    !enabled -> Color(0xFFE2E8F0)
+    variant == AragonButtonVariant.DANGER -> Color(0xFFFCA5A5)
+    variant == AragonButtonVariant.SUCCESS -> Color(0xFF86EFAC)
+    else -> Color(0xFFE2E8F0)
   }
 
-  val textColor = when (variant) {
-    AragonButtonVariant.PRIMARY -> AmoledActionPrimary
-    AragonButtonVariant.DANGER -> AmoledStatusError
-    AragonButtonVariant.SUCCESS -> AmoledStatusSuccess
-    AragonButtonVariant.MUTED -> AmoledTextMuted
-    else -> AmoledTextPrimary
+  val textColor = when {
+    !enabled -> Color(0xFF94A3B8)
+    variant == AragonButtonVariant.DANGER -> Color(0xFFDC2626)
+    variant == AragonButtonVariant.SUCCESS -> Color(0xFF16A34A)
+    variant == AragonButtonVariant.MUTED -> Color(0xFF475569)
+    else -> Color(0xFF0F172A)
   }
 
   Surface(
     shape = shape,
     color = bg,
     border = BorderStroke(1.dp, border),
+    shadowElevation = if (enabled) 2.5.dp else 0.dp,
     modifier = modifier
       .tactilePress(interactionSource)
       .clickable(
         interactionSource = interactionSource,
-        indication = ripple(color = textColor.copy(alpha = 0.25f)),
+        indication = ripple(color = Color(0xFF0F172A).copy(alpha = 0.2f)),
         enabled = enabled,
         role = Role.Button,
         onClick = onClick
@@ -626,14 +619,15 @@ fun AragonActionButton(
       contentAlignment = Alignment.Center,
       modifier = Modifier
         .height(height)
-        .padding(horizontal = 10.dp)
+        .padding(horizontal = 12.dp)
     ) {
       Text(
         text = text,
         style = MaterialTheme.typography.labelSmall,
-        fontFamily = JetBrainsMonoFontFamily,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 9.5.sp,
+        fontFamily = InterFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 10.5.sp,
+        letterSpacing = 0.3.sp,
         color = textColor,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis

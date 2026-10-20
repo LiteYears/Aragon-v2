@@ -503,15 +503,17 @@ fun WorkspaceFileExplorer(
   itemToDelete?.let { item ->
     AlertDialog(
       onDismissRequest = { itemToDelete = null },
-      containerColor = AmoledSurfaceElevated,
-      titleContentColor = AmoledTextPrimary,
-      textContentColor = AmoledTextSecondary,
+      containerColor = Color.White,
+      titleContentColor = Color(0xFF0F172A),
+      textContentColor = Color(0xFF475569),
+      shape = RoundedCornerShape(20.dp),
       title = {
         Text(
           text = if (item.isDirectory) "Delete Directory?" else "Delete File?",
-          fontFamily = JetBrainsMonoFontFamily,
+          fontFamily = InterFontFamily,
           fontWeight = FontWeight.Bold,
-          fontSize = 14.sp
+          fontSize = 14.sp,
+          color = Color(0xFF0F172A)
         )
       },
       text = {
@@ -521,29 +523,29 @@ fun WorkspaceFileExplorer(
           } else {
             "Are you sure you want to delete file '${item.name}' (${formatFileSize(item.size)})? This cannot be undone."
           },
-          fontFamily = JetBrainsMonoFontFamily,
+          fontFamily = InterFontFamily,
           fontSize = 12.sp,
-          color = AmoledTextSecondary
+          color = Color(0xFF475569)
         )
       },
       confirmButton = {
-        TextButton(
+        AragonActionButton(
+          text = "DELETE",
           onClick = {
             onDeleteItem(item)
             itemToDelete = null
           },
-          modifier = Modifier.testTag("confirm_delete_btn")
-        ) {
-          Text("DELETE", color = AmoledStatusError, fontWeight = FontWeight.Bold, fontFamily = JetBrainsMonoFontFamily)
-        }
+          variant = AragonButtonVariant.DANGER,
+          testTag = "confirm_delete_btn"
+        )
       },
       dismissButton = {
-        TextButton(
+        AragonActionButton(
+          text = "CANCEL",
           onClick = { itemToDelete = null },
-          modifier = Modifier.testTag("cancel_delete_btn")
-        ) {
-          Text("CANCEL", color = AmoledTextMuted, fontFamily = JetBrainsMonoFontFamily)
-        }
+          variant = AragonButtonVariant.MUTED,
+          testTag = "cancel_delete_btn"
+        )
       }
     )
   }
@@ -778,17 +780,18 @@ fun WorkspaceMinimalCommandHeader(
             expanded = showSortDropdown,
             onDismissRequest = { showSortDropdown = false },
             modifier = Modifier
-              .background(AmoledSurfaceElevated)
-              .border(1.dp, AmoledBorderSubtle, RoundedCornerShape(6.dp))
+              .background(Color.White)
+              .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
           ) {
             ExplorerSortBy.values().forEach { option ->
               DropdownMenuItem(
                 text = {
                   Text(
                     text = option.label,
-                    fontFamily = JetBrainsMonoFontFamily,
-                    fontSize = 11.sp,
-                    color = if (option == sortBy) AmoledActionPrimary else AmoledTextPrimary
+                    fontFamily = InterFontFamily,
+                    fontSize = 11.5.sp,
+                    fontWeight = if (option == sortBy) FontWeight.Bold else FontWeight.Normal,
+                    color = if (option == sortBy) Color(0xFF0F172A) else Color(0xFF475569)
                   )
                 },
                 onClick = {
@@ -1058,12 +1061,12 @@ fun DirectoryItemRow(
             expanded = showDirMenu,
             onDismissRequest = { showDirMenu = false },
             modifier = Modifier
-              .background(AmoledSurfaceElevated)
-              .border(1.dp, AmoledBorderSubtle, RoundedCornerShape(6.dp))
+              .background(Color.White)
+              .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
           ) {
             DropdownMenuItem(
               text = {
-                Text("Rename Directory", fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp, color = AmoledTextPrimary)
+                Text("Rename Directory", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFF0F172A))
               },
               onClick = {
                 showDirMenu = false
@@ -1072,7 +1075,7 @@ fun DirectoryItemRow(
             )
             DropdownMenuItem(
               text = {
-                Text("Delete Directory", fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp, color = AmoledStatusError)
+                Text("Delete Directory", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFFDC2626))
               },
               onClick = {
                 showDirMenu = false
@@ -1237,25 +1240,25 @@ fun FileItemRow(
             expanded = showFileMenu,
             onDismissRequest = { showFileMenu = false },
             modifier = Modifier
-              .background(AmoledSurfaceElevated)
-              .border(1.dp, AmoledBorderSubtle, RoundedCornerShape(6.dp))
+              .background(Color.White)
+              .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
           ) {
             DropdownMenuItem(
-              text = { Text("View Content", fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp, color = AmoledTextPrimary) },
+              text = { Text("View Content", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFF0F172A)) },
               onClick = {
                 showFileMenu = false
                 onClick()
               }
             )
             DropdownMenuItem(
-              text = { Text("File Info & Metadata", fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp, color = AmoledTextPrimary) },
+              text = { Text("File Info & Metadata", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFF0F172A)) },
               onClick = {
                 showFileMenu = false
                 onInspect()
               }
             )
             DropdownMenuItem(
-              text = { Text("Rename File", fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp, color = AmoledTextPrimary) },
+              text = { Text("Rename File", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFF0F172A)) },
               onClick = {
                 showFileMenu = false
                 onRename()
@@ -1263,7 +1266,7 @@ fun FileItemRow(
             )
             if (onDuplicate != null) {
               DropdownMenuItem(
-                text = { Text("Duplicate File", fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp, color = AmoledTextPrimary) },
+                text = { Text("Duplicate File", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFF0F172A)) },
                 onClick = {
                   showFileMenu = false
                   onDuplicate()
@@ -1271,14 +1274,14 @@ fun FileItemRow(
               )
             }
             DropdownMenuItem(
-              text = { Text("Share File", fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp, color = AmoledTextPrimary) },
+              text = { Text("Share File", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFF0F172A)) },
               onClick = {
                 showFileMenu = false
                 onShare()
               }
             )
             DropdownMenuItem(
-              text = { Text("Delete File", fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp, color = AmoledStatusError) },
+              text = { Text("Delete File", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFFDC2626)) },
               onClick = {
                 showFileMenu = false
                 onDelete()
@@ -1508,15 +1511,17 @@ fun CreateFileDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    containerColor = AmoledSurfaceElevated,
-    titleContentColor = AmoledTextPrimary,
-    textContentColor = AmoledTextSecondary,
+    containerColor = Color.White,
+    titleContentColor = Color(0xFF0F172A),
+    textContentColor = Color(0xFF475569),
+    shape = RoundedCornerShape(20.dp),
     title = {
       Text(
         text = "Create Workspace File",
-        fontFamily = JetBrainsMonoFontFamily,
+        fontFamily = InterFontFamily,
         fontWeight = FontWeight.Bold,
-        fontSize = 14.sp
+        fontSize = 14.sp,
+        color = Color(0xFF0F172A)
       )
     },
     text = {
@@ -1528,15 +1533,16 @@ fun CreateFileDialog(
           text = "Directory: $currentDirectory",
           fontFamily = JetBrainsMonoFontFamily,
           fontSize = 10.sp,
-          color = AmoledTextMuted
+          color = Color(0xFF64748B)
         )
 
         // Template pills
         Text(
           text = "Quick Templates:",
-          fontFamily = JetBrainsMonoFontFamily,
+          fontFamily = InterFontFamily,
           fontSize = 10.sp,
-          color = AmoledTextSecondary
+          fontWeight = FontWeight.SemiBold,
+          color = Color(0xFF475569)
         )
         Row(
           modifier = Modifier
@@ -1547,9 +1553,9 @@ fun CreateFileDialog(
           templates.forEach { (label, pair) ->
             val (tplName, tplContent) = pair
             Surface(
-              shape = RoundedCornerShape(4.dp),
-              color = AmoledSurfaceVariant,
-              border = BorderStroke(1.dp, AmoledBorderSubtle),
+              shape = RoundedCornerShape(8.dp),
+              color = Color(0xFFF1F5F9),
+              border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
               modifier = Modifier.clickable {
                 if (tplName.isNotBlank()) fileName = tplName
                 if (tplContent.isNotBlank()) initialContent = tplContent
@@ -1557,10 +1563,11 @@ fun CreateFileDialog(
             ) {
               Text(
                 text = label,
-                fontFamily = JetBrainsMonoFontFamily,
+                fontFamily = InterFontFamily,
                 fontSize = 9.sp,
-                color = AmoledActionPrimary,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFF0F172A),
+                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
               )
             }
           }
@@ -1577,11 +1584,11 @@ fun CreateFileDialog(
           modifier = Modifier
             .fillMaxWidth()
             .testTag("new_file_name_input"),
-          textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily, color = AmoledTextPrimary, fontSize = 11.sp),
+          textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = InterFontFamily, color = Color(0xFF0F172A), fontSize = 12.sp),
           colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = AmoledActionPrimary,
-            unfocusedBorderColor = AmoledBorderSubtle,
-            cursorColor = AmoledActionPrimary
+            focusedBorderColor = Color(0xFF0F172A),
+            unfocusedBorderColor = Color(0xFFCBD5E1),
+            cursorColor = Color(0xFF0F172A)
           )
         )
 
@@ -1594,22 +1601,23 @@ fun CreateFileDialog(
               .fillMaxWidth()
               .height(110.dp)
               .testTag("new_file_content_input"),
-            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp, color = AmoledTextPrimary),
+            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp, color = Color(0xFF0F172A)),
             colors = OutlinedTextFieldDefaults.colors(
-              focusedBorderColor = AmoledActionPrimary,
-              unfocusedBorderColor = AmoledBorderSubtle,
-              cursorColor = AmoledActionPrimary
+              focusedBorderColor = Color(0xFF0F172A),
+              unfocusedBorderColor = Color(0xFFCBD5E1),
+              cursorColor = Color(0xFF0F172A)
             )
           )
         }
 
         errorMessage?.let { err ->
-          Text(text = err, color = AmoledStatusError, fontSize = 11.sp, fontFamily = JetBrainsMonoFontFamily)
+          Text(text = err, color = Color(0xFFDC2626), fontSize = 11.sp, fontFamily = InterFontFamily)
         }
       }
     },
     confirmButton = {
-      TextButton(
+      AragonActionButton(
+        text = "CREATE FILE",
         onClick = {
           val clean = fileName.trim()
           if (clean.isBlank()) {
@@ -1620,15 +1628,17 @@ fun CreateFileDialog(
             onCreate(clean, initialContent)
           }
         },
-        modifier = Modifier.testTag("confirm_create_file_btn")
-      ) {
-        Text("CREATE", color = AmoledActionPrimary, fontWeight = FontWeight.Bold, fontFamily = JetBrainsMonoFontFamily)
-      }
+        variant = AragonButtonVariant.PRIMARY,
+        testTag = "confirm_create_file_btn"
+      )
     },
     dismissButton = {
-      TextButton(onClick = onDismiss) {
-        Text("CANCEL", color = AmoledTextMuted, fontFamily = JetBrainsMonoFontFamily)
-      }
+      AragonActionButton(
+        text = "CANCEL",
+        onClick = onDismiss,
+        variant = AragonButtonVariant.MUTED,
+        testTag = "cancel_create_file_btn"
+      )
     }
   )
 }
@@ -1647,15 +1657,17 @@ fun CreateFolderDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    containerColor = AmoledSurfaceElevated,
-    titleContentColor = AmoledTextPrimary,
-    textContentColor = AmoledTextSecondary,
+    containerColor = Color.White,
+    titleContentColor = Color(0xFF0F172A),
+    textContentColor = Color(0xFF475569),
+    shape = RoundedCornerShape(20.dp),
     title = {
       Text(
         text = "Create New Directory",
-        fontFamily = JetBrainsMonoFontFamily,
+        fontFamily = InterFontFamily,
         fontWeight = FontWeight.Bold,
-        fontSize = 14.sp
+        fontSize = 14.sp,
+        color = Color(0xFF0F172A)
       )
     },
     text = {
@@ -1667,7 +1679,7 @@ fun CreateFolderDialog(
           text = "Parent: $currentDirectory",
           fontFamily = JetBrainsMonoFontFamily,
           fontSize = 10.sp,
-          color = AmoledTextMuted
+          color = Color(0xFF64748B)
         )
 
         OutlinedTextField(
@@ -1681,21 +1693,22 @@ fun CreateFolderDialog(
           modifier = Modifier
             .fillMaxWidth()
             .testTag("new_folder_name_input"),
-          textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily, color = AmoledTextPrimary, fontSize = 11.sp),
+          textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = InterFontFamily, color = Color(0xFF0F172A), fontSize = 12.sp),
           colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = AmoledActionPrimary,
-            unfocusedBorderColor = AmoledBorderSubtle,
-            cursorColor = AmoledActionPrimary
+            focusedBorderColor = Color(0xFF0F172A),
+            unfocusedBorderColor = Color(0xFFCBD5E1),
+            cursorColor = Color(0xFF0F172A)
           )
         )
 
         errorMessage?.let { err ->
-          Text(text = err, color = AmoledStatusError, fontSize = 11.sp, fontFamily = JetBrainsMonoFontFamily)
+          Text(text = err, color = Color(0xFFDC2626), fontSize = 11.sp, fontFamily = InterFontFamily)
         }
       }
     },
     confirmButton = {
-      TextButton(
+      AragonActionButton(
+        text = "CREATE",
         onClick = {
           val clean = folderName.trim()
           if (clean.isBlank()) {
@@ -1706,15 +1719,16 @@ fun CreateFolderDialog(
             onCreate(clean)
           }
         },
-        modifier = Modifier.testTag("confirm_create_folder_btn")
-      ) {
-        Text("CREATE", color = AmoledActionPrimary, fontWeight = FontWeight.Bold, fontFamily = JetBrainsMonoFontFamily)
-      }
+        variant = AragonButtonVariant.PRIMARY,
+        testTag = "confirm_create_folder_btn"
+      )
     },
     dismissButton = {
-      TextButton(onClick = onDismiss) {
-        Text("CANCEL", color = AmoledTextMuted, fontFamily = JetBrainsMonoFontFamily)
-      }
+      AragonActionButton(
+        text = "CANCEL",
+        onClick = onDismiss,
+        variant = AragonButtonVariant.MUTED
+      )
     }
   )
 }
@@ -1733,15 +1747,17 @@ fun RenameItemDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    containerColor = AmoledSurfaceElevated,
-    titleContentColor = AmoledTextPrimary,
-    textContentColor = AmoledTextSecondary,
+    containerColor = Color.White,
+    titleContentColor = Color(0xFF0F172A),
+    textContentColor = Color(0xFF475569),
+    shape = RoundedCornerShape(20.dp),
     title = {
       Text(
         text = if (item.isDirectory) "Rename Directory" else "Rename File",
-        fontFamily = JetBrainsMonoFontFamily,
+        fontFamily = InterFontFamily,
         fontWeight = FontWeight.Bold,
-        fontSize = 14.sp
+        fontSize = 14.sp,
+        color = Color(0xFF0F172A)
       )
     },
     text = {
@@ -1753,7 +1769,7 @@ fun RenameItemDialog(
           text = "Original: ${item.name}",
           fontFamily = JetBrainsMonoFontFamily,
           fontSize = 10.sp,
-          color = AmoledTextMuted
+          color = Color(0xFF64748B)
         )
 
         OutlinedTextField(
@@ -1767,21 +1783,22 @@ fun RenameItemDialog(
           modifier = Modifier
             .fillMaxWidth()
             .testTag("rename_input"),
-          textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily, color = AmoledTextPrimary, fontSize = 11.sp),
+          textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = InterFontFamily, color = Color(0xFF0F172A), fontSize = 12.sp),
           colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = AmoledActionPrimary,
-            unfocusedBorderColor = AmoledBorderSubtle,
-            cursorColor = AmoledActionPrimary
+            focusedBorderColor = Color(0xFF0F172A),
+            unfocusedBorderColor = Color(0xFFCBD5E1),
+            cursorColor = Color(0xFF0F172A)
           )
         )
 
         errorMessage?.let { err ->
-          Text(text = err, color = AmoledStatusError, fontSize = 11.sp, fontFamily = JetBrainsMonoFontFamily)
+          Text(text = err, color = Color(0xFFDC2626), fontSize = 11.sp, fontFamily = InterFontFamily)
         }
       }
     },
     confirmButton = {
-      TextButton(
+      AragonActionButton(
+        text = "RENAME",
         onClick = {
           val clean = newName.trim()
           if (clean.isBlank()) {
@@ -1794,15 +1811,16 @@ fun RenameItemDialog(
             onRename(clean)
           }
         },
-        modifier = Modifier.testTag("confirm_rename_btn")
-      ) {
-        Text("RENAME", color = AmoledActionPrimary, fontWeight = FontWeight.Bold, fontFamily = JetBrainsMonoFontFamily)
-      }
+        variant = AragonButtonVariant.PRIMARY,
+        testTag = "confirm_rename_btn"
+      )
     },
     dismissButton = {
-      TextButton(onClick = onDismiss) {
-        Text("CANCEL", color = AmoledTextMuted, fontFamily = JetBrainsMonoFontFamily)
-      }
+      AragonActionButton(
+        text = "CANCEL",
+        onClick = onDismiss,
+        variant = AragonButtonVariant.MUTED
+      )
     }
   )
 }
@@ -1821,15 +1839,17 @@ fun ItemMetadataDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    containerColor = AmoledSurfaceElevated,
-    titleContentColor = AmoledTextPrimary,
-    textContentColor = AmoledTextSecondary,
+    containerColor = Color.White,
+    titleContentColor = Color(0xFF0F172A),
+    textContentColor = Color(0xFF475569),
+    shape = RoundedCornerShape(20.dp),
     title = {
       Text(
         text = "File Metadata Inspector",
-        fontFamily = JetBrainsMonoFontFamily,
+        fontFamily = InterFontFamily,
         fontWeight = FontWeight.Bold,
-        fontSize = 14.sp
+        fontSize = 14.sp,
+        color = Color(0xFF0F172A)
       )
     },
     text = {
@@ -1857,14 +1877,18 @@ fun ItemMetadataDialog(
       }
     },
     confirmButton = {
-      TextButton(onClick = onPreview) {
-        Text("VIEW CONTENT", color = AmoledActionPrimary, fontWeight = FontWeight.Bold, fontFamily = JetBrainsMonoFontFamily)
-      }
+      AragonActionButton(
+        text = "VIEW CONTENT",
+        onClick = onPreview,
+        variant = AragonButtonVariant.PRIMARY
+      )
     },
     dismissButton = {
-      TextButton(onClick = onDismiss) {
-        Text("CLOSE", color = AmoledTextMuted, fontFamily = JetBrainsMonoFontFamily)
-      }
+      AragonActionButton(
+        text = "CLOSE",
+        onClick = onDismiss,
+        variant = AragonButtonVariant.MUTED
+      )
     }
   )
 }
@@ -1877,13 +1901,13 @@ private fun MetadataRow(label: String, value: String) {
       fontFamily = JetBrainsMonoFontFamily,
       fontSize = 9.sp,
       fontWeight = FontWeight.Bold,
-      color = AmoledTextMuted
+      color = Color(0xFF64748B)
     )
     Text(
       text = value,
       fontFamily = JetBrainsMonoFontFamily,
       fontSize = 11.sp,
-      color = AmoledTextPrimary,
+      color = Color(0xFF0F172A),
       maxLines = 2,
       overflow = TextOverflow.Ellipsis
     )

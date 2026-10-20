@@ -336,7 +336,7 @@ fun AgentScreen(
   var showStagesDialog by rememberSaveable { mutableStateOf(false) }
   var showFilesDialog by rememberSaveable { mutableStateOf(false) }
   var showHistoryDialog by rememberSaveable { mutableStateOf(false) }
-  var showSuggestions by rememberSaveable { mutableStateOf(true) }
+  var showSuggestions by rememberSaveable { mutableStateOf(false) }
   var activeFeedFilter by rememberSaveable { mutableStateOf(FeedFilter.ALL) }
 
   val mcpServers by viewModel.mcpServers.collectAsStateWithLifecycle()
@@ -561,8 +561,8 @@ fun AgentScreen(
         Column(
           modifier = Modifier
             .fillMaxWidth()
-            .widthIn(max = 720.dp)
-            .padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 6.dp)
+            .widthIn(max = 600.dp)
+            .padding(start = 14.dp, end = 14.dp, top = 2.dp, bottom = 28.dp)
         ) {
           // Follow-up presets upon completion
           val suggestedPresets = if (state.status == AgentStatus.COMPLETED) {
@@ -594,27 +594,29 @@ fun AgentScreen(
             }
           }
 
-          // Advanced Pure-Typography AMOLED Workflow Suggestions
+          // Advanced Pure-Typography AMOLED Workflow Suggestions (Compact)
           AmoledWorkflowSuggestions(
-            visible = showSuggestions && state.executionFeed.isEmpty(),
+            visible = showSuggestions,
             onDismiss = { showSuggestions = false },
-            onSelectSuggestion = { prompt, _ ->
+            onSelectSuggestion = { prompt, expectedArtifact ->
               inputText = prompt
+              showSuggestions = false
               inputFocusRequester.requestFocus()
             },
             onExecuteSuggestion = { prompt, expectedArtifact ->
               inputText = ""
+              showSuggestions = false
               viewModel.submitTask(prompt, expectedArtifact)
             }
           )
 
-          // Pure typography trigger to re-open workflow suggestions when hidden
-          if (!showSuggestions && state.executionFeed.isEmpty()) {
+          // Modern white pill trigger to re-open workflow suggestions when hidden, moved to the right to suit the prompt input pill
+          if (!showSuggestions) {
             Row(
               modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 2.dp, end = 2.dp, bottom = 6.dp),
-              horizontalArrangement = Arrangement.Start,
+                .padding(end = 6.dp, bottom = 6.dp),
+              horizontalArrangement = Arrangement.End,
               verticalAlignment = Alignment.CenterVertically
             ) {
               AmoledWorkflowReopenTrigger(
@@ -624,12 +626,12 @@ fun AgentScreen(
             }
           }
 
-          // Floating modern flat user prompt input field container (pure white, no borders, subtle elevation)
+          // Floating modern compact pill user prompt input field container
           Surface(
-            shape = RoundedCornerShape(26.dp),
+            shape = RoundedCornerShape(30.dp),
             color = Color.White,
-            border = null,
-            shadowElevation = 8.dp,
+            border = BorderStroke(1.dp, Color(0xFFF1F5F9)),
+            shadowElevation = 7.dp,
             modifier = Modifier
               .fillMaxWidth()
               .animateContentSize(
@@ -643,7 +645,7 @@ fun AgentScreen(
             Column(
               modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 10.dp)
+                .padding(vertical = 4.dp, horizontal = 2.dp)
             ) {
 
               // Attached Documents Strip (if any)
@@ -655,7 +657,7 @@ fun AgentScreen(
                 Row(
                   modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 3.dp)
+                    .padding(horizontal = 14.dp, vertical = 2.dp)
                     .horizontalScroll(docChipScrollState),
                   horizontalArrangement = Arrangement.spacedBy(6.dp),
                   verticalAlignment = Alignment.CenterVertically
@@ -670,11 +672,11 @@ fun AgentScreen(
                       Text(
                         text = message,
                         fontFamily = JetBrainsMonoFontFamily,
-                        fontSize = 9.sp,
+                        fontSize = 8.5.sp,
                         color = Color(0xFF475569),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                       )
                     }
                   }
@@ -687,24 +689,24 @@ fun AgentScreen(
                     ) {
                       Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(start = 8.dp, end = 5.dp, top = 3.dp, bottom = 3.dp)
+                        modifier = Modifier.padding(start = 7.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
                       ) {
                         Text(
                           text = "📎 ${doc.displayName.take(16)}",
                           fontFamily = JetBrainsMonoFontFamily,
-                          fontSize = 9.sp,
+                          fontSize = 8.5.sp,
                           color = Color(0xFF047857),
                           maxLines = 1
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Box(
                           modifier = Modifier
-                            .size(16.dp)
+                            .size(15.dp)
                             .clip(CircleShape)
                             .clickable { viewModel.setDocumentInScope(doc.id, false) },
                           contentAlignment = Alignment.Center
                         ) {
-                          Text(text = "×", fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp, color = Color(0xFF047857))
+                          Text(text = "×", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF047857))
                         }
                       }
                     }
@@ -712,21 +714,21 @@ fun AgentScreen(
                 }
               }
 
-              // Text Input Area
+              // Text Input Area (Compact Pill)
               Box(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .heightIn(min = 40.dp)
-                  .padding(horizontal = 16.dp, vertical = 4.dp)
+                  .heightIn(min = 28.dp)
+                  .padding(horizontal = 16.dp, vertical = 2.dp)
               ) {
                 if (inputText.isEmpty()) {
                   Text(
                     text = if (state.status == AgentStatus.COMPLETED) "Continue conversation with a follow-up..." else "Ask Aragon or describe a task...",
                     style = TextStyle(
                       fontFamily = InterFontFamily,
-                      fontSize = 15.sp,
+                      fontSize = 13.5.sp,
                       color = Color(0xFF64748B),
-                      lineHeight = 22.sp,
+                      lineHeight = 19.sp,
                       fontWeight = FontWeight.Normal
                     )
                   )
@@ -737,13 +739,13 @@ fun AgentScreen(
                   onValueChange = { inputText = it },
                   textStyle = TextStyle(
                     fontFamily = InterFontFamily,
-                    fontSize = 15.sp,
+                    fontSize = 13.5.sp,
                     color = Color(0xFF0F172A),
-                    lineHeight = 22.sp,
+                    lineHeight = 19.sp,
                     fontWeight = FontWeight.Normal
                   ),
                   cursorBrush = SolidColor(Color(0xFF0F172A)),
-                  maxLines = 7,
+                  maxLines = 6,
                   keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                   keyboardActions = KeyboardActions(onSend = {
                     if (inputText.isNotBlank()) {
@@ -764,21 +766,21 @@ fun AgentScreen(
               Row(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
+                  .padding(start = 10.dp, end = 10.dp, top = 1.dp, bottom = 2.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
               ) {
                 // Left action buttons: Attachment (+) with clean popover, and tool status pill
                 Row(
                   verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(8.dp)
+                  horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                   // Attachment button with options menu
                   Box {
                     val attachInteraction = remember { MutableInteractionSource() }
                     Box(
                       modifier = Modifier
-                        .size(34.dp)
+                        .size(28.dp)
                         .clip(CircleShape)
                         .background(Color(0xFFF1F5F9))
                         .tactilePress(attachInteraction)
@@ -797,7 +799,7 @@ fun AgentScreen(
                         imageVector = Icons.Default.Add,
                         contentDescription = "Attach files",
                         tint = Color(0xFF334155),
-                        modifier = Modifier.size(19.dp)
+                        modifier = Modifier.size(16.dp)
                       )
                     }
 
@@ -875,28 +877,28 @@ fun AgentScreen(
                     }
                   }
 
-                  // Quick tools indicator pill
+                  // Quick tools indicator pill (Compact White Theme)
                   Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = Color(0xFFF1F5F9),
-                    border = null,
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
                     modifier = Modifier.clickable { showMcpDialog = true }
                   ) {
                     Row(
                       verticalAlignment = Alignment.CenterVertically,
-                      modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
+                      modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
                     ) {
                       Box(
                         modifier = Modifier
-                          .size(6.dp)
+                          .size(5.dp)
                           .clip(CircleShape)
                           .background(Color(0xFF10B981))
                       )
-                      Spacer(modifier = Modifier.width(5.dp))
+                      Spacer(modifier = Modifier.width(4.dp))
                       Text(
                         text = "TOOLS",
                         fontFamily = JetBrainsMonoFontFamily,
-                        fontSize = 9.5.sp,
+                        fontSize = 8.5.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF334155)
                       )
@@ -904,15 +906,15 @@ fun AgentScreen(
                   }
                 }
 
-                // Right action buttons: Clear, Mic, and Circular Send/Stop Arrow
+                // Right action buttons: Clear, Mic, and Animated Send/Stop Button
                 Row(
                   verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(8.dp)
+                  horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                   if (inputText.isNotBlank()) {
                     Box(
                       modifier = Modifier
-                        .size(34.dp)
+                        .size(28.dp)
                         .clip(CircleShape)
                         .background(Color(0xFFF1F5F9))
                         .clickable(role = Role.Button, onClickLabel = "Clear text") {
@@ -924,7 +926,7 @@ fun AgentScreen(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Clear",
                         tint = Color(0xFF475569),
-                        modifier = Modifier.size(17.dp)
+                        modifier = Modifier.size(14.dp)
                       )
                     }
                   }
@@ -932,7 +934,7 @@ fun AgentScreen(
                   // Microphone button
                   Box(
                     modifier = Modifier
-                      .size(34.dp)
+                      .size(28.dp)
                       .clip(CircleShape)
                       .background(Color(0xFFF1F5F9))
                       .clickable(role = Role.Button, onClickLabel = "Microphone input") {
@@ -945,32 +947,79 @@ fun AgentScreen(
                       imageVector = Icons.Default.Mic,
                       contentDescription = "Voice input",
                       tint = Color(0xFF334155),
-                      modifier = Modifier.size(18.dp)
+                      modifier = Modifier.size(15.dp)
                     )
                   }
 
-                  // Circular send / stop button
+                  // Enhanced fluid animated circular Send / Stop button
                   val canSend = inputText.isNotBlank()
                   val isRunning = state.canCancel
+
+                  val runningInfiniteTransition = rememberInfiniteTransition(label = "send_pulse_trans")
+                  val runningPulseScale by runningInfiniteTransition.animateFloat(
+                    initialValue = 0.94f,
+                    targetValue = 1.08f,
+                    animationSpec = infiniteRepeatable(
+                      animation = tween(650, easing = FastOutSlowInEasing),
+                      repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "running_pulse_scale"
+                  )
+
+                  val targetSendScale = when {
+                    isRunning -> runningPulseScale
+                    canSend -> 1.08f
+                    else -> 0.88f
+                  }
+
                   val sendScale by animateFloatAsState(
-                    targetValue = if (canSend || isRunning) 1.05f else 1.0f,
-                    animationSpec = spring(dampingRatio = 0.65f, stiffness = 450f),
+                    targetValue = targetSendScale,
+                    animationSpec = spring(
+                      dampingRatio = Spring.DampingRatioMediumBouncy,
+                      stiffness = Spring.StiffnessMediumLow
+                    ),
                     label = "send_btn_scale"
                   )
-                  Box(
+
+                  val sendBgColor by animateColorAsState(
+                    targetValue = when {
+                      isRunning -> Color(0xFFEF4444)
+                      canSend -> Color(0xFF0F172A)
+                      else -> Color(0xFFF1F5F9)
+                    },
+                    animationSpec = tween(180),
+                    label = "send_btn_bg"
+                  )
+
+                  val sendIconRotation by animateFloatAsState(
+                    targetValue = if (canSend) 0f else -30f,
+                    animationSpec = spring(dampingRatio = 0.60f, stiffness = 420f),
+                    label = "send_arrow_rotation"
+                  )
+
+                  val sendIconOffsetY by animateFloatAsState(
+                    targetValue = if (canSend) -1f else 2f,
+                    animationSpec = spring(dampingRatio = 0.55f, stiffness = 400f),
+                    label = "send_arrow_offset_y"
+                  )
+
+                  val sendInteractionSource = remember { MutableInteractionSource() }
+
+                  Surface(
+                    shape = CircleShape,
+                    color = sendBgColor,
+                    shadowElevation = if (canSend || isRunning) 3.dp else 0.dp,
+                    border = if (!canSend && !isRunning) BorderStroke(1.dp, Color(0xFFE2E8F0)) else null,
                     modifier = Modifier
-                      .size(36.dp)
+                      .size(30.dp)
                       .graphicsLayer {
                         scaleX = sendScale
                         scaleY = sendScale
                       }
-                      .clip(CircleShape)
-                      .background(
-                        if (isRunning) Color(0xFFEF4444)
-                        else if (canSend) Color(0xFF0F172A)
-                        else Color(0xFFE2E8F0)
-                      )
+                      .tactilePress(sendInteractionSource, pressedScale = 0.84f)
                       .clickable(
+                        interactionSource = sendInteractionSource,
+                        indication = ripple(color = Color.White.copy(alpha = 0.3f)),
                         enabled = canSend || isRunning,
                         role = Role.Button,
                         onClickLabel = if (isRunning) "Stop execution" else "Send prompt"
@@ -983,23 +1032,32 @@ fun AgentScreen(
                           viewModel.submitTask(t)
                         }
                       }
-                      .testTag("run_task_button"),
-                    contentAlignment = Alignment.Center
+                      .testTag("run_task_button")
                   ) {
-                    if (isRunning) {
-                      Text(
-                        text = "◼",
-                        color = Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                      )
-                    } else {
-                      Icon(
-                        imageVector = Icons.Default.ArrowUpward,
-                        contentDescription = "Send",
-                        tint = if (canSend) Color.White else Color(0xFF94A3B8),
-                        modifier = Modifier.size(18.dp)
-                      )
+                    Box(
+                      contentAlignment = Alignment.Center,
+                      modifier = Modifier.fillMaxSize()
+                    ) {
+                      if (isRunning) {
+                        Text(
+                          text = "◼",
+                          color = Color.White,
+                          fontSize = 10.sp,
+                          fontWeight = FontWeight.Bold
+                        )
+                      } else {
+                        Icon(
+                          imageVector = Icons.Default.ArrowUpward,
+                          contentDescription = "Send",
+                          tint = if (canSend) Color.White else Color(0xFF94A3B8),
+                          modifier = Modifier
+                            .size(15.dp)
+                            .graphicsLayer {
+                              rotationZ = sendIconRotation
+                              translationY = sendIconOffsetY
+                            }
+                        )
+                      }
                     }
                   }
                 }
@@ -2635,15 +2693,16 @@ fun EmptyExecutionState(
     // Middle Aragon Model: Interactive Model Selector Capsule
     val modelInteraction = remember { MutableInteractionSource() }
     Surface(
-      shape = RoundedCornerShape(16.dp),
-      color = Color(0xFF121217),
-      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledActionPrimary.copy(alpha = 0.45f)),
+      shape = RoundedCornerShape(18.dp),
+      color = Color.White,
+      shadowElevation = 4.dp,
+      border = null,
       modifier = Modifier
         .tactilePress(modelInteraction)
-        .clip(RoundedCornerShape(16.dp))
+        .clip(RoundedCornerShape(18.dp))
         .clickable(
           interactionSource = modelInteraction,
-          indication = ripple(color = AmoledActionPrimary.copy(alpha = 0.2f)),
+          indication = ripple(color = Color(0xFF0F172A).copy(alpha = 0.15f)),
           role = Role.Button,
           onClick = onOpenModelSelect
         )
@@ -2651,31 +2710,38 @@ fun EmptyExecutionState(
     ) {
       Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp)
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
       ) {
         Box(
           modifier = Modifier
             .size(7.dp)
             .clip(CircleShape)
-            .background(AmoledActionPrimary)
+            .background(Color(0xFF0F172A))
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
           text = "MODEL: $currentModelName",
           style = MaterialTheme.typography.labelMedium,
-          fontFamily = JetBrainsMonoFontFamily,
+          fontFamily = InterFontFamily,
           fontWeight = FontWeight.Bold,
           fontSize = 11.5.sp,
-          color = AmoledActionPrimary
+          color = Color(0xFF0F172A)
         )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-          text = "CHANGE",
-          fontFamily = JetBrainsMonoFontFamily,
-          fontSize = 9.sp,
-          fontWeight = FontWeight.Bold,
-          color = AmoledIconGreyLight
-        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Surface(
+          shape = RoundedCornerShape(10.dp),
+          color = Color(0xFFF1F5F9),
+          border = null
+        ) {
+          Text(
+            text = "CHANGE",
+            fontFamily = InterFontFamily,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF475569),
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+          )
+        }
       }
     }
 
@@ -2709,9 +2775,10 @@ fun ModelSelectorDialog(
 
   Dialog(onDismissRequest = onDismiss) {
     Surface(
-      shape = RoundedCornerShape(14.dp),
-      color = Color(0xFF101010),
-      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorder),
+      shape = RoundedCornerShape(22.dp),
+      color = Color.White,
+      shadowElevation = 16.dp,
+      border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
       modifier = Modifier
         .fillMaxWidth()
         .widthIn(max = 560.dp)
@@ -2728,59 +2795,39 @@ fun ModelSelectorDialog(
           Text(
             text = "SELECT AI MODEL",
             style = MaterialTheme.typography.titleSmall,
-            fontFamily = JetBrainsMonoFontFamily,
+            fontFamily = InterFontFamily,
             fontWeight = FontWeight.Bold,
-            color = AmoledTextPrimary,
+            color = Color(0xFF0F172A),
             letterSpacing = 1.sp
           )
 
-          Surface(
-            color = Color.Transparent,
-            modifier = Modifier
-              .clickable(
-                role = Role.Button,
-                onClickLabel = "Close model selector dialog"
-              ) { onDismiss() }
-          ) {
-            Box(
-              contentAlignment = Alignment.Center,
-              modifier = Modifier
-                .minimumInteractiveComponentSize()
-                .padding(4.dp)
-            ) {
-              Text(
-                text = "[CLOSE]",
-                style = MaterialTheme.typography.labelSmall,
-                fontFamily = JetBrainsMonoFontFamily,
-                fontSize = 10.sp,
-                color = AmoledIconGrey
-              )
-            }
-          }
+          AragonHeaderButton(
+            text = "CLOSE",
+            onClick = onDismiss,
+            variant = AragonButtonVariant.MUTED,
+            testTag = "close_model_selector_btn"
+          )
         }
 
         Spacer(modifier = Modifier.height(10.dp))
 
         // Search Bar for Models
         Surface(
-          shape = RoundedCornerShape(6.dp),
-          color = Color(0xFF161616),
-          border = androidx.compose.foundation.BorderStroke(
-            1.dp,
-            if (searchQuery.isNotBlank()) AmoledActionPrimary else AmoledBorderSubtle
-          ),
+          shape = RoundedCornerShape(12.dp),
+          color = Color(0xFFF1F5F9),
+          border = null,
           modifier = Modifier.fillMaxWidth()
         ) {
           Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
           ) {
             Text(
               text = "FILTER",
               fontFamily = JetBrainsMonoFontFamily,
               fontSize = 9.sp,
               fontWeight = FontWeight.Bold,
-              color = AmoledActionPrimary,
+              color = Color(0xFF0284C7),
               modifier = Modifier.padding(end = 6.dp)
             )
             BasicTextField(
@@ -2792,18 +2839,18 @@ fun ModelSelectorDialog(
                 .testTag("model_search_input"),
               singleLine = true,
               textStyle = MaterialTheme.typography.bodySmall.copy(
-                fontFamily = JetBrainsMonoFontFamily,
-                fontSize = 11.sp,
-                color = AmoledTextPrimary
+                fontFamily = InterFontFamily,
+                fontSize = 12.sp,
+                color = Color(0xFF0F172A)
               ),
-              cursorBrush = SolidColor(AmoledActionPrimary),
+              cursorBrush = SolidColor(Color(0xFF0F172A)),
               decorationBox = { innerTextField ->
                 if (searchQuery.isEmpty()) {
                   Text(
                     text = "Search by model name or keyword...",
-                    fontFamily = JetBrainsMonoFontFamily,
-                    fontSize = 10.sp,
-                    color = AmoledTextMuted
+                    fontFamily = InterFontFamily,
+                    fontSize = 11.sp,
+                    color = Color(0xFF94A3B8)
                   )
                 }
                 innerTextField()
@@ -2814,7 +2861,7 @@ fun ModelSelectorDialog(
                 text = "✕",
                 fontFamily = JetBrainsMonoFontFamily,
                 fontSize = 11.sp,
-                color = AmoledIconGrey,
+                color = Color(0xFF475569),
                 modifier = Modifier
                   .clip(RoundedCornerShape(3.dp))
                   .clickable { searchQuery = "" }
@@ -2841,18 +2888,15 @@ fun ModelSelectorDialog(
               text = "BUILT-IN ENGINE (NO KEY REQUIRED)",
               style = MaterialTheme.typography.labelSmall,
               fontFamily = JetBrainsMonoFontFamily,
-              color = AmoledTextMuted,
+              color = Color(0xFF64748B),
               fontSize = 9.sp
             )
 
             val isSandboxActive = currentProvider == ProviderType.SANDBOX_ENGINE
             Surface(
-              shape = RoundedCornerShape(8.dp),
-              color = if (isSandboxActive) Color(0xFF1C1C1C) else Color(0xFF141414),
-              border = androidx.compose.foundation.BorderStroke(
-                1.dp,
-                if (isSandboxActive) AmoledActionPrimary else AmoledBorderSubtle
-              ),
+              shape = RoundedCornerShape(14.dp),
+              color = if (isSandboxActive) Color(0xFF0F172A) else Color(0xFFF8FAFC),
+              border = BorderStroke(1.dp, if (isSandboxActive) Color(0xFF0F172A) else Color(0xFFE2E8F0)),
               modifier = Modifier
                 .fillMaxWidth()
                 .clickable { onSelectSandbox() }
@@ -2866,13 +2910,15 @@ fun ModelSelectorDialog(
                   Text(
                     text = "Autonomous Sandbox Engine",
                     style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = InterFontFamily,
                     fontWeight = FontWeight.SemiBold,
-                    color = AmoledTextPrimary
+                    color = if (isSandboxActive) Color.White else Color(0xFF0F172A)
                   )
                   Text(
                     text = "Built-in rule-based agent loop driving the same sandbox tools — no model API key needed",
                     style = MaterialTheme.typography.labelSmall,
-                    color = AmoledTextMuted,
+                    fontFamily = InterFontFamily,
+                    color = if (isSandboxActive) Color(0xFF94A3B8) else Color(0xFF64748B),
                     fontSize = 10.sp
                   )
                 }
@@ -2883,7 +2929,7 @@ fun ModelSelectorDialog(
                     fontFamily = JetBrainsMonoFontFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 9.sp,
-                    color = AmoledStatusSuccess
+                    color = Color(0xFF10B981)
                   )
                 }
               }
@@ -2911,7 +2957,7 @@ fun ModelSelectorDialog(
                 text = "NVIDIA NIM CLOUD MODELS (${filteredNvidiaModels.size})",
                 style = MaterialTheme.typography.labelSmall,
                 fontFamily = JetBrainsMonoFontFamily,
-                color = AmoledTextMuted,
+                color = Color(0xFF64748B),
                 fontSize = 9.sp
               )
               Text(
@@ -2920,19 +2966,16 @@ fun ModelSelectorDialog(
                 fontFamily = JetBrainsMonoFontFamily,
                 fontSize = 8.sp,
                 fontWeight = FontWeight.Bold,
-                color = AmoledStatusSuccess
+                color = Color(0xFF10B981)
               )
             }
 
             filteredNvidiaModels.forEach { modelEntry ->
               val isModelActive = currentProvider == ProviderType.NVIDIA_NIM && currentNvidiaModel == modelEntry.id
               Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = if (isModelActive) Color(0xFF1C1C1C) else Color(0xFF141414),
-                border = androidx.compose.foundation.BorderStroke(
-                  1.dp,
-                  if (isModelActive) AmoledActionPrimary else AmoledBorderSubtle
-                ),
+                shape = RoundedCornerShape(14.dp),
+                color = if (isModelActive) Color(0xFF0F172A) else Color(0xFFF8FAFC),
+                border = BorderStroke(1.dp, if (isModelActive) Color(0xFF0F172A) else Color(0xFFE2E8F0)),
                 modifier = Modifier
                   .fillMaxWidth()
                   .clickable { onSelectNvidiaModel(modelEntry.id) }
@@ -2947,8 +2990,9 @@ fun ModelSelectorDialog(
                       Text(
                         text = modelEntry.name,
                         style = MaterialTheme.typography.bodyMedium,
+                        fontFamily = InterFontFamily,
                         fontWeight = FontWeight.SemiBold,
-                        color = AmoledTextPrimary
+                        color = if (isModelActive) Color.White else Color(0xFF0F172A)
                       )
                       if (modelEntry.badge.isNotBlank()) {
                         Spacer(modifier = Modifier.width(6.dp))
@@ -2957,14 +3001,15 @@ fun ModelSelectorDialog(
                           style = MaterialTheme.typography.labelSmall,
                           fontFamily = JetBrainsMonoFontFamily,
                           fontSize = 8.sp,
-                          color = AmoledActionPrimary
+                          color = if (isModelActive) Color(0xFF38BDF8) else Color(0xFF0284C7)
                         )
                       }
                     }
                     Text(
                       text = modelEntry.description,
                       style = MaterialTheme.typography.labelSmall,
-                      color = AmoledTextMuted,
+                      fontFamily = InterFontFamily,
+                      color = if (isModelActive) Color(0xFF94A3B8) else Color(0xFF64748B),
                       fontSize = 10.sp,
                       maxLines = 1,
                       overflow = TextOverflow.Ellipsis
@@ -2978,7 +3023,7 @@ fun ModelSelectorDialog(
                       fontFamily = JetBrainsMonoFontFamily,
                       fontWeight = FontWeight.Bold,
                       fontSize = 9.sp,
-                      color = AmoledStatusSuccess
+                      color = Color(0xFF10B981)
                     )
                   }
                 }
@@ -2994,18 +3039,15 @@ fun ModelSelectorDialog(
               text = "GOOGLE CLOUD",
               style = MaterialTheme.typography.labelSmall,
               fontFamily = JetBrainsMonoFontFamily,
-              color = AmoledTextMuted,
+              color = Color(0xFF64748B),
               fontSize = 9.sp
             )
 
             val isGeminiActive = currentProvider == ProviderType.GEMINI_LIVE_API
             Surface(
-              shape = RoundedCornerShape(8.dp),
-              color = if (isGeminiActive) Color(0xFF1C1C1C) else Color(0xFF141414),
-              border = androidx.compose.foundation.BorderStroke(
-                1.dp,
-                if (isGeminiActive) AmoledActionPrimary else AmoledBorderSubtle
-              ),
+              shape = RoundedCornerShape(14.dp),
+              color = if (isGeminiActive) Color(0xFF0F172A) else Color(0xFFF8FAFC),
+              border = BorderStroke(1.dp, if (isGeminiActive) Color(0xFF0F172A) else Color(0xFFE2E8F0)),
               modifier = Modifier
                 .fillMaxWidth()
                 .clickable { onSelectGemini() }
@@ -3019,13 +3061,15 @@ fun ModelSelectorDialog(
                   Text(
                     text = "Google Gemini Live",
                     style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = InterFontFamily,
                     fontWeight = FontWeight.SemiBold,
-                    color = AmoledTextPrimary
+                    color = if (isGeminiActive) Color.White else Color(0xFF0F172A)
                   )
                   Text(
                     text = "gemini-2.5-flash with function calling",
                     style = MaterialTheme.typography.labelSmall,
-                    color = AmoledTextMuted,
+                    fontFamily = InterFontFamily,
+                    color = if (isGeminiActive) Color(0xFF94A3B8) else Color(0xFF64748B),
                     fontSize = 10.sp
                   )
                 }
@@ -3036,7 +3080,7 @@ fun ModelSelectorDialog(
                     fontFamily = JetBrainsMonoFontFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 9.sp,
-                    color = AmoledStatusSuccess
+                    color = Color(0xFF10B981)
                   )
                 }
               }
@@ -3052,7 +3096,7 @@ fun ModelSelectorDialog(
           onClick = onOpenDeveloperSettings,
           modifier = Modifier.fillMaxWidth(),
           variant = AragonButtonVariant.PRIMARY,
-          height = 34.dp,
+          height = 36.dp,
           testTag = "model_dialog_dev_settings_btn"
         )
       }
@@ -3124,19 +3168,19 @@ fun SettingsProviderDialog(
       onResetSandboxConnectionStatus()
       onDismiss()
     },
-    containerColor = AmoledSurface,
+    containerColor = Color.White,
     title = {
       Column {
         Text(
           text = "Settings & Configuration",
           style = MaterialTheme.typography.titleMedium,
           fontWeight = FontWeight.SemiBold,
-          color = AmoledTextPrimary
+          color = Color(0xFF0F172A)
         )
         Text(
           text = "AI provider, API keys, and the E2B execution sandbox. Changes apply to new tasks.",
           style = MaterialTheme.typography.labelSmall,
-          color = AmoledTextMuted,
+          color = Color(0xFF64748B),
           fontSize = 10.sp,
           modifier = Modifier.padding(top = 2.dp)
         )
@@ -3871,7 +3915,8 @@ fun SettingsProviderDialog(
       }
     },
     confirmButton = {
-      Button(
+      AragonActionButton(
+        text = "APPLY CHANGES",
         onClick = {
           onProviderChange(selectedType)
           if (selectedType == ProviderType.NVIDIA_NIM) {
@@ -3894,25 +3939,23 @@ fun SettingsProviderDialog(
           onResetSandboxConnectionStatus()
           onDismiss()
         },
-        shape = RoundedCornerShape(8.dp),
-        colors = ButtonDefaults.buttonColors(
-          containerColor = AmoledActionPrimary,
-          contentColor = AmoledActionPrimaryOn
-        )
-      ) {
-        Text("Apply Changes", style = MaterialTheme.typography.labelMedium)
-      }
+        variant = AragonButtonVariant.PRIMARY,
+        height = 34.dp,
+        testTag = "settings_apply_btn"
+      )
     },
     dismissButton = {
-      TextButton(
+      AragonActionButton(
+        text = "CANCEL",
         onClick = {
           onResetConnectionStatus()
           onResetSandboxConnectionStatus()
           onDismiss()
-        }
-      ) {
-        Text("Cancel", color = AmoledIconGrey)
-      }
+        },
+        variant = AragonButtonVariant.MUTED,
+        height = 34.dp,
+        testTag = "settings_cancel_btn"
+      )
     }
   )
 }

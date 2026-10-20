@@ -160,16 +160,17 @@ fun McpServersDialog(
       modifier = Modifier
         .fillMaxWidth(0.96f)
         .fillMaxHeight(0.92f),
-      shape = RoundedCornerShape(20.dp),
-      color = AmoledBackground,
-      border = BorderStroke(1.dp, AmoledBorder)
+      shape = RoundedCornerShape(22.dp),
+      color = Color.White,
+      shadowElevation = 16.dp,
+      border = BorderStroke(1.dp, Color(0xFFE2E8F0))
     ) {
       Column(modifier = Modifier.fillMaxSize()) {
         // Dialog Header
         Surface(
           modifier = Modifier.fillMaxWidth(),
-          color = AmoledSurface,
-          border = BorderStroke(1.dp, AmoledBorderSubtle)
+          color = Color(0xFFF8FAFC),
+          border = BorderStroke(1.dp, Color(0xFFE2E8F0))
         ) {
           Row(
             modifier = Modifier
@@ -186,7 +187,7 @@ fun McpServersDialog(
                 modifier = Modifier
                   .size(9.dp)
                   .clip(CircleShape)
-                  .background(if (servers.any { it.enabled }) AmoledStatusSuccess else AmoledIconGreyDark)
+                  .background(if (servers.any { it.enabled }) Color(0xFF10B981) else Color(0xFF94A3B8))
               )
               Spacer(modifier = Modifier.width(10.dp))
               Column {
@@ -194,10 +195,10 @@ fun McpServersDialog(
                   text = "MODEL CONTEXT PROTOCOL (MCP)",
                   style = MaterialTheme.typography.titleSmall,
                   fontWeight = FontWeight.Bold,
-                  fontFamily = JetBrainsMonoFontFamily,
+                  fontFamily = InterFontFamily,
                   fontSize = 12.5.sp,
                   letterSpacing = 0.5.sp,
-                  color = AmoledTextPrimary,
+                  color = Color(0xFF0F172A),
                   maxLines = 1,
                   overflow = TextOverflow.Ellipsis
                 )
@@ -205,7 +206,7 @@ fun McpServersDialog(
                   text = "${servers.size} servers · ${discoveredTools.size} tools · ${discoveredResources.size} resources",
                   style = MaterialTheme.typography.labelSmall,
                   fontFamily = InterFontFamily,
-                  color = AmoledTextMuted,
+                  color = Color(0xFF64748B),
                   fontSize = 10.sp,
                   maxLines = 1,
                   overflow = TextOverflow.Ellipsis
@@ -1511,9 +1512,10 @@ private fun McpServerEditDialog(
     properties = DialogProperties(usePlatformDefaultWidth = false)
   ) {
     Surface(
-      shape = RoundedCornerShape(14.dp),
-      color = AmoledBackground,
-      border = BorderStroke(1.dp, AmoledBorder),
+      shape = RoundedCornerShape(22.dp),
+      color = Color.White,
+      border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+      shadowElevation = 16.dp,
       modifier = Modifier
         .fillMaxWidth(0.95f)
         .fillMaxHeight(0.86f)
@@ -1521,15 +1523,15 @@ private fun McpServerEditDialog(
       Column(
         modifier = Modifier
           .fillMaxSize()
-          .padding(14.dp)
+          .padding(16.dp)
       ) {
         Text(
           text = if (initialConfig == null) "ADD MCP SERVER" else "EDIT MCP SERVER",
           style = MaterialTheme.typography.titleMedium,
-          fontFamily = JetBrainsMonoFontFamily,
+          fontFamily = InterFontFamily,
           fontWeight = FontWeight.Bold,
-          color = AmoledTextPrimary,
-          fontSize = 13.sp
+          color = Color(0xFF0F172A),
+          fontSize = 13.5.sp
         )
 
         // Template Quick Fill Row (New Server Only)
@@ -1827,18 +1829,16 @@ private fun McpServerEditDialog(
           horizontalArrangement = Arrangement.End,
           verticalAlignment = Alignment.CenterVertically
         ) {
-          OutlinedButton(
+          AragonActionButton(
+            text = "CANCEL",
             onClick = onDismiss,
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledTextSecondary),
-            border = BorderStroke(1.dp, AmoledBorder),
-            shape = RoundedCornerShape(8.dp)
-          ) {
-            Text("Cancel", fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp)
-          }
+            variant = AragonButtonVariant.MUTED
+          )
 
           Spacer(modifier = Modifier.width(8.dp))
 
-          Button(
+          AragonActionButton(
+            text = "SAVE SERVER",
             onClick = {
               val parsedHeaders = mutableMapOf<String, String>()
               if (headersJson.isNotBlank()) {
@@ -1868,14 +1868,8 @@ private fun McpServerEditDialog(
               onSave(config)
             },
             enabled = name.isNotBlank() && (id.isNotBlank() || initialConfig != null),
-            colors = ButtonDefaults.buttonColors(
-              containerColor = AmoledActionPrimary,
-              contentColor = AmoledActionPrimaryOn
-            ),
-            shape = RoundedCornerShape(8.dp)
-          ) {
-            Text("Save Server", fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-          }
+            variant = AragonButtonVariant.PRIMARY
+          )
         }
       }
     }
