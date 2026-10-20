@@ -16,6 +16,8 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -2355,15 +2357,15 @@ fun AgentTopHeader(
 ) {
   Surface(
     modifier = Modifier.fillMaxWidth(),
-    color = AmoledSurface,
-    border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle)
+    color = Color(0xFF0C0C0F),
+    border = null
   ) {
     Column(
       modifier = Modifier
         .fillMaxWidth()
         .statusBarsPadding()
         .displayCutoutPadding()
-        .padding(horizontal = 12.dp, vertical = 7.dp)
+        .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
       Row(
         modifier = Modifier.fillMaxWidth(),
@@ -2378,7 +2380,7 @@ fun AgentTopHeader(
             tint = Color.White,
             modifier = Modifier.size(20.dp)
           )
-          Spacer(modifier = Modifier.width(6.dp))
+          Spacer(modifier = Modifier.width(7.dp))
           Text(
             text = "ARAGON",
             style = MaterialTheme.typography.titleSmall,
@@ -2393,7 +2395,7 @@ fun AgentTopHeader(
 
         Spacer(modifier = Modifier.width(8.dp))
 
-        // RIGHT-ALIGNED ACTIONS: Clean, streamlined action row (redundant buttons that duplicate MENU removed)
+        // RIGHT-ALIGNED ACTIONS: Clean, streamlined action row with modern flat design
         Row(
           modifier = Modifier.weight(1f, fill = false),
           verticalAlignment = Alignment.CenterVertically,
@@ -2444,40 +2446,6 @@ fun AgentTopHeader(
           )
         }
       }
-
-      // Active status bar (when executing)
-      if (!currentAction.isNullOrBlank()) {
-        Spacer(modifier = Modifier.height(6.dp))
-        Surface(
-          modifier = Modifier.fillMaxWidth(),
-          shape = RoundedCornerShape(6.dp),
-          color = Color(0xFF101010),
-          border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle)
-        ) {
-          Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Box(
-              modifier = Modifier
-                .size(5.dp)
-                .clip(CircleShape)
-                .background(AmoledActionPrimary)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-              text = currentAction,
-              style = MaterialTheme.typography.bodySmall,
-              fontFamily = JetBrainsMonoFontFamily,
-              color = AmoledIconGreyLight,
-              fontSize = 10.sp,
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
-              modifier = Modifier.weight(1f)
-            )
-          }
-        }
-      }
     }
   }
 }
@@ -2485,26 +2453,26 @@ fun AgentTopHeader(
 @Composable
 fun StatusPill(status: AgentStatus) {
   val (bgColor, textColor, label) = when (status) {
-    AgentStatus.IDLE -> Triple(Color(0xFF141414), AmoledTextMuted, "IDLE")
-    AgentStatus.RUNNING -> Triple(Color(0xFF1B1710), AmoledActionPrimary, "RUNNING")
-    AgentStatus.THINKING -> Triple(Color(0xFF1B1710), AmoledActionPrimary, "THINKING")
-    AgentStatus.PLANNING -> Triple(Color(0xFF1B1710), AmoledActionPrimary, "PLANNING")
-    AgentStatus.REPLANNING -> Triple(Color(0xFF1B1710), AmoledActionPrimary, "REPLAN")
-    AgentStatus.EXECUTING_TOOL -> Triple(Color(0xFF1B1710), AmoledActionPrimary, "TOOL")
-    AgentStatus.OBSERVING -> Triple(Color(0xFF161616), AmoledIconGreyLight, "OBSERVING")
+    AgentStatus.IDLE -> Triple(Color(0xFF18181E), Color(0xFF94A3B8), "IDLE")
+    AgentStatus.RUNNING -> Triple(Color(0xFF1E1E28), Color.White, "RUNNING")
+    AgentStatus.THINKING -> Triple(Color(0xFF1E1E28), Color.White, "THINKING")
+    AgentStatus.PLANNING -> Triple(Color(0xFF1E1E28), Color.White, "PLANNING")
+    AgentStatus.REPLANNING -> Triple(Color(0xFF1E1E28), Color.White, "REPLAN")
+    AgentStatus.EXECUTING_TOOL -> Triple(Color(0xFF1E1E28), Color.White, "TOOL")
+    AgentStatus.OBSERVING -> Triple(Color(0xFF16161C), AmoledIconGreyLight, "OBSERVING")
     AgentStatus.SANDBOX_RESET -> Triple(Color(0xFF251510), AmoledStatusWarning, "RESETTING")
     AgentStatus.DELIVERABLE_PENDING -> Triple(Color(0xFF251F10), AmoledStatusWarning, "PENDING")
-    AgentStatus.VERIFYING -> Triple(Color(0xFF161616), AmoledIconGreyLight, "VERIFYING")
-    AgentStatus.COMPLETED -> Triple(Color(0xFF102015), AmoledStatusSuccess, "COMPLETED")
+    AgentStatus.VERIFYING -> Triple(Color(0xFF16161C), AmoledIconGreyLight, "VERIFYING")
+    AgentStatus.COMPLETED -> Triple(Color(0xFF102816), Color(0xFF34D399), "COMPLETED")
     AgentStatus.PARTIAL_COMPLETION -> Triple(Color(0xFF251F10), AmoledStatusWarning, "PARTIAL")
-    AgentStatus.FAILED -> Triple(Color(0xFF221111), AmoledStatusError, "FAILED")
-    AgentStatus.CANCELLED -> Triple(Color(0xFF141414), AmoledTextMuted, "STOPPED")
+    AgentStatus.FAILED -> Triple(Color(0xFF2E1212), Color(0xFFF87171), "FAILED")
+    AgentStatus.CANCELLED -> Triple(Color(0xFF18181E), AmoledTextMuted, "STOPPED")
   }
 
   Surface(
     shape = RoundedCornerShape(10.dp),
     color = bgColor,
-    border = androidx.compose.foundation.BorderStroke(1.dp, textColor.copy(alpha = 0.35f)),
+    border = null,
     modifier = Modifier.height(20.dp)
   ) {
     Row(

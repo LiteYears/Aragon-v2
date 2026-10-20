@@ -752,7 +752,8 @@ class AgentEngine(
     messages: List<AgentMessage>,
     turnCounter: Int,
     lastFallbackProbeTurn: Int,
-    providerDropRetries: Int
+    providerDropRetries: Int,
+    streamListener: LLMStreamListener? = null
   ): ModelQueryResult {
     val isFallbackActive = activeProvider !== configuredProvider
     return if (isFallbackActive && turnCounter - lastFallbackProbeTurn >= FALLBACK_PROBE_INTERVAL_TURNS) {
@@ -760,7 +761,8 @@ class AgentEngine(
         systemPrompt = systemPrompt,
         taskIntent = task.goal,
         messages = messages,
-        tools = registry.getAvailableTools()
+        tools = registry.getAvailableTools(),
+        streamListener = streamListener
       )
       if (probe !is LLMDecision.ProviderError) {
         activeProvider = configuredProvider
@@ -770,7 +772,8 @@ class AgentEngine(
           systemPrompt = systemPrompt,
           taskIntent = task.goal,
           messages = messages,
-          tools = registry.getAvailableTools()
+          tools = registry.getAvailableTools(),
+          streamListener = streamListener
         )
         ModelQueryResult(decision, updatedDropRetries = providerDropRetries, restoredProviderStep = false)
       }
@@ -779,7 +782,8 @@ class AgentEngine(
         systemPrompt = systemPrompt,
         taskIntent = task.goal,
         messages = messages,
-        tools = registry.getAvailableTools()
+        tools = registry.getAvailableTools(),
+        streamListener = streamListener
       )
       ModelQueryResult(decision, updatedDropRetries = providerDropRetries, restoredProviderStep = false)
     }
@@ -893,7 +897,7 @@ class AgentEngine(
 
       if (wave.isParallel) {
         // Execute independent tool actions concurrently
-        val currentFeed = _state.value.executionFeed.toMutableList()
+        var currentFeed = _state.value.executionFeed.toMutableList()
         val waveStepIds = wave.calls.map { "step_tool_${it.callId}" }
         val matchingSteps = wave.calls.map { call ->
           planner.getActionableSteps().firstOrNull { it.toolCallId == call.callId || (it.assignedTool == call.toolName && it.status == ActionExecutionStatus.DISPATCHED) }
@@ -904,22 +908,27 @@ class AgentEngine(
           if (step != null) {
             planner.markStepExecuting(step.id)
           }
-          currentFeed.add(
-            ExecutionStep(
-              id = waveStepIds[idx],
-              stepNumber = stepCounterProvider(),
-              type = StepType.TOOL_EXECUTION,
-              title = "Executing [Wave ${wave.waveIndex + 1} Parallel]: ${toolCall.toolName}",
-              content = formatArguments(toolCall.arguments),
-              toolName = toolCall.toolName,
-              toolCallId = toolCall.callId,
-              toolStatus = ToolStatus.RUNNING.name,
-              actionStatus = ActionExecutionStatus.EXECUTING,
-              actionableStepId = step?.id,
-              waveIndex = wave.waveIndex,
-              isCompleted = false
-            )
+          val existingStep = currentFeed.firstOrNull { it.id == waveStepIds[idx] }
+          val stepNumber = existingStep?.stepNumber ?: stepCounterProvider()
+          val runningStep = (existingStep ?: ExecutionStep(
+            id = waveStepIds[idx],
+            stepNumber = stepNumber,
+            type = StepType.TOOL_EXECUTION,
+            toolName = toolCall.toolName,
+            toolCallId = toolCall.callId
+          )).copy(
+            type = StepType.TOOL_EXECUTION,
+            title = "Executing [Wave ${wave.waveIndex + 1} Parallel]: ${toolCall.toolName}",
+            content = formatArguments(toolCall.arguments),
+            toolName = toolCall.toolName,
+            toolCallId = toolCall.callId,
+            toolStatus = ToolStatus.RUNNING.name,
+            actionStatus = ActionExecutionStatus.EXECUTING,
+            actionableStepId = step?.id,
+            waveIndex = wave.waveIndex,
+            isCompleted = false
           )
+          currentFeed = addOrUpdateStep(currentFeed, runningStep).toMutableList()
         }
 
         _state.value = _state.value.copy(
@@ -1092,9 +1101,15 @@ class AgentEngine(
           }
 
           val runningStepId = "step_tool_${toolCall.callId}"
-          val runningStep = ExecutionStep(
+          val existingStep = _state.value.executionFeed.firstOrNull { it.id == runningStepId }
+          val stepNumber = existingStep?.stepNumber ?: stepCounterProvider()
+          val runningStep = (existingStep ?: ExecutionStep(
             id = runningStepId,
-            stepNumber = stepCounterProvider(),
+            stepNumber = stepNumber,
+            type = StepType.TOOL_EXECUTION,
+            toolName = toolCall.toolName,
+            toolCallId = toolCall.callId
+          )).copy(
             type = StepType.TOOL_EXECUTION,
             title = if (waves.size > 1) "Executing [Wave ${wave.waveIndex + 1}]: ${toolCall.toolName}" else "Executing: ${toolCall.toolName}",
             content = formatArguments(toolCall.arguments),
@@ -1885,15 +1900,49 @@ class AgentEngine(
         val systemPrompt = buildSystemContext(task, currentState, planner, deliverableReport, turnCounter, maxSteps)
 
         // =========================================================================
-        // PHASE 2: ASK MODEL FOR NEXT ACTION OR INDEPENDENT BATCH
+        // PHASE 2: ASK MODEL FOR NEXT ACTION OR INDEPENDENT BATCH (STREAMING)
         // =========================================================================
+        val thinkingStepId = "step_thinking_t${turnCounter}_${task.id}"
+        val streamedTokens = StringBuilder()
+        var streamStepCreated = false
+        var lastStreamUpdateMs = 0L
+
+        val streamListener = object : LLMStreamListener {
+          override fun onToken(token: String) {
+            streamedTokens.append(token)
+            val now = System.currentTimeMillis()
+            if (now - lastStreamUpdateMs > 32L || token.contains('\n')) {
+              lastStreamUpdateMs = now
+              if (!streamStepCreated) {
+                stepCounter++
+                streamStepCreated = true
+              }
+              val streamStep = ExecutionStep(
+                id = thinkingStepId,
+                stepNumber = stepCounter,
+                type = StepType.THINKING,
+                title = "Reasoning",
+                content = streamedTokens.toString(),
+                isCompleted = false
+              )
+              currentState = currentState.copy(
+                status = AgentStatus.THINKING,
+                currentAction = "Reasoning...",
+                executionFeed = addOrUpdateStep(currentState.executionFeed, streamStep)
+              )
+              updateStateIfActive(task, currentState)
+            }
+          }
+        }
+
         val queryResult = queryModelDecision(
           task = task,
           systemPrompt = systemPrompt,
           messages = currentState.messages,
           turnCounter = turnCounter,
           lastFallbackProbeTurn = lastFallbackProbeTurn,
-          providerDropRetries = providerDropRetries
+          providerDropRetries = providerDropRetries,
+          streamListener = streamListener
         )
         val decision = queryResult.decision
         providerDropRetries = queryResult.updatedDropRetries
@@ -1918,6 +1967,11 @@ class AgentEngine(
 
         // 2A. Provider Error Handling
         if (decision is LLMDecision.ProviderError) {
+          if (streamStepCreated) {
+            currentState = currentState.copy(
+              executionFeed = currentState.executionFeed.filter { it.id != thinkingStepId }
+            )
+          }
           planner.markProviderFailure(decision.message)
           if (providerDropRetries < 2) {
             providerDropRetries++
@@ -1978,6 +2032,27 @@ class AgentEngine(
         // 2B. Explicit Completion Claim Handling
         if (decision is LLMDecision.Complete) {
           providerDropRetries = 0
+          if (streamStepCreated) {
+            val streamContent = streamedTokens.toString().trim()
+            val conclusionTrimmed = decision.conclusion.trim()
+            if (streamContent.equals(conclusionTrimmed, ignoreCase = true) || streamContent.contains(conclusionTrimmed)) {
+              currentState = currentState.copy(
+                executionFeed = currentState.executionFeed.filter { it.id != thinkingStepId }
+              )
+            } else {
+              val finishedStep = ExecutionStep(
+                id = thinkingStepId,
+                stepNumber = stepCounter,
+                type = StepType.THINKING,
+                title = "Reasoning",
+                content = streamContent,
+                isCompleted = true
+              )
+              currentState = currentState.copy(
+                executionFeed = addOrUpdateStep(currentState.executionFeed, finishedStep)
+              )
+            }
+          }
           val outcome = evaluateCompletion(
             task = task,
             conclusion = decision.conclusion,
@@ -2094,25 +2169,26 @@ class AgentEngine(
           } else null
 
           val thinkingStepId = "step_thinking_t${turnCounter}_${task.id}"
-          val feedWithThought = if (!cleanedThought.isNullOrBlank() && !cleanedThought.startsWith("[REASONING_DEDUP_HIT")) {
+          val finalThought = cleanedThought ?: (if (streamedTokens.isNotEmpty()) streamedTokens.toString() else null)
+          val feedWithThought = if (!finalThought.isNullOrBlank() && !finalThought.startsWith("[REASONING_DEDUP_HIT")) {
             addOrUpdateStep(
               currentState.executionFeed,
               ExecutionStep(
                 id = thinkingStepId,
-                stepNumber = ++stepCounter,
+                stepNumber = if (streamStepCreated) stepCounter else ++stepCounter,
                 type = StepType.THINKING,
                 title = "Reasoning",
-                content = cleanedThought
+                content = finalThought,
+                isCompleted = true
               )
             )
-          } else currentState.executionFeed
-
-          currentState = currentState.copy(
-            plan = updatedPlan,
-            persistentTask = currentPTask,
-            executionFeed = feedWithThought,
-            fiveStageRecord = currentState.fiveStageRecord.copy(currentPlan = updatedPlan)
-          )
+          } else {
+            if (streamStepCreated) {
+              currentState.executionFeed.filter { it.id != thinkingStepId }
+            } else {
+              currentState.executionFeed
+            }
+          }
 
           // =========================================================================
           // PHASE 3: TOOL CALL VALIDATION & DISPATCHING
@@ -2125,6 +2201,32 @@ class AgentEngine(
             }
             call.copy(callId = normalizedCallId)
           }
+
+          // Pre-populate pending tool steps immediately into the timeline
+          var feedWithPendingTools = feedWithThought
+          validatedToolCalls.forEach { call ->
+            val toolStepId = "step_tool_${call.callId}"
+            val pendingStep = ExecutionStep(
+              id = toolStepId,
+              stepNumber = ++stepCounter,
+              type = StepType.TOOL_CALL,
+              title = com.example.agent.ui.components.formatToolDisplayName(call.toolName),
+              content = formatArguments(call.arguments),
+              toolName = call.toolName,
+              toolCallId = call.callId,
+              toolStatus = "PENDING",
+              actionStatus = ActionExecutionStatus.PLANNED,
+              isCompleted = false
+            )
+            feedWithPendingTools = addOrUpdateStep(feedWithPendingTools, pendingStep)
+          }
+
+          currentState = currentState.copy(
+            plan = updatedPlan,
+            persistentTask = currentPTask,
+            executionFeed = feedWithPendingTools,
+            fiveStageRecord = currentState.fiveStageRecord.copy(currentPlan = updatedPlan)
+          )
 
           val existingToolCallIds = currentState.messages.mapNotNull { it.toolCallId }.toSet()
           val assistantToolMessages = validatedToolCalls.mapIndexed { index, call ->

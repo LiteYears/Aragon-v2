@@ -57,6 +57,7 @@ import com.example.ui.theme.AmoledStatusSuccess
 import com.example.ui.theme.AmoledTextMuted
 import com.example.ui.theme.AmoledTextPrimary
 import com.example.ui.theme.AmoledTextSecondary
+import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -416,42 +417,35 @@ fun AragonHeaderButton(
   enabled: Boolean = true,
   testTag: String = "header_button"
 ) {
-  val shape = RoundedCornerShape(6.dp)
+  val shape = RoundedCornerShape(14.dp)
   val interactionSource = remember { MutableInteractionSource() }
 
   val bg = when (variant) {
-    AragonButtonVariant.PRIMARY -> Color(0xFF1E1810)
-    AragonButtonVariant.DANGER -> Color(0xFF261212)
-    AragonButtonVariant.SUCCESS -> Color(0xFF102416)
-    AragonButtonVariant.MUTED -> Color(0xFF101010)
-    else -> Color(0xFF141414)
-  }
-
-  val border = when (variant) {
-    AragonButtonVariant.PRIMARY -> AmoledActionPrimary.copy(alpha = 0.6f)
-    AragonButtonVariant.DANGER -> AmoledStatusError.copy(alpha = 0.6f)
-    AragonButtonVariant.SUCCESS -> AmoledStatusSuccess.copy(alpha = 0.6f)
-    AragonButtonVariant.MUTED -> AmoledBorderSubtle
-    else -> AmoledBorderSubtle
+    AragonButtonVariant.PRIMARY -> Color.White
+    AragonButtonVariant.DANGER -> Color(0xFFEF4444)
+    AragonButtonVariant.SUCCESS -> Color(0xFF10B981)
+    AragonButtonVariant.MUTED -> Color(0xFF1E1E24)
+    else -> Color(0xFF222228)
   }
 
   val textColor = when (variant) {
-    AragonButtonVariant.PRIMARY -> AmoledActionPrimary
-    AragonButtonVariant.DANGER -> AmoledStatusError
-    AragonButtonVariant.SUCCESS -> AmoledStatusSuccess
-    AragonButtonVariant.MUTED -> AmoledIconGreyLight
-    else -> AmoledIconGreyLight
+    AragonButtonVariant.PRIMARY -> Color(0xFF0A0A0C)
+    AragonButtonVariant.DANGER -> Color.White
+    AragonButtonVariant.SUCCESS -> Color.White
+    AragonButtonVariant.MUTED -> Color(0xFFE2E8F0)
+    else -> Color.White
   }
 
   Surface(
     shape = shape,
     color = bg,
-    border = BorderStroke(1.dp, border),
+    border = null,
+    shadowElevation = if (variant == AragonButtonVariant.PRIMARY) 2.dp else 1.dp,
     modifier = modifier
       .tactilePress(interactionSource)
       .clickable(
         interactionSource = interactionSource,
-        indication = ripple(color = textColor.copy(alpha = 0.25f)),
+        indication = ripple(color = textColor.copy(alpha = 0.2f)),
         enabled = enabled,
         role = Role.Button,
         onClick = onClick
@@ -462,7 +456,7 @@ fun AragonHeaderButton(
       contentAlignment = Alignment.Center,
       modifier = Modifier
         .height(28.dp)
-        .padding(horizontal = 9.dp)
+        .padding(horizontal = 11.dp)
     ) {
       Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -471,27 +465,27 @@ fun AragonHeaderButton(
         Text(
           text = text,
           style = MaterialTheme.typography.labelSmall,
-          fontFamily = JetBrainsMonoFontFamily,
-          fontWeight = if (variant == AragonButtonVariant.PRIMARY || variant == AragonButtonVariant.DANGER) FontWeight.Bold else FontWeight.SemiBold,
-          fontSize = 10.sp,
+          fontFamily = InterFontFamily,
+          fontWeight = FontWeight.Bold,
+          fontSize = 11.sp,
           color = textColor,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis
         )
         if (badge != null) {
-          Spacer(modifier = Modifier.width(3.dp))
+          Spacer(modifier = Modifier.width(4.dp))
           Surface(
-            shape = RoundedCornerShape(2.dp),
-            color = AmoledActionPrimary,
+            shape = CircleShape,
+            color = if (variant == AragonButtonVariant.PRIMARY) Color.Black else Color.White,
             modifier = Modifier.padding(start = 2.dp)
           ) {
             Text(
               text = badge,
               fontFamily = JetBrainsMonoFontFamily,
               fontWeight = FontWeight.Bold,
-              fontSize = 6.5.sp,
-              color = AmoledActionPrimaryOn,
-              modifier = Modifier.padding(horizontal = 2.5.dp, vertical = 0.5.dp)
+              fontSize = 9.sp,
+              color = if (variant == AragonButtonVariant.PRIMARY) Color.White else Color.Black,
+              modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
             )
           }
         }

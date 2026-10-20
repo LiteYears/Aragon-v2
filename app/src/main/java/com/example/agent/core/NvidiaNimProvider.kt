@@ -193,7 +193,8 @@ class NvidiaNimProvider(
     systemPrompt: String,
     taskIntent: String,
     messages: List<AgentMessage>,
-    tools: List<Tool>
+    tools: List<Tool>,
+    streamListener: LLMStreamListener?
   ): LLMDecision = withContext(Dispatchers.IO) {
     val activeConfig = currentConfig
     val pool = keyPool
@@ -298,7 +299,8 @@ class NvidiaNimProvider(
         taskIntent = taskIntent,
         messages = messages,
         tools = tools,
-        useNativeTools = true
+        useNativeTools = true,
+        streamListener = streamListener
       )
 
       when (result) {
@@ -429,7 +431,8 @@ class NvidiaNimProvider(
     taskIntent: String,
     messages: List<AgentMessage>,
     tools: List<Tool>,
-    useNativeTools: Boolean
+    useNativeTools: Boolean,
+    streamListener: LLMStreamListener? = null
   ): LLMDecision {
     val activeConfig = currentConfig
 
@@ -453,7 +456,10 @@ class NvidiaNimProvider(
         }
       }
 
-      // 3. Optional generation parameters
+      // 3. Optional generation parameters & streaming
+      if (streamListener != null) {
+        requestJson.put("stream", true)
+      }
       activeConfig.temperature?.let { requestJson.put("temperature", it) }
       activeConfig.maxTokens?.let { requestJson.put("max_tokens", it) }
       activeConfig.topP?.let { requestJson.put("top_p", it) }
@@ -466,7 +472,7 @@ class NvidiaNimProvider(
         .url(endpoint)
         .addHeader("Authorization", "Bearer ${apiKeyToUse.trim()}")
         .addHeader("Content-Type", "application/json")
-        .addHeader("Accept", "application/json")
+        .addHeader("Accept", if (streamListener != null) "text/event-stream, application/json" else "application/json")
         .post(requestBody)
         .build()
 
@@ -481,17 +487,17 @@ class NvidiaNimProvider(
       }
 
       var retryAfterMs: Long? = null
-      val (responseCode, isSuccessful, responseBodyString) = httpClient.newCall(request).execute().use { response ->
-        retryAfterMs = parseRetryAfterHeader(response.header("Retry-After"))
-        Triple(response.code, response.isSuccessful, response.body?.string() ?: "")
-      }
+      val response = httpClient.newCall(request).execute()
+      retryAfterMs = parseRetryAfterHeader(response.header("Retry-After"))
 
       // 5. HTTP Error Handling and Retry
-      if (!isSuccessful) {
-        val errorDetail = extractErrorDetail(responseBodyString, responseCode, apiKeyToUse)
+      if (!response.isSuccessful) {
+        val responseBodyString = response.body?.string() ?: ""
+        response.close()
+        val errorDetail = extractErrorDetail(responseBodyString, response.code, apiKeyToUse)
 
         // If tools are rejected by this model (HTTP 400 with 'tools' or 'extra input'), retry without native tools
-        if (useNativeTools && responseCode == 400 && (errorDetail.contains("tool") || errorDetail.contains("extra input") || errorDetail.contains("parameters"))) {
+        if (useNativeTools && response.code == 400 && (errorDetail.contains("tool") || errorDetail.contains("extra input") || errorDetail.contains("parameters"))) {
           return executeChatCompletion(
             apiKeyToUse = apiKeyToUse,
             keyLabel = keyLabel,
@@ -500,25 +506,140 @@ class NvidiaNimProvider(
             taskIntent = taskIntent,
             messages = messages,
             tools = tools,
-            useNativeTools = false
+            useNativeTools = false,
+            streamListener = streamListener
           )
         }
 
-        val normalizedMessage = when (responseCode) {
+        val normalizedMessage = when (response.code) {
           400 -> "NVIDIA NIM bad request (HTTP 400): $errorDetail"
           401 -> "NVIDIA NIM authentication failed (HTTP 401). Please check your NVIDIA API key."
           403 -> "NVIDIA NIM access forbidden (HTTP 403). Your key may lack permissions for model '$modelToUse'."
           404 -> "NVIDIA NIM model or endpoint not found (HTTP 404): '$modelToUse'. $errorDetail"
           429 -> "NVIDIA NIM rate limit or quota exceeded (HTTP 429): $errorDetail"
-          in 500..599 -> "NVIDIA NIM upstream server error (HTTP $responseCode): $errorDetail"
-          else -> "NVIDIA NIM API error (HTTP $responseCode): $errorDetail"
+          in 500..599 -> "NVIDIA NIM upstream server error (HTTP ${response.code}): $errorDetail"
+          else -> "NVIDIA NIM API error (HTTP ${response.code}): $errorDetail"
         }
         return LLMDecision.ProviderError(
           normalizedMessage,
-          kind = classifyHttpFailure(responseCode, errorDetail),
+          kind = classifyHttpFailure(response.code, errorDetail),
           retryAfterMs = retryAfterMs
         )
       }
+
+      val contentType = response.header("Content-Type") ?: ""
+      val isEventStream = (contentType.contains("text/event-stream") || streamListener != null) && response.body != null
+
+      if (isEventStream) {
+        val accumulatedContent = StringBuilder()
+        val accumulatedReasoning = StringBuilder()
+        val toolCallBuffers = mutableMapOf<Int, Triple<String, String, StringBuilder>>()
+
+        try {
+          response.body?.use { body ->
+            val source = body.source()
+            while (!source.exhausted()) {
+              val rawLine = source.readUtf8Line() ?: break
+              val line = rawLine.trim()
+              if (line.isEmpty() || line.startsWith(":")) continue
+              if (line.startsWith("data:")) {
+                val data = line.removePrefix("data:").trim()
+                if (data == "[DONE]") break
+                try {
+                  val chunkObj = JSONObject(data)
+                  val choices = chunkObj.optJSONArray("choices")
+                  if (choices != null && choices.length() > 0) {
+                    val choice = choices.getJSONObject(0)
+                    val delta = choice.optJSONObject("delta")
+                    if (delta != null) {
+                      val contentDelta = delta.optString("content", "")
+                      val reasoningDelta = delta.optString("reasoning_content", "")
+                        .ifBlank { delta.optString("reasoning", "") }
+
+                      if (reasoningDelta.isNotEmpty()) {
+                        accumulatedReasoning.append(reasoningDelta)
+                        streamListener?.onToken(reasoningDelta)
+                      } else if (contentDelta.isNotEmpty()) {
+                        accumulatedContent.append(contentDelta)
+                        streamListener?.onToken(contentDelta)
+                      }
+
+                      if (delta.has("tool_calls")) {
+                        val tcArr = delta.getJSONArray("tool_calls")
+                        for (k in 0 until tcArr.length()) {
+                          val tc = tcArr.getJSONObject(k)
+                          val idx = tc.optInt("index", k)
+                          val existing = toolCallBuffers[idx]
+                          val id = if (tc.has("id")) tc.getString("id") else existing?.first ?: ""
+                          val fn = tc.optJSONObject("function")
+                          val fnName = if (fn != null && fn.has("name")) fn.getString("name") else existing?.second ?: ""
+                          val fnArgs = if (fn != null && fn.has("arguments")) fn.getString("arguments") else ""
+                          val argsBuilder = existing?.third ?: StringBuilder()
+                          argsBuilder.append(fnArgs)
+                          toolCallBuffers[idx] = Triple(id, fnName, argsBuilder)
+                        }
+                      }
+                    }
+                  }
+                } catch (_: Exception) {}
+              }
+            }
+          }
+        } catch (_: Exception) {}
+
+        val contentText = accumulatedContent.toString().trim()
+        val reasoningText = accumulatedReasoning.toString().trim()
+        val combinedThought = when {
+          reasoningText.isNotBlank() && contentText.isNotBlank() -> {
+            if (reasoningText.equals(contentText, ignoreCase = true)) reasoningText
+            else "[Reasoning] $reasoningText\n$contentText"
+          }
+          reasoningText.isNotBlank() -> reasoningText
+          else -> contentText
+        }
+
+        val parsedToolCalls = if (toolCallBuffers.isNotEmpty()) {
+          toolCallBuffers.values.mapNotNull { (callId, fnName, argsBuilder) ->
+            if (fnName.isBlank()) return@mapNotNull null
+            val rawArgs = argsBuilder.toString()
+            val argsMap = try {
+              val obj = JSONObject(rawArgs)
+              val map = mutableMapOf<String, Any?>()
+              val keys = obj.keys()
+              while (keys.hasNext()) {
+                val k = keys.next()
+                map[k] = obj.get(k)
+              }
+              map
+            } catch (_: Exception) {
+              emptyMap<String, Any?>()
+            }
+            ToolCall(
+              callId = if (callId.isNotBlank()) callId else ToolCall.generateCallId("stream", (System.currentTimeMillis() % 100000).toInt()),
+              toolName = fnName,
+              arguments = argsMap
+            )
+          }
+        } else {
+          extractToolCalls(null, contentText, tools)
+        }
+
+        if (parsedToolCalls.isNotEmpty()) {
+          return LLMDecision.ExecuteTool(
+            toolCalls = parsedToolCalls,
+            thought = combinedThought.ifBlank { "Executing ${parsedToolCalls.size} requested tool call(s)." }
+          )
+        } else if (contentText.isNotBlank() || reasoningText.isNotBlank()) {
+          val finalConclusion = cleanContentConclusion(contentText).ifBlank { combinedThought }
+          return LLMDecision.Complete(
+            conclusion = finalConclusion,
+            thought = if (reasoningText.isNotBlank()) reasoningText else "Agent concluded task."
+          )
+        }
+      }
+
+      val responseBodyString = response.body?.string() ?: ""
+      response.close()
 
       if (responseBodyString.isBlank()) {
         return LLMDecision.ProviderError("NVIDIA NIM returned an empty response body.", kind = ProviderFailureKind.EMPTY_RESPONSE)
@@ -648,7 +769,7 @@ class NvidiaNimProvider(
    * 5. ReAct format: Action: <tool>\nAction Input: <json>
    */
   private fun extractToolCalls(
-    messageObj: JSONObject,
+    messageObj: JSONObject? = null,
     contentText: String,
     availableTools: List<Tool>
   ): List<ToolCall> {
@@ -656,7 +777,7 @@ class NvidiaNimProvider(
     val toolNames = availableTools.map { it.name }.toSet()
 
     // 1. Native tool_calls
-    val toolCallsArray = messageObj.optJSONArray("tool_calls")
+    val toolCallsArray = messageObj?.optJSONArray("tool_calls")
     if (toolCallsArray != null && toolCallsArray.length() > 0) {
       for (i in 0 until toolCallsArray.length()) {
         val callItem = toolCallsArray.optJSONObject(i) ?: continue

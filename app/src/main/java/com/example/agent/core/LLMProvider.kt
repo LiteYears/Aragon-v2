@@ -272,6 +272,14 @@ object MessageHistoryBounder {
 }
 
 /**
+ * Event-driven stream listener for progressive token and tool-call arrival.
+ */
+interface LLMStreamListener {
+  fun onToken(token: String) {}
+  fun onToolCallDiscovered(call: ToolCall) {}
+}
+
+/**
  * Abstract interface for any LLM provider capable of structured tool calling.
  */
 interface LLMProvider {
@@ -281,7 +289,8 @@ interface LLMProvider {
     systemPrompt: String,
     taskIntent: String,
     messages: List<AgentMessage>,
-    tools: List<Tool>
+    tools: List<Tool>,
+    streamListener: LLMStreamListener? = null
   ): LLMDecision
 }
 
@@ -309,7 +318,8 @@ class GeminiLLMProvider(
     systemPrompt: String,
     taskIntent: String,
     messages: List<AgentMessage>,
-    tools: List<Tool>
+    tools: List<Tool>,
+    streamListener: LLMStreamListener?
   ): LLMDecision = withContext(Dispatchers.IO) {
     if (apiKey.isBlank()) {
       return@withContext LLMDecision.ProviderError(
@@ -468,6 +478,7 @@ class GeminiLLMProvider(
           if (text.isNotBlank() && (seenTexts.isEmpty() || seenTexts.last() != text)) {
             seenTexts.add(text)
             thoughtText = if (thoughtText == null) text else "$thoughtText\n$text"
+            streamListener?.onToken(text)
           }
         }
         if (part.has("functionCall")) {
@@ -519,7 +530,8 @@ class AutonomousSandboxProvider : LLMProvider {
     systemPrompt: String,
     taskIntent: String,
     messages: List<AgentMessage>,
-    tools: List<Tool>
+    tools: List<Tool>,
+    streamListener: LLMStreamListener?
   ): LLMDecision = withContext(Dispatchers.Default) {
     val lastUserIndex = messages.indexOfLast { it.role == MessageRole.USER }
     val isFollowUp = lastUserIndex > 0

@@ -217,19 +217,19 @@ fun ModelResponseView(
           letterSpacing = 1.sp,
           color = when (step.type) {
             StepType.CONCLUSION -> AmoledStatusSuccess
-            StepType.THINKING -> AmoledIconGreyLight
+            StepType.THINKING -> Color.White
             else -> AmoledActionPrimary
           }
         )
 
         if (isActive) {
           Spacer(modifier = Modifier.width(6.dp))
-          Text(
-            text = "streaming...",
-            style = MaterialTheme.typography.labelSmall,
-            fontFamily = JetBrainsMonoFontFamily,
-            fontSize = 9.sp,
-            color = AmoledTextMuted
+          // Refined, smaller reasoning and synthesis indicator in the correct place: right in the header
+          CreativeAmoledLoadingBadge(
+            label = if (step.type == StepType.THINKING) "REASON" else "STREAM",
+            height = 18.dp,
+            showLabel = false,
+            testTag = "model_thinking_badge_${step.stepNumber}"
           )
         }
       }
@@ -239,13 +239,7 @@ fun ModelResponseView(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
       ) {
-        if (isActive) {
-          CreativeAmoledLoadingBadge(
-            label = "THINKING",
-            height = 22.dp,
-            testTag = "model_thinking_badge_${step.stepNumber}"
-          )
-        } else {
+        if (!isActive) {
           AragonStepBadge(
             stepNumber = step.stepNumber,
             type = step.type,
@@ -286,18 +280,31 @@ fun ToolCallBoxView(
   // HIDDEN BY DEFAULT! ONLY VIEW WHEN USER CLICKS [VIEW]
   var isExpanded by remember { mutableStateOf(false) }
 
-  val toolState = when {
-    isActive -> "ACTIVE"
-    step.toolStatus == ToolStatus.FAILED.name -> "FAILED"
-    step.toolStatus == ToolStatus.SUCCEEDED.name -> "FINISHED"
-    step.toolStatus == "WAITING" || step.toolStatus == "QUEUED" -> "WAITING"
-    else -> if (step.isCompleted) "FINISHED" else "WAITING"
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val isReducedMotion = remember {
+    try {
+      android.provider.Settings.Global.getFloat(
+        context.contentResolver,
+        android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+        1.0f
+      ) == 0.0f
+    } catch (_: Exception) {
+      false
+    }
   }
 
-  val activeBorderAlpha by if (toolState == "ACTIVE") {
+  val toolState = when {
+    step.toolStatus == "PENDING" || step.toolStatus == "WAITING" || step.toolStatus == "QUEUED" || step.actionStatus == com.example.agent.core.ActionExecutionStatus.PLANNED -> "PENDING"
+    isActive || step.toolStatus == ToolStatus.RUNNING.name || step.toolStatus == "ACTIVE" || (!step.isCompleted && step.toolStatus != "PENDING") -> "ACTIVE"
+    step.toolStatus == ToolStatus.FAILED.name || step.actionStatus == com.example.agent.core.ActionExecutionStatus.FAILED -> "FAILED"
+    step.toolStatus == ToolStatus.SUCCEEDED.name || step.actionStatus == com.example.agent.core.ActionExecutionStatus.COMPLETED -> "FINISHED"
+    else -> if (step.isCompleted) "FINISHED" else "PENDING"
+  }
+
+  val activeBorderAlpha by if (toolState == "ACTIVE" && !isReducedMotion) {
     val infiniteTransition = androidx.compose.animation.core.rememberInfiniteTransition(label = "tool_active_pulse")
     infiniteTransition.animateFloat(
-      initialValue = 0.45f,
+      initialValue = 0.55f,
       targetValue = 0.95f,
       animationSpec = androidx.compose.animation.core.infiniteRepeatable(
         animation = androidx.compose.animation.core.tween<Float>(900, easing = androidx.compose.animation.core.FastOutSlowInEasing),
@@ -312,7 +319,7 @@ fun ToolCallBoxView(
   // Minimalist AMOLED styling: quiet obsidian background with razor-thin hairline borders
   val borderColor = when (toolState) {
     "ACTIVE" -> AmoledActionPrimary.copy(alpha = activeBorderAlpha)
-    "WAITING" -> Color(0xFF262632)
+    "PENDING" -> Color(0xFF262632)
     "FAILED" -> AmoledStatusError.copy(alpha = 0.55f)
     "FINISHED" -> Color(0xFF1F1F28)
     else -> Color(0xFF1A1A22)
@@ -455,10 +462,30 @@ fun ToolCallBoxView(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-          // Status badge on the RIGHT with non-standard creative loading badge when active or running
-          if (isActive || step.toolStatus == "RUNNING" || step.toolStatus == "ACTIVE" || step.toolStatus == "WAITING" || !step.isCompleted) {
+          // Status badge on the RIGHT: PENDING, RUNNING, or completed badge
+          if (toolState == "PENDING") {
+            Surface(
+              shape = RoundedCornerShape(3.dp),
+              color = Color(0xFF141418),
+              border = BorderStroke(0.6.dp, Color(0xFF282834)),
+              modifier = Modifier.height(22.dp)
+            ) {
+              Box(
+                modifier = Modifier.padding(horizontal = 6.dp),
+                contentAlignment = Alignment.Center
+              ) {
+                Text(
+                  text = "PENDING",
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontSize = 9.sp,
+                  fontWeight = FontWeight.Bold,
+                  color = AmoledIconGreyLight
+                )
+              }
+            }
+          } else if (toolState == "ACTIVE") {
             CreativeAmoledLoadingBadge(
-              label = if (step.toolStatus == "WAITING") "WAIT" else "RUN",
+              label = "RUN",
               height = 22.dp,
               testTag = "tool_running_badge_${step.stepNumber}"
             )
@@ -1008,64 +1035,53 @@ fun StreamingTextContent(
   isCompleted: Boolean,
   modifier: Modifier = Modifier
 ) {
-  // Precompute word boundaries (character positions immediately following each word)
-  val wordEndIndices = remember(fullText) {
-    val indices = mutableListOf<Int>()
-    var inWord = false
-    for (i in fullText.indices) {
-      if (!fullText[i].isWhitespace()) {
-        inWord = true
-      } else if (inWord) {
-        indices.add(i)
-        inWord = false
-      }
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val isReducedMotion = remember {
+    try {
+      android.provider.Settings.Global.getFloat(
+        context.contentResolver,
+        android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+        1.0f
+      ) == 0.0f
+    } catch (_: Exception) {
+      false
     }
-    if (inWord) {
-      indices.add(fullText.length)
-    }
-    indices
   }
 
-  // If already completed when first loaded, display all words immediately to prevent re-streaming old history.
-  // When active or freshly streaming, reveal word by word.
-  var displayedWordCount by remember(isCompleted && fullText.isNotEmpty()) {
-    mutableIntStateOf(if (isCompleted || fullText.length < 25) wordEndIndices.size else 0)
-  }
+  // Smooth cadence typewriter buffer: progressively reveal characters without jarring jumpy pops
+  var displayedLength by remember { mutableIntStateOf(if (isCompleted || isReducedMotion) fullText.length else 0) }
 
-  LaunchedEffect(wordEndIndices.size, isCompleted) {
-    if (isCompleted) {
-      displayedWordCount = wordEndIndices.size
+  LaunchedEffect(fullText, isCompleted, isReducedMotion) {
+    if (isCompleted || isReducedMotion) {
+      displayedLength = fullText.length
     } else {
-      // Adaptive streaming cadence: smoothly batches words when falling behind to prevent hundreds of UI recompositions
-      while (displayedWordCount < wordEndIndices.size) {
-        val remaining = wordEndIndices.size - displayedWordCount
+      while (displayedLength < fullText.length) {
+        val remaining = fullText.length - displayedLength
         val step = when {
-          remaining > 35 -> 4
-          remaining > 15 -> 2
+          remaining > 60 -> 5
+          remaining > 20 -> 3
+          remaining > 6 -> 2
           else -> 1
         }
-        delay(32L)
-        displayedWordCount = minOf(displayedWordCount + step, wordEndIndices.size)
+        displayedLength = (displayedLength + step).coerceAtMost(fullText.length)
+        kotlinx.coroutines.delay(16L) // ~60fps smooth fluid tick
       }
     }
   }
 
-  val isStreaming = !isCompleted || displayedWordCount < wordEndIndices.size
-  val visibleCharCount = if (displayedWordCount >= wordEndIndices.size) {
-    fullText.length
-  } else {
-    wordEndIndices.getOrElse(displayedWordCount) { fullText.length }
+  val textToDisplay = remember(fullText, displayedLength) {
+    if (displayedLength >= fullText.length) fullText else fullText.take(displayedLength)
   }
 
-  val visibleText = fullText.take(visibleCharCount)
-  val blocks = remember(visibleText) { parseMarkdownBlocks(visibleText) }
+  val blocks = remember(textToDisplay) { parseMarkdownBlocks(textToDisplay) }
+  val isStreaming = !isCompleted && displayedLength < fullText.length
 
   if (blocks.isEmpty()) {
-    if (isStreaming) {
+    if (!isCompleted) {
       Text(
-        text = "█",
+        text = "▌",
         style = MaterialTheme.typography.bodyMedium,
-        color = AmoledActionPrimary,
+        color = Color.White,
         modifier = modifier
       )
     }
