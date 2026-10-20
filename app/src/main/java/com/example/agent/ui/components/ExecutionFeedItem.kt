@@ -1058,13 +1058,13 @@ fun StreamingTextContent(
       while (displayedLength < fullText.length) {
         val remaining = fullText.length - displayedLength
         val step = when {
-          remaining > 60 -> 5
-          remaining > 20 -> 3
-          remaining > 6 -> 2
+          remaining > 100 -> 8
+          remaining > 40 -> 4
+          remaining > 15 -> 2
           else -> 1
         }
         displayedLength = (displayedLength + step).coerceAtMost(fullText.length)
-        kotlinx.coroutines.delay(16L) // ~60fps smooth fluid tick
+        kotlinx.coroutines.delay(26L) // Smooth, cinematic text streaming without erratic jitter
       }
     }
   }

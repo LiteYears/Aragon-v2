@@ -505,7 +505,7 @@ fun AgentScreen(
       Column(
         modifier = Modifier
           .fillMaxWidth()
-          .background(AmoledSurface)
+          .background(AmoledBackground)
       ) {
         AgentTopHeader(
           status = state.status,
@@ -594,13 +594,17 @@ fun AgentScreen(
             }
           }
 
-          // Advanced Pure-Typography AMOLED Workflow Suggestions (Zero Icons)
+          // Advanced Pure-Typography AMOLED Workflow Suggestions
           AmoledWorkflowSuggestions(
             visible = showSuggestions && state.executionFeed.isEmpty(),
             onDismiss = { showSuggestions = false },
             onSelectSuggestion = { prompt, _ ->
               inputText = prompt
               inputFocusRequester.requestFocus()
+            },
+            onExecuteSuggestion = { prompt, expectedArtifact ->
+              inputText = ""
+              viewModel.submitTask(prompt, expectedArtifact)
             }
           )
 
@@ -620,19 +624,26 @@ fun AgentScreen(
             }
           }
 
-          // Transformed user prompt input field container (AMOLED pure black with thinner crisp white outline)
+          // Floating modern flat user prompt input field container (pure white, no borders, subtle elevation)
           Surface(
-            shape = RoundedCornerShape(22.dp),
-            color = Color.Black,
-            border = androidx.compose.foundation.BorderStroke(0.8.dp, Color.White),
+            shape = RoundedCornerShape(26.dp),
+            color = Color.White,
+            border = null,
+            shadowElevation = 8.dp,
             modifier = Modifier
               .fillMaxWidth()
+              .animateContentSize(
+                animationSpec = spring(
+                  dampingRatio = 0.85f,
+                  stiffness = 380f
+                )
+              )
               .testTag("prompt_input_container")
           ) {
             Column(
               modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 8.dp)
+                .padding(vertical = 10.dp)
             ) {
 
               // Attached Documents Strip (if any)
@@ -651,16 +662,16 @@ fun AgentScreen(
                 ) {
                   documentMessages.forEach { message ->
                     Surface(
-                      shape = RoundedCornerShape(4.dp),
-                      color = Color(0xFF141418),
-                      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledBorderSubtle),
+                      shape = RoundedCornerShape(8.dp),
+                      color = Color(0xFFF1F5F9),
+                      border = null,
                       modifier = Modifier.clickable { viewModel.clearDocumentMessages() }
                     ) {
                       Text(
                         text = message,
                         fontFamily = JetBrainsMonoFontFamily,
                         fontSize = 9.sp,
-                        color = AmoledIconGreyLight,
+                        color = Color(0xFF475569),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -669,20 +680,20 @@ fun AgentScreen(
                   }
                   attachedDocuments.forEach { doc ->
                     Surface(
-                      shape = RoundedCornerShape(4.dp),
-                      color = Color(0xFF101014),
-                      border = androidx.compose.foundation.BorderStroke(1.dp, AmoledStatusSuccess.copy(alpha = 0.5f)),
+                      shape = RoundedCornerShape(8.dp),
+                      color = Color(0xFFECFDF5),
+                      border = null,
                       modifier = Modifier.testTag("doc_chip_${doc.id}")
                     ) {
                       Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(start = 7.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
+                        modifier = Modifier.padding(start = 8.dp, end = 5.dp, top = 3.dp, bottom = 3.dp)
                       ) {
                         Text(
                           text = "📎 ${doc.displayName.take(16)}",
                           fontFamily = JetBrainsMonoFontFamily,
                           fontSize = 9.sp,
-                          color = AmoledStatusSuccess,
+                          color = Color(0xFF047857),
                           maxLines = 1
                         )
                         Spacer(modifier = Modifier.width(4.dp))
@@ -693,7 +704,7 @@ fun AgentScreen(
                             .clickable { viewModel.setDocumentInScope(doc.id, false) },
                           contentAlignment = Alignment.Center
                         ) {
-                          Text(text = "×", fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp, color = AmoledIconGreyLight)
+                          Text(text = "×", fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp, color = Color(0xFF047857))
                         }
                       }
                     }
@@ -701,21 +712,21 @@ fun AgentScreen(
                 }
               }
 
-              // Text Input Area (Clean text area with Flutter fluidity, without static blue side line)
+              // Text Input Area
               Box(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .heightIn(min = 44.dp)
-                  .padding(horizontal = 14.dp, vertical = 4.dp)
+                  .heightIn(min = 40.dp)
+                  .padding(horizontal = 16.dp, vertical = 4.dp)
               ) {
                 if (inputText.isEmpty()) {
                   Text(
-                    text = if (state.status == AgentStatus.COMPLETED) "Continue conversation with a follow-up..." else "Assign a task or type / for more",
+                    text = if (state.status == AgentStatus.COMPLETED) "Continue conversation with a follow-up..." else "Ask Aragon or describe a task...",
                     style = TextStyle(
                       fontFamily = InterFontFamily,
                       fontSize = 15.sp,
-                      color = Color(0xFF9CA3AF),
-                      lineHeight = 21.sp,
+                      color = Color(0xFF64748B),
+                      lineHeight = 22.sp,
                       fontWeight = FontWeight.Normal
                     )
                   )
@@ -727,12 +738,12 @@ fun AgentScreen(
                   textStyle = TextStyle(
                     fontFamily = InterFontFamily,
                     fontSize = 15.sp,
-                    color = Color.White,
-                    lineHeight = 21.sp,
+                    color = Color(0xFF0F172A),
+                    lineHeight = 22.sp,
                     fontWeight = FontWeight.Normal
                   ),
-                  cursorBrush = SolidColor(Color.White),
-                  maxLines = 6,
+                  cursorBrush = SolidColor(Color(0xFF0F172A)),
+                  maxLines = 7,
                   keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                   keyboardActions = KeyboardActions(onSend = {
                     if (inputText.isNotBlank()) {
@@ -749,28 +760,34 @@ fun AgentScreen(
                 )
               }
 
-              // Bottom Actions Row: Left (+, 🔌) and Right (💬|||, 🎙, ↑) with Flutter fluid styling
+              // Bottom Actions Row: Left (+ attach, tool pill) and Right (mic, clear, send/stop)
               Row(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 4.dp),
+                  .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
               ) {
-                // Left action buttons: + (attachment) and 🔌 (MCP / tools)
+                // Left action buttons: Attachment (+) with clean popover, and tool status pill
                 Row(
                   verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(6.dp)
+                  horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                   // Attachment button with options menu
                   Box {
+                    val attachInteraction = remember { MutableInteractionSource() }
                     Box(
                       modifier = Modifier
-                        .size(32.dp)
+                        .size(34.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF181820))
-                        .border(BorderStroke(1.dp, Color(0xFF262632)), CircleShape)
-                        .clickable(role = Role.Button, onClickLabel = "Attach document, photo, or folder") {
+                        .background(Color(0xFFF1F5F9))
+                        .tactilePress(attachInteraction)
+                        .clickable(
+                          interactionSource = attachInteraction,
+                          indication = ripple(color = Color(0xFF0F172A).copy(alpha = 0.15f)),
+                          role = Role.Button,
+                          onClickLabel = "Attach document, photo, or folder"
+                        ) {
                           showAttachmentMenu = true
                         }
                         .testTag("add_attachment_btn"),
@@ -779,8 +796,8 @@ fun AgentScreen(
                       Icon(
                         imageVector = Icons.Default.Add,
                         contentDescription = "Attach files",
-                        tint = Color(0xFFE2E8F0),
-                        modifier = Modifier.size(18.dp)
+                        tint = Color(0xFF334155),
+                        modifier = Modifier.size(19.dp)
                       )
                     }
 
@@ -788,18 +805,18 @@ fun AgentScreen(
                       expanded = showAttachmentMenu,
                       onDismissRequest = { showAttachmentMenu = false },
                       modifier = Modifier
-                        .background(Color(0xFF121216))
-                        .border(BorderStroke(1.dp, Color(0xFF2C2C34)), RoundedCornerShape(12.dp))
+                        .background(Color.White)
+                        .border(BorderStroke(1.dp, Color(0xFFE2E8F0)), RoundedCornerShape(16.dp))
                     ) {
                       DropdownMenuItem(
                         text = {
                           Column {
-                            Text("Upload Documents & Files", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color.White)
-                            Text("PDF, DOCX, XLSX, CSV, Code, Text", fontFamily = InterFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+                            Text("Upload Documents & Files", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color(0xFF0F172A))
+                            Text("PDF, DOCX, XLSX, CSV, Code, Text", fontFamily = InterFontFamily, fontSize = 10.sp, color = Color(0xFF64748B))
                           }
                         },
                         leadingIcon = {
-                          Icon(Icons.Default.FolderOpen, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(18.dp))
+                          Icon(Icons.Default.FolderOpen, contentDescription = null, tint = Color(0xFF0284C7), modifier = Modifier.size(18.dp))
                         },
                         onClick = {
                           showAttachmentMenu = false
@@ -810,12 +827,12 @@ fun AgentScreen(
                       DropdownMenuItem(
                         text = {
                           Column {
-                            Text("Upload Photos & Gallery", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color.White)
-                            Text("Images, diagrams, screenshots", fontFamily = InterFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+                            Text("Upload Photos & Gallery", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color(0xFF0F172A))
+                            Text("Images, diagrams, screenshots", fontFamily = InterFontFamily, fontSize = 10.sp, color = Color(0xFF64748B))
                           }
                         },
                         leadingIcon = {
-                          Icon(Icons.Default.GraphicEq, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(18.dp))
+                          Icon(Icons.Default.GraphicEq, contentDescription = null, tint = Color(0xFF059669), modifier = Modifier.size(18.dp))
                         },
                         onClick = {
                           showAttachmentMenu = false
@@ -826,12 +843,12 @@ fun AgentScreen(
                       DropdownMenuItem(
                         text = {
                           Column {
-                            Text("Upload Folder", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color.White)
-                            Text("Directory tree or project codebase", fontFamily = InterFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+                            Text("Upload Folder", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color(0xFF0F172A))
+                            Text("Directory tree or project codebase", fontFamily = InterFontFamily, fontSize = 10.sp, color = Color(0xFF64748B))
                           }
                         },
                         leadingIcon = {
-                          Icon(Icons.Default.Inventory2, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(18.dp))
+                          Icon(Icons.Default.Inventory2, contentDescription = null, tint = Color(0xFFD97706), modifier = Modifier.size(18.dp))
                         },
                         onClick = {
                           showAttachmentMenu = false
@@ -842,12 +859,12 @@ fun AgentScreen(
                       DropdownMenuItem(
                         text = {
                           Column {
-                            Text("Manage Documents (${documents.size})", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color.White)
-                            Text("OCR, search indexing, and scope", fontFamily = InterFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+                            Text("Manage Documents (${documents.size})", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color(0xFF0F172A))
+                            Text("OCR, search indexing, and scope", fontFamily = InterFontFamily, fontSize = 10.sp, color = Color(0xFF64748B))
                           }
                         },
                         leadingIcon = {
-                          Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFA78BFA), modifier = Modifier.size(18.dp))
+                          Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFF7C3AED), modifier = Modifier.size(18.dp))
                         },
                         onClick = {
                           showAttachmentMenu = false
@@ -857,41 +874,67 @@ fun AgentScreen(
                       )
                     }
                   }
+
+                  // Quick tools indicator pill
+                  Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFF1F5F9),
+                    border = null,
+                    modifier = Modifier.clickable { showMcpDialog = true }
+                  ) {
+                    Row(
+                      verticalAlignment = Alignment.CenterVertically,
+                      modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
+                    ) {
+                      Box(
+                        modifier = Modifier
+                          .size(6.dp)
+                          .clip(CircleShape)
+                          .background(Color(0xFF10B981))
+                      )
+                      Spacer(modifier = Modifier.width(5.dp))
+                      Text(
+                        text = "TOOLS",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF334155)
+                      )
+                    }
+                  }
                 }
 
-                // Right action buttons: Speech wave, Mic, and Circular Send Arrow
+                // Right action buttons: Clear, Mic, and Circular Send/Stop Arrow
                 Row(
                   verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(6.dp)
+                  horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                  // Voice mode wave icon
-                  Box(
-                    modifier = Modifier
-                      .size(32.dp)
-                      .clip(CircleShape)
-                      .background(Color(0xFF181820))
-                      .border(BorderStroke(1.dp, Color(0xFF262632)), CircleShape)
-                      .clickable(role = Role.Button, onClickLabel = "Voice agent mode") {
-                        android.widget.Toast.makeText(context, "Voice agent mode active", android.widget.Toast.LENGTH_SHORT).show()
-                      }
-                      .testTag("voice_mode_btn"),
-                    contentAlignment = Alignment.Center
-                  ) {
-                    Icon(
-                      imageVector = Icons.Default.GraphicEq,
-                      contentDescription = "Voice mode",
-                      tint = Color(0xFF94A3B8),
-                      modifier = Modifier.size(17.dp)
-                    )
+                  if (inputText.isNotBlank()) {
+                    Box(
+                      modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFF1F5F9))
+                        .clickable(role = Role.Button, onClickLabel = "Clear text") {
+                          inputText = ""
+                        },
+                      contentAlignment = Alignment.Center
+                    ) {
+                      Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Clear",
+                        tint = Color(0xFF475569),
+                        modifier = Modifier.size(17.dp)
+                      )
+                    }
                   }
 
                   // Microphone button
                   Box(
                     modifier = Modifier
-                      .size(32.dp)
+                      .size(34.dp)
                       .clip(CircleShape)
-                      .background(Color(0xFF181820))
-                      .border(BorderStroke(1.dp, Color(0xFF262632)), CircleShape)
+                      .background(Color(0xFFF1F5F9))
                       .clickable(role = Role.Button, onClickLabel = "Microphone input") {
                         android.widget.Toast.makeText(context, "Listening for voice prompt...", android.widget.Toast.LENGTH_SHORT).show()
                       }
@@ -901,12 +944,12 @@ fun AgentScreen(
                     Icon(
                       imageVector = Icons.Default.Mic,
                       contentDescription = "Voice input",
-                      tint = Color(0xFF94A3B8),
-                      modifier = Modifier.size(17.dp)
+                      tint = Color(0xFF334155),
+                      modifier = Modifier.size(18.dp)
                     )
                   }
 
-                  // Circular send / stop button with Flutter dynamic spring scale
+                  // Circular send / stop button
                   val canSend = inputText.isNotBlank()
                   val isRunning = state.canCancel
                   val sendScale by animateFloatAsState(
@@ -916,20 +959,16 @@ fun AgentScreen(
                   )
                   Box(
                     modifier = Modifier
-                      .size(34.dp)
+                      .size(36.dp)
                       .graphicsLayer {
                         scaleX = sendScale
                         scaleY = sendScale
                       }
                       .clip(CircleShape)
                       .background(
-                        if (isRunning) Color(0xFF991B1B)
-                        else if (canSend) Color(0xFFF8FAFC)
-                        else Color(0xFF1A1A22)
-                      )
-                      .border(
-                        BorderStroke(1.dp, if (isRunning) Color(0xFFEF4444) else if (canSend) Color.White else Color(0xFF282834)),
-                        CircleShape
+                        if (isRunning) Color(0xFFEF4444)
+                        else if (canSend) Color(0xFF0F172A)
+                        else Color(0xFFE2E8F0)
                       )
                       .clickable(
                         enabled = canSend || isRunning,
@@ -950,7 +989,7 @@ fun AgentScreen(
                     if (isRunning) {
                       Text(
                         text = "◼",
-                        color = Color(0xFFFECDD3),
+                        color = Color.White,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                       )
@@ -958,8 +997,8 @@ fun AgentScreen(
                       Icon(
                         imageVector = Icons.Default.ArrowUpward,
                         contentDescription = "Send",
-                        tint = if (canSend) Color(0xFF0F172A) else Color(0xFF475569),
-                        modifier = Modifier.size(17.dp)
+                        tint = if (canSend) Color.White else Color(0xFF94A3B8),
+                        modifier = Modifier.size(18.dp)
                       )
                     }
                   }
@@ -1217,7 +1256,7 @@ fun AgentScreen(
                     modifier = Modifier
                       .fillMaxSize()
                       .testTag("execution_feed_list"),
-                    contentPadding = PaddingValues(top = 4.dp, bottom = 54.dp)
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 80.dp)
                   ) {
                     itemsIndexed(
                       items = filteredFeed,
@@ -1228,16 +1267,6 @@ fun AgentScreen(
                         step = step,
                         isLast = index == filteredFeed.size - 1 && state.status != AgentStatus.COMPLETED
                       )
-                    }
-
-                    // Active Model Reasoning Indicator Card (Displayed when model is actively reasoning/thinking)
-                    if (state.status == AgentStatus.THINKING || state.status == AgentStatus.PLANNING || (state.status == AgentStatus.EXECUTING_TOOL && filteredFeed.lastOrNull()?.isCompleted == true)) {
-                      item(key = "active_model_reasoning_indicator") {
-                        ActiveReasoningIndicatorCard(
-                          isPlanning = state.status == AgentStatus.PLANNING,
-                          currentAction = state.currentAction
-                        )
-                      }
                     }
 
                   if (state.status == AgentStatus.COMPLETED) {
@@ -2357,7 +2386,7 @@ fun AgentTopHeader(
 ) {
   Surface(
     modifier = Modifier.fillMaxWidth(),
-    color = Color(0xFF0C0C0F),
+    color = AmoledBackground,
     border = null
   ) {
     Column(
@@ -2365,7 +2394,7 @@ fun AgentTopHeader(
         .fillMaxWidth()
         .statusBarsPadding()
         .displayCutoutPadding()
-        .padding(horizontal = 12.dp, vertical = 8.dp)
+        .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
       Row(
         modifier = Modifier.fillMaxWidth(),

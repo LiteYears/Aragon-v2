@@ -417,30 +417,24 @@ fun AragonHeaderButton(
   enabled: Boolean = true,
   testTag: String = "header_button"
 ) {
-  val shape = RoundedCornerShape(14.dp)
+  val shape = RoundedCornerShape(16.dp)
   val interactionSource = remember { MutableInteractionSource() }
 
   val bg = when (variant) {
-    AragonButtonVariant.PRIMARY -> Color.White
     AragonButtonVariant.DANGER -> Color(0xFFEF4444)
-    AragonButtonVariant.SUCCESS -> Color(0xFF10B981)
-    AragonButtonVariant.MUTED -> Color(0xFF1E1E24)
-    else -> Color(0xFF222228)
+    else -> Color.White
   }
 
   val textColor = when (variant) {
-    AragonButtonVariant.PRIMARY -> Color(0xFF0A0A0C)
     AragonButtonVariant.DANGER -> Color.White
-    AragonButtonVariant.SUCCESS -> Color.White
-    AragonButtonVariant.MUTED -> Color(0xFFE2E8F0)
-    else -> Color.White
+    else -> Color(0xFF0F172A)
   }
 
   Surface(
     shape = shape,
     color = bg,
     border = null,
-    shadowElevation = if (variant == AragonButtonVariant.PRIMARY) 2.dp else 1.dp,
+    shadowElevation = 3.dp,
     modifier = modifier
       .tactilePress(interactionSource)
       .clickable(
@@ -455,8 +449,8 @@ fun AragonHeaderButton(
     Box(
       contentAlignment = Alignment.Center,
       modifier = Modifier
-        .height(28.dp)
-        .padding(horizontal = 11.dp)
+        .height(30.dp)
+        .padding(horizontal = 12.dp)
     ) {
       Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -473,10 +467,11 @@ fun AragonHeaderButton(
           overflow = TextOverflow.Ellipsis
         )
         if (badge != null) {
-          Spacer(modifier = Modifier.width(4.dp))
+          Spacer(modifier = Modifier.width(5.dp))
           Surface(
             shape = CircleShape,
-            color = if (variant == AragonButtonVariant.PRIMARY) Color.Black else Color.White,
+            color = if (variant == AragonButtonVariant.DANGER) Color.White else Color(0xFF0F172A),
+            border = null,
             modifier = Modifier.padding(start = 2.dp)
           ) {
             Text(
@@ -484,8 +479,8 @@ fun AragonHeaderButton(
               fontFamily = JetBrainsMonoFontFamily,
               fontWeight = FontWeight.Bold,
               fontSize = 9.sp,
-              color = if (variant == AragonButtonVariant.PRIMARY) Color.White else Color.Black,
-              modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+              color = if (variant == AragonButtonVariant.DANGER) Color(0xFFEF4444) else Color.White,
+              modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
             )
           }
         }
@@ -517,22 +512,19 @@ fun AragonHeaderCopyButton(
   }
 
   val displayLabel = if (hasCopied) "COPIED" else label
-  val shape = RoundedCornerShape(6.dp)
+  val shape = RoundedCornerShape(16.dp)
   val interactionSource = remember { MutableInteractionSource() }
-
-  val targetBg = if (hasCopied) Color(0xFF102416) else Color(0xFF141414)
-  val targetBorder = if (hasCopied) AmoledStatusSuccess.copy(alpha = 0.6f) else AmoledBorderSubtle
-  val targetColor = if (hasCopied) AmoledStatusSuccess else AmoledIconGreyLight
 
   Surface(
     shape = shape,
-    color = targetBg,
-    border = BorderStroke(1.dp, targetBorder),
+    color = Color.White,
+    border = null,
+    shadowElevation = 3.dp,
     modifier = modifier
       .tactilePress(interactionSource)
       .clickable(
         interactionSource = interactionSource,
-        indication = ripple(color = AmoledStatusSuccess.copy(alpha = 0.3f)),
+        indication = ripple(color = Color(0xFF0F172A).copy(alpha = 0.2f)),
         role = Role.Button,
         onClickLabel = "Copy log"
       ) {
@@ -556,16 +548,16 @@ fun AragonHeaderCopyButton(
     Box(
       contentAlignment = Alignment.Center,
       modifier = Modifier
-        .height(28.dp)
-        .padding(horizontal = 9.dp)
+        .height(30.dp)
+        .padding(horizontal = 12.dp)
     ) {
       Text(
         text = displayLabel,
         style = MaterialTheme.typography.labelSmall,
-        fontFamily = JetBrainsMonoFontFamily,
-        fontWeight = if (hasCopied) FontWeight.Bold else FontWeight.SemiBold,
-        fontSize = 10.sp,
-        color = targetColor,
+        fontFamily = InterFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 11.sp,
+        color = if (hasCopied) Color(0xFF10B981) else Color(0xFF0F172A),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis
       )

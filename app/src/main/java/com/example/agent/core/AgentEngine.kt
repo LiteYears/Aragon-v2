@@ -1911,7 +1911,8 @@ class AgentEngine(
           override fun onToken(token: String) {
             streamedTokens.append(token)
             val now = System.currentTimeMillis()
-            if (now - lastStreamUpdateMs > 32L || token.contains('\n')) {
+            val hasNewline = token.contains('\n')
+            if (now - lastStreamUpdateMs > 110L || (hasNewline && now - lastStreamUpdateMs > 60L)) {
               lastStreamUpdateMs = now
               if (!streamStepCreated) {
                 stepCounter++

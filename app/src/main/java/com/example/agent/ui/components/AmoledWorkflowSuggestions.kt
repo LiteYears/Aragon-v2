@@ -5,7 +5,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -20,9 +19,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,14 +38,6 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.AmoledActionPrimary
-import com.example.ui.theme.AmoledBorder
-import com.example.ui.theme.AmoledBorderSubtle
-import com.example.ui.theme.AmoledSurface
-import com.example.ui.theme.AmoledSurfaceElevated
-import com.example.ui.theme.AmoledTextMuted
-import com.example.ui.theme.AmoledTextPrimary
-import com.example.ui.theme.AmoledTextSecondary
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.JetBrainsMonoFontFamily
 
@@ -62,20 +55,20 @@ data class WorkflowSuggestion(
 )
 
 /**
- * Advanced Pure-Typography AMOLED Workflow Suggestions.
+ * Floating Modern Flat Workflow Suggestions Bar.
  *
  * Implements:
- * 1. ZERO icons - 100% typography-driven visual hierarchy.
- * 2. Unified AMOLED styling (deep obsidian surfaces, subtle borders, high-contrast typography).
- * 3. InterFontFamily for readable descriptions and titles; JetBrainsMonoFontFamily for badges, tags, and controls.
- * 4. Multi-category filtering for advanced autonomous operations (Browser JS, Code, Research, Systems).
- * 5. Clean text-only dismissal and expand triggers.
+ * 1. Clean White floating flat container with NO borders and subtle soft elevation, matching the user prompt field.
+ * 2. High-contrast typography: Dark slate (#0F172A) headers, clear readable descriptions, and refined badges.
+ * 3. Categorized interactive workflows with practical, high-value tasks.
+ * 4. Dual action: one-tap to populate prompt or immediate launch.
  */
 @Composable
 fun AmoledWorkflowSuggestions(
   visible: Boolean,
   onDismiss: () -> Unit,
   onSelectSuggestion: (prompt: String, expectedArtifact: String?) -> Unit,
+  onExecuteSuggestion: ((prompt: String, expectedArtifact: String?) -> Unit)? = null,
   modifier: Modifier = Modifier
 ) {
   var selectedCategory by remember { mutableStateOf("ALL") }
@@ -83,63 +76,54 @@ fun AmoledWorkflowSuggestions(
   val allSuggestions = remember {
     listOf(
       WorkflowSuggestion(
-        id = "browser_js",
-        category = "BROWSER",
-        categoryTag = "PLAYWRIGHT JS",
-        title = "Execute Playwright JS DOM Extraction",
-        description = "Navigates target URL, evaluates JavaScript DOM queries, and extracts tabular dataset into workspace.",
-        prompt = "Use Playwright MCP to navigate to https://news.ycombinator.com, execute JavaScript with browser_evaluate to extract the top 10 post titles and link URLs, and save the structured result to hn_top_posts.json.",
-        expectedArtifact = "hn_top_posts.json"
-      ),
-      WorkflowSuggestion(
         id = "deep_research",
         category = "RESEARCH",
-        categoryTag = "DEEP RESEARCH",
-        title = "Autonomous Web & Preprints Investigation",
-        description = "Conducts multi-query web and arXiv research, cross-references sources, and synthesizes technical brief.",
-        prompt = "Perform deep web research on recent breakthroughs in autonomous AI agent tool execution and context engineering. Cross-reference academic preprints and synthesize an authoritative technical summary report.",
+        categoryTag = "WEB RESEARCH",
+        title = "Deep Technical Research & Synthesis",
+        description = "Conducts multi-query web research, cross-references sources, and synthesizes an authoritative technical brief.",
+        prompt = "Perform deep web research on production best practices for autonomous AI agent tool execution, error recovery, and context engineering. Cross-reference academic preprints and authoritative sources, and synthesize an executive research brief.",
         expectedArtifact = "agent_architecture_brief.md"
       ),
       WorkflowSuggestion(
         id = "code_interpreter",
         category = "CODE",
-        categoryTag = "CODE INTERPRETER",
-        title = "Data Processing & Statistical Analysis",
-        description = "Generates and executes numerical data pipeline, verifies calculation invariants, and outputs clean matrix.",
-        prompt = "Write and execute a Python script using code_interpreter that generates statistical metrics (mean, standard deviation, percentiles) for a simulated benchmark dataset and produces a formatted markdown summary.",
+        categoryTag = "DATA & PYTHON",
+        title = "Statistical Data Analysis & Metrics",
+        description = "Executes Python in sandbox to compute distribution statistics, calculate percentiles, and output clean markdown.",
+        prompt = "Write and execute a Python script using code_interpreter to generate statistical metrics (mean, standard deviation, percentiles) for a simulated benchmark dataset and produce a formatted markdown report.",
         expectedArtifact = "benchmark_metrics.md"
       ),
       WorkflowSuggestion(
-        id = "sqlite_analytics",
-        category = "SYSTEMS",
-        categoryTag = "SQLITE MCP",
-        title = "Workspace Database Schema & Query",
-        description = "Creates relational SQLite tables, populates structured records, and executes analytical queries.",
-        prompt = "Use the SQLite MCP server to create a project tracking schema with tasks, durations, and priorities. Insert sample workload records and run an aggregated performance query.",
-        expectedArtifact = "workspace_queries.sql"
+        id = "browser_js",
+        category = "BROWSER",
+        categoryTag = "PLAYWRIGHT JS",
+        title = "Live DOM Extraction & Data Scraper",
+        description = "Navigates target web page, executes DOM extraction, and saves tabular JSON dataset to workspace.",
+        prompt = "Use Playwright MCP to navigate to https://news.ycombinator.com, evaluate JavaScript DOM queries to extract the top 10 articles (title, points, URL), and save the structured result into hn_top_posts.json.",
+        expectedArtifact = "hn_top_posts.json"
       ),
       WorkflowSuggestion(
         id = "doc_synthesis",
-        category = "RESEARCH",
-        categoryTag = "PDF SYNTHESIS",
-        title = "Compile Executive Technical Specification",
-        description = "Gathers architectural requirements, formats clean tables, and compiles deliverable PDF document.",
-        prompt = "Compile a comprehensive technical specification for an autonomous agent kernel with deterministic tool orchestration, state recovery, and error taxonomy. Export as an executive document.",
+        category = "DOCS",
+        categoryTag = "PDF COMPILER",
+        title = "Compile Executive PDF Specification",
+        description = "Gathers requirements, designs clean structured tables, and compiles an executive deliverable PDF document.",
+        prompt = "Compile a comprehensive technical specification for an autonomous agent engine with deterministic tool orchestration, state recovery, and error taxonomy. Export as an executive document.",
         expectedArtifact = "executive_spec.pdf"
       ),
       WorkflowSuggestion(
         id = "system_audit",
-        category = "CODE",
-        categoryTag = "SYSTEM AUDIT",
-        title = "Terminal & Filesystem Verification",
-        description = "Inspects environment topology, verifies file boundaries, and benchmarks tool execution pipeline.",
+        category = "SYSTEMS",
+        categoryTag = "WORKSPACE AUDIT",
+        title = "Filesystem & Tool Environment Audit",
+        description = "Inspects sandbox topology, checks file boundaries, tests tool discovery, and outputs an audit log.",
         prompt = "Inspect the sandbox environment topology, list available tools in the registry, verify workspace filesystem permissions, and output an audit status log.",
         expectedArtifact = "environment_audit.log"
       )
     )
   }
 
-  val categories = remember { listOf("ALL", "BROWSER", "CODE", "RESEARCH", "SYSTEMS") }
+  val categories = remember { listOf("ALL", "RESEARCH", "CODE", "BROWSER", "DOCS", "SYSTEMS") }
 
   val filteredSuggestions = remember(selectedCategory) {
     if (selectedCategory == "ALL") allSuggestions
@@ -153,76 +137,80 @@ fun AmoledWorkflowSuggestions(
     modifier = modifier
   ) {
     Surface(
-      shape = RoundedCornerShape(14.dp),
-      color = Color(0xFF09090D),
-      border = BorderStroke(0.85.dp, Color(0xFF1E1E28)),
+      shape = RoundedCornerShape(22.dp),
+      color = Color.White,
+      border = null,
+      shadowElevation = 8.dp,
       modifier = Modifier
         .fillMaxWidth()
-        .padding(horizontal = 4.dp, vertical = 4.dp)
+        .padding(horizontal = 2.dp, vertical = 6.dp)
         .testTag("amoled_workflow_suggestions_panel")
     ) {
       Column(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(12.dp)
+          .padding(14.dp)
       ) {
-        // Pure typography header: Title on left, pure text dismiss on right (NO ICONS)
+        // Modern Header: Title on left, dismiss pill on right
         Row(
           modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 8.dp),
+            .padding(bottom = 10.dp),
           horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically
         ) {
           Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
               text = "SUGGESTED WORKFLOWS",
-              fontFamily = JetBrainsMonoFontFamily,
+              fontFamily = InterFontFamily,
               fontWeight = FontWeight.Bold,
-              fontSize = 11.sp,
-              letterSpacing = 1.2.sp,
-              color = Color(0xFF8E8E98)
+              fontSize = 11.5.sp,
+              letterSpacing = 1.sp,
+              color = Color(0xFF0F172A)
             )
             Spacer(modifier = Modifier.width(8.dp))
-            Box(
-              modifier = Modifier
-                .background(Color(0xFF14141E), RoundedCornerShape(4.dp))
-                .padding(horizontal = 6.dp, vertical = 2.dp)
+            Surface(
+              shape = CircleShape,
+              color = Color(0xFF0F172A),
+              border = null
             ) {
               Text(
                 text = "${filteredSuggestions.size}",
                 fontFamily = JetBrainsMonoFontFamily,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 10.sp,
-                color = Color(0xFF38BDF8)
+                fontWeight = FontWeight.Bold,
+                fontSize = 9.sp,
+                color = Color.White,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
               )
             }
           }
 
-          // Pure typography dismiss button (NO ICONS)
+          // Modern flat dismiss pill button
           Surface(
-            shape = RoundedCornerShape(6.dp),
-            color = Color(0xFF14141E),
-            border = BorderStroke(0.75.dp, Color(0xFF262634)),
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFFF1F5F9),
+            border = null,
             modifier = Modifier
-              .clickable(role = Role.Button, onClickLabel = "Dismiss suggestions") {
-                onDismiss()
-              }
+              .clickable(
+                role = Role.Button,
+                onClickLabel = "Dismiss suggestions",
+                onClick = onDismiss
+              )
               .testTag("dismiss_suggestions_button")
           ) {
             Text(
               text = "DISMISS",
-              fontFamily = JetBrainsMonoFontFamily,
-              fontWeight = FontWeight.Bold,
+              fontFamily = InterFontFamily,
+              fontWeight = FontWeight.SemiBold,
               fontSize = 10.sp,
-              letterSpacing = 0.8.sp,
-              color = Color(0xFFA1A1AA),
-              modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+              letterSpacing = 0.5.sp,
+              color = Color(0xFF475569),
+              modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
             )
           }
         }
 
-        // Pure typography category filter pills (NO ICONS)
+        // Modern Category Filter Pills
         Row(
           modifier = Modifier
             .fillMaxWidth()
@@ -234,12 +222,9 @@ fun AmoledWorkflowSuggestions(
           categories.forEach { cat ->
             val isSelected = cat == selectedCategory
             Surface(
-              shape = RoundedCornerShape(6.dp),
-              color = if (isSelected) Color(0xFF161622) else Color(0xFF0E0E14),
-              border = BorderStroke(
-                width = if (isSelected) 1.dp else 0.75.dp,
-                color = if (isSelected) Color(0xFF38BDF8) else Color(0xFF20202C)
-              ),
+              shape = RoundedCornerShape(14.dp),
+              color = if (isSelected) Color(0xFF0F172A) else Color(0xFFF1F5F9),
+              border = null,
               modifier = Modifier
                 .clickable(role = Role.Tab, onClickLabel = "Filter category $cat") {
                   selectedCategory = cat
@@ -248,30 +233,30 @@ fun AmoledWorkflowSuggestions(
             ) {
               Text(
                 text = cat,
-                fontFamily = JetBrainsMonoFontFamily,
+                fontFamily = InterFontFamily,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                fontSize = 10.sp,
-                letterSpacing = 0.6.sp,
-                color = if (isSelected) Color(0xFF38BDF8) else Color(0xFF71717A),
-                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                fontSize = 10.5.sp,
+                letterSpacing = 0.4.sp,
+                color = if (isSelected) Color.White else Color(0xFF475569),
+                modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
               )
             }
           }
         }
 
-        // Advanced suggestion list cards
+        // Workflows List Cards
         Column(
           modifier = Modifier.fillMaxWidth(),
-          verticalArrangement = Arrangement.spacedBy(6.dp)
+          verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-          filteredSuggestions.take(3).forEachIndexed { index, suggestion ->
+          filteredSuggestions.take(3).forEach { suggestion ->
             Surface(
-              shape = RoundedCornerShape(10.dp),
-              color = Color(0xFF0F0F16),
-              border = BorderStroke(0.75.dp, Color(0xFF1B1B26)),
+              shape = RoundedCornerShape(16.dp),
+              color = Color(0xFFF8FAFC),
+              border = null,
               modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
+                .clip(RoundedCornerShape(16.dp))
                 .clickable {
                   onSelectSuggestion(suggestion.prompt, suggestion.expectedArtifact)
                 }
@@ -280,44 +265,51 @@ fun AmoledWorkflowSuggestions(
               Column(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .padding(horizontal = 10.dp, vertical = 8.dp)
+                  .padding(12.dp)
               ) {
-                // Top row: Category tag + deliverable indicator (pure typography)
+                // Top row: Category tag + Deliverable indicator
                 Row(
                   modifier = Modifier.fillMaxWidth(),
                   horizontalArrangement = Arrangement.SpaceBetween,
                   verticalAlignment = Alignment.CenterVertically
                 ) {
-                  Text(
-                    text = "[ ${suggestion.categoryTag} ]",
-                    fontFamily = JetBrainsMonoFontFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 9.5.sp,
-                    color = Color(0xFF38BDF8)
-                  )
+                  Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = Color(0xFFE2E8F0),
+                    border = null
+                  ) {
+                    Text(
+                      text = suggestion.categoryTag,
+                      fontFamily = JetBrainsMonoFontFamily,
+                      fontWeight = FontWeight.Bold,
+                      fontSize = 9.sp,
+                      color = Color(0xFF0369A1),
+                      modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                  }
                   if (!suggestion.expectedArtifact.isNullOrBlank()) {
                     Text(
                       text = "→ ${suggestion.expectedArtifact}",
                       fontFamily = JetBrainsMonoFontFamily,
-                      fontWeight = FontWeight.Medium,
-                      fontSize = 9.5.sp,
-                      color = Color(0xFF10B981)
+                      fontWeight = FontWeight.SemiBold,
+                      fontSize = 10.sp,
+                      color = Color(0xFF059669)
                     )
                   }
                 }
 
-                Spacer(modifier = Modifier.height(3.dp))
+                Spacer(modifier = Modifier.height(4.dp))
 
                 // Suggestion Title
                 Text(
                   text = suggestion.title,
                   fontFamily = InterFontFamily,
-                  fontWeight = FontWeight.SemiBold,
-                  fontSize = 13.sp,
-                  color = Color(0xFFF4F4F5)
+                  fontWeight = FontWeight.Bold,
+                  fontSize = 13.5.sp,
+                  color = Color(0xFF0F172A)
                 )
 
-                Spacer(modifier = Modifier.height(2.dp))
+                Spacer(modifier = Modifier.height(3.dp))
 
                 // Suggestion Description
                 Text(
@@ -325,9 +317,60 @@ fun AmoledWorkflowSuggestions(
                   fontFamily = InterFontFamily,
                   fontWeight = FontWeight.Normal,
                   fontSize = 11.5.sp,
-                  lineHeight = 15.sp,
-                  color = Color(0xFF94A3B8)
+                  lineHeight = 16.sp,
+                  color = Color(0xFF475569)
                 )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Quick Action Bar: "USE PROMPT" and "RUN NOW ➔"
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.End,
+                  verticalAlignment = Alignment.CenterVertically
+                ) {
+                  Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFFE2E8F0),
+                    border = null,
+                    modifier = Modifier.clickable {
+                      onSelectSuggestion(suggestion.prompt, suggestion.expectedArtifact)
+                    }
+                  ) {
+                    Text(
+                      text = "USE PROMPT",
+                      fontFamily = InterFontFamily,
+                      fontWeight = FontWeight.SemiBold,
+                      fontSize = 9.5.sp,
+                      color = Color(0xFF334155),
+                      modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                    )
+                  }
+
+                  Spacer(modifier = Modifier.width(6.dp))
+
+                  Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFF0F172A),
+                    border = null,
+                    modifier = Modifier.clickable {
+                      if (onExecuteSuggestion != null) {
+                        onExecuteSuggestion(suggestion.prompt, suggestion.expectedArtifact)
+                      } else {
+                        onSelectSuggestion(suggestion.prompt, suggestion.expectedArtifact)
+                      }
+                    }
+                  ) {
+                    Text(
+                      text = "RUN ➔",
+                      fontFamily = InterFontFamily,
+                      fontWeight = FontWeight.Bold,
+                      fontSize = 9.5.sp,
+                      color = Color.White,
+                      modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                    )
+                  }
+                }
               }
             }
           }
@@ -338,7 +381,7 @@ fun AmoledWorkflowSuggestions(
 }
 
 /**
- * Sleek Pure-Typography Trigger Pill to re-open templates when hidden.
+ * Floating Modern Flat Trigger Pill to re-open templates when hidden.
  */
 @Composable
 fun AmoledWorkflowReopenTrigger(
@@ -348,26 +391,29 @@ fun AmoledWorkflowReopenTrigger(
 ) {
   if (visible) {
     Surface(
-      shape = RoundedCornerShape(8.dp),
-      color = Color(0xFF0C0C12),
-      border = BorderStroke(0.75.dp, Color(0xFF222230)),
+      shape = RoundedCornerShape(16.dp),
+      color = Color.White,
+      border = null,
+      shadowElevation = 3.dp,
       modifier = modifier
-        .clickable(role = Role.Button, onClickLabel = "Show suggested workflows") {
-          onClick()
-        }
+        .clickable(
+          role = Role.Button,
+          onClickLabel = "Show suggested workflows",
+          onClick = onClick
+        )
         .testTag("reopen_workflow_suggestions")
     ) {
       Row(
-        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
       ) {
         Text(
-          text = "+ WORKFLOW TEMPLATES",
-          fontFamily = JetBrainsMonoFontFamily,
+          text = "+ WORKFLOWS",
+          fontFamily = InterFontFamily,
           fontWeight = FontWeight.Bold,
-          fontSize = 10.sp,
-          letterSpacing = 0.8.sp,
-          color = Color(0xFF71717A)
+          fontSize = 10.5.sp,
+          letterSpacing = 0.5.sp,
+          color = Color(0xFF0F172A)
         )
       }
     }

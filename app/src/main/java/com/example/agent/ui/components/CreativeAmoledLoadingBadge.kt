@@ -57,7 +57,7 @@ fun CreativeAmoledLoadingBadge(
   label: String = "RUN",
   modifier: Modifier = Modifier,
   accentColor: Color = AmoledActionPrimary,
-  height: Dp = 22.dp,
+  height: Dp = 18.dp,
   showLabel: Boolean = true,
   testTag: String = "creative_loading_badge"
 ) {
@@ -68,7 +68,7 @@ fun CreativeAmoledLoadingBadge(
     initialValue = 0f,
     targetValue = 360f,
     animationSpec = infiniteRepeatable(
-      animation = tween(1400, easing = LinearEasing),
+      animation = tween(1200, easing = LinearEasing),
       repeatMode = RepeatMode.Restart
     ),
     label = "orbital_rotation"
@@ -79,7 +79,7 @@ fun CreativeAmoledLoadingBadge(
     initialValue = 0.35f,
     targetValue = 1.0f,
     animationSpec = infiniteRepeatable(
-      animation = tween(700, easing = FastOutSlowInEasing),
+      animation = tween(650, easing = FastOutSlowInEasing),
       repeatMode = RepeatMode.Reverse
     ),
     label = "quantum_pulse"
@@ -90,25 +90,25 @@ fun CreativeAmoledLoadingBadge(
     initialValue = 0f,
     targetValue = (2 * Math.PI).toFloat(),
     animationSpec = infiniteRepeatable(
-      animation = tween(1200, easing = LinearEasing),
+      animation = tween(1100, easing = LinearEasing),
       repeatMode = RepeatMode.Restart
     ),
     label = "wave_phase"
   )
 
-  val outerRingStroke = remember { Stroke(width = 2f) }
-  val arcStroke = remember { Stroke(width = 3.2f, cap = StrokeCap.Round) }
+  val outerRingStroke = remember { Stroke(width = 1.5f) }
+  val arcStroke = remember { Stroke(width = 2.4f, cap = StrokeCap.Round) }
 
   Surface(
-    shape = RoundedCornerShape(4.dp),
-    color = Color(0xFF121214),
-    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.45f)),
+    shape = RoundedCornerShape(9.dp),
+    color = Color(0xFF101014),
+    border = BorderStroke(0.6.dp, accentColor.copy(alpha = 0.35f)),
     modifier = modifier
       .height(height)
       .testTag(testTag)
   ) {
     Row(
-      modifier = Modifier.padding(horizontal = 7.dp),
+      modifier = Modifier.padding(horizontal = 6.dp),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.Center
     ) {
