@@ -334,7 +334,7 @@ class DeliverableTracker(
     return sb.toString()
   }
 
-  private fun findMatchingFile(fileName: String): File? {
+  fun findMatchingFile(fileName: String): File? {
     val direct = File(workspaceDir, fileName)
     if (direct.exists()) return direct
 

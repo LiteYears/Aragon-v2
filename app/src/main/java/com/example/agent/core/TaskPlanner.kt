@@ -653,7 +653,7 @@ class TaskPlanner(private val goal: String) {
       val pStatus = when (aStep.status) {
         ActionExecutionStatus.COMPLETED -> PlanStepStatus.COMPLETED
         ActionExecutionStatus.EXECUTING, ActionExecutionStatus.DISPATCHED -> PlanStepStatus.IN_PROGRESS
-        ActionExecutionStatus.FAILED -> PlanStepStatus.FAILED
+        ActionExecutionStatus.FAILED, ActionExecutionStatus.BLOCKED -> PlanStepStatus.FAILED
         ActionExecutionStatus.SKIPPED, ActionExecutionStatus.SUPERSEDED -> PlanStepStatus.BLOCKED
         ActionExecutionStatus.PLANNED -> PlanStepStatus.PENDING
       }

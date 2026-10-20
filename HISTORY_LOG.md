@@ -117,4 +117,14 @@ EVIDENCE: compile_applet: BUILD SUCCESSFUL; gradle :app:testDebugUnitTest: BUILD
 RISK: None; purely presentation and user interaction refinements.
 NEXT: Ready for user verification.
 
-
+[2026-10-20T00:30:00Z] [SESSION-6] [ACTION: reliability & workflow repair]
+FILE: AgentEngine.kt, AgentScreen.kt, AgentModel.kt, ErrorTaxonomy.kt, UnifiedRecovery.kt, WorkflowReliabilityAndRecoveryTest.kt
+REASON: Address all user requirements for workflow loops, UI cleaning, tool recovery, completion verification, and error reporting:
+  1. Surgical Workflow Loops: Track action results and state changes via computeExecutionStateFingerprint. If two consecutive actions produce no new evidence or progress, stop retrying, trigger replanning once, then terminate with clear error if still blocked. Repetitive tool calls or reasoning without new justification are rejected.
+  2. UI Cleanup: Removed Cloud and Project icons/selector pills from above the user prompt input field in AgentScreen.kt, replacing them with a sleek, minimalist AMOLED typography indicator.
+  3. Tool Failure Recovery: Implemented authoritative 4-class taxonomy (TRANSIENT, PERMISSION_POLICY, INVALID_INPUT, UNAVAILABLE_TOOL). Retries transient failures once with backoff; for policy failures, switches to approved alternative tools (e.g. read_file/write_file/terminal/web_search); never repeats a blocked operation unchanged while preserving the original verbatim error.
+  4. Completion Verification: Introduced RequirementCheckStatus (PASS, FAIL, BLOCKED, NOT_VERIFIED). Deliverables and plan steps are authoritatively verified against disk evidence. The engine never claims all checks passed when any required check is blocked, skipped, or unverified.
+  5. Error Reporting: StructuredErrorReport preserves exact tool error strings verbatim, cleanly separates observed facts (exit code, stdout, stderr) from inferred causes without inventing unseen commands, and includes the actual failed operation and recovery result.
+EVIDENCE: compile_applet: BUILD SUCCESSFUL; gradle :app:testDebugUnitTest: 32/32 tests passing cleanly (BUILD SUCCESSFUL).
+RISK: None; fully backward-compatible, strictly validated by automated tests.
+NEXT: Ready for production use.

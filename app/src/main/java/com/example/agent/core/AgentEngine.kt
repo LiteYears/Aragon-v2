@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.SupervisorJob
 import java.io.File
 import java.util.UUID
 
@@ -68,9 +69,22 @@ class AgentEngine(
   var onFilesSyncedToSandbox: ((count: Int, files: List<String>) -> Unit)? = null
   private var configuredProvider: LLMProvider = initialProvider
   private var activeProvider: LLMProvider = initialProvider
+  private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
   private var activeJob: Job? = null
-  private val scope = CoroutineScope(Dispatchers.Default)
   private val dedupPipeline = ReasoningDedupPipeline()
+
+  private var consecutiveZeroProgressActions = 0
+  private var hasReplannedForZeroProgress = false
+  private var lastFilesystemStateFingerprint: String? = null
+
+  private fun computeExecutionStateFingerprint(): String {
+    val files = try {
+      workspaceDir.walkTopDown().maxDepth(3).filter { it.isFile }.map { "${it.name}:${it.length()}:${it.lastModified()}" }.sorted().joinToString(";")
+    } catch (_: Exception) { "" }
+    val deliverables = deliverableTracker.deliverablesMap.values.joinToString(";") { "${it.path}:${it.status}:${it.sizeBytes}" }
+    val findings = scratchpad.loadAllFindings().size
+    return "$files|$deliverables|$findings"
+  }
 
   init {
     workspaceDir.mkdirs()
@@ -1248,6 +1262,7 @@ class AgentEngine(
       if (!evalConclusion.isSatisfied || evalConclusion.failureCategory != null || item.isSkippedLoop) {
         val evalStepId = "step_recovery_${call.callId}"
         val evalTitle = if (item.isSkippedLoop) "Recovery: Loop Intervention" else "Recovery: ${evalConclusion.recoveryStrategy.name}"
+        val evalContent = evalConclusion.structuredError?.format() ?: evalConclusion.explanation
         updatedFeed = addOrUpdateStep(
           updatedFeed,
           ExecutionStep(
@@ -1255,9 +1270,10 @@ class AgentEngine(
             stepNumber = stepCounterProvider(),
             type = StepType.RECOVERY,
             title = evalTitle,
-            content = evalConclusion.explanation,
+            content = evalContent,
             recoveryStrategy = evalConclusion.recoveryStrategy.name,
-            failureCategory = evalConclusion.failureCategory?.name
+            failureCategory = evalConclusion.failureCategory?.name,
+            structuredError = evalConclusion.structuredError
           )
         ).toMutableList()
 
@@ -1274,6 +1290,24 @@ class AgentEngine(
         if (evalConclusion.recoveryStrategy == RecoveryStrategy.RETRY_WITH_BACKOFF && evalConclusion.backoffMs > 0) {
           delay(evalConclusion.backoffMs)
         }
+      }
+
+      // Track action results and state changes for workflow loop detection
+      val currentFingerprint = computeExecutionStateFingerprint()
+      val stateChanged = currentFingerprint != lastFilesystemStateFingerprint
+      lastFilesystemStateFingerprint = currentFingerprint
+
+      val hasNovelObservation = toolResult.status == ToolStatus.SUCCEEDED &&
+        observation.summary.isNotBlank() &&
+        observation.outcome != ToolExecutionOutcome.SUCCESS_EMPTY &&
+        observation.outcome != ToolExecutionOutcome.CONDITION_NOT_FOUND &&
+        observation.outcome != ToolExecutionOutcome.EXECUTION_FAILED
+
+      val madeProgress = stateChanged || hasNovelObservation
+      if (madeProgress) {
+        consecutiveZeroProgressActions = 0
+      } else {
+        consecutiveZeroProgressActions++
       }
 
       updatedActions = updatedActions + "Dispatched '${call.toolName}' with ${formatArguments(call.arguments)}"
@@ -1470,7 +1504,7 @@ class AgentEngine(
       Log.w("AgentEngine", "syncArtifacts failed during step verification (non-fatal)", e)
     }
     val freshArtifacts = artifactManager.syncWorkspace(task.id)
-    val verificationResult = verifyObjective(task, state.copy(artifacts = freshArtifacts))
+    val verificationResult = verifyObjective(task, state.copy(artifacts = freshArtifacts), planner)
 
     // Prevent premature completion if required actionable steps remain uncompleted
     val uncompletedRequiredSteps = planner.getActionableSteps().filter {
@@ -2196,45 +2230,115 @@ class AgentEngine(
           if (!updateStateIfActive(task, currentState)) return
 
           // =========================================================================
-          // PHASE 6: EVALUATE OUTCOME (REPLANNING / STAGNATION)
+          // PHASE 6: EVALUATE OUTCOME (SURGICAL LOOP GUARD & REPLANNING)
           // =========================================================================
-          val isStagnantLoop = recoveryManager.loopDetector.getZeroProgressStreak() >= 3
-          val isIneffectiveStep = planner.isStepIneffective()
-          if (planner.hasReplanRequest() || planner.isStagnant() || isStagnantLoop || isIneffectiveStep) {
-            val replanReason = planner.getReplanReason() ?: when {
-              isStagnantLoop -> "Zero-progress loop detected: ${recoveryManager.loopDetector.getZeroProgressStreak()} consecutive operations produced no state delta or new information."
-              isIneffectiveStep -> "Ineffective plan step: Active step attempted repeatedly without progress. Alternative strategy required."
-              planner.isStagnant() -> "Stagnation detected: ${planner.getNoProgressCount()} turns without measurable progress."
-              else -> "Plan adjustment required based on recent observations."
-            }
-            planner.clearReplanReason()
+          if (consecutiveZeroProgressActions >= 2) {
+            if (!hasReplannedForZeroProgress) {
+              // Stop retrying, replan once!
+              hasReplannedForZeroProgress = true
+              consecutiveZeroProgressActions = 0 // Reset counter for the replanned turn
+              val loopReason = "Workflow loop detected: Two consecutive actions produced no new evidence or progress. Stopping retries and replanning once."
+              planner.clearReplanReason()
 
-            val replanStep = ExecutionStep(
-              id = "step_replan_t${turnCounter}_${task.id}",
-              stepNumber = ++stepCounter,
-              type = StepType.REPLANNING,
-              title = "Replanning Required",
-              content = replanReason,
-              recoveryStrategy = RecoveryStrategy.REVISE_PLAN.name
-            )
-            val replanNotice = "System Notice (Replanning Required): $replanReason\n" +
-              "Please reconsider your approach, update the plan, and select a different action to make progress."
-            val replanMsg = AgentMessage(
-              role = MessageRole.USER,
-              content = replanNotice
-            )
-            val replanMessages = if (currentState.messages.lastOrNull()?.content == replanNotice) {
-              currentState.messages
+              val replanStep = ExecutionStep(
+                id = "step_replan_loop_t${turnCounter}_${task.id}",
+                stepNumber = ++stepCounter,
+                type = StepType.REPLANNING,
+                title = "Replanning Required (No Progress)",
+                content = loopReason,
+                recoveryStrategy = RecoveryStrategy.REVISE_PLAN.name
+              )
+              val replanNotice = "System Notice (Replanning Required): $loopReason\n" +
+                "Do NOT repeat the same reasoning or tool call without new justification. You must select an alternative tool or approach."
+              val replanMsg = AgentMessage(
+                role = MessageRole.USER,
+                content = replanNotice
+              )
+              val replanMessages = if (currentState.messages.lastOrNull()?.content == replanNotice) {
+                currentState.messages
+              } else {
+                currentState.messages + replanMsg
+              }
+              currentState = currentState.copy(
+                status = AgentStatus.REPLANNING,
+                currentAction = "Replanning: $loopReason",
+                messages = replanMessages,
+                executionFeed = addOrUpdateStep(currentState.executionFeed, replanStep)
+              )
+              if (!updateStateIfActive(task, currentState)) return
             } else {
-              currentState.messages + replanMsg
+              // Replan was attempted once, but execution remains blocked without state change or evidence!
+              val fatalLoopMsg = "Workflow halted: Two consecutive actions produced no new evidence or progress. Replanning was attempted once, but execution remains blocked without state change or evidence."
+              scratchpad.saveCheckpoint(
+                AgentCheckpoint(
+                  taskGoal = task.goal,
+                  currentTurn = turnCounter,
+                  completedSections = planner.completedDescriptions(),
+                  pendingSections = planner.pendingDescriptions(),
+                  planItems = currentState.plan,
+                  artifactPaths = artifactManager.getArtifacts().map { it.path },
+                  totalFindingsCount = scratchpad.loadAllFindings().size,
+                  status = "FAILED",
+                  recoveryState = recoveryManager.exportStateJson()
+                )
+              )
+              recordTaskCompletion(task, AgentStatus.FAILED, fatalLoopMsg, artifactManager.getArtifacts())
+              val haltStep = ExecutionStep(
+                id = "step_zeroprog_halt_${task.id}",
+                stepNumber = ++stepCounter,
+                type = StepType.ERROR,
+                title = "Execution Halted (Zero Progress)",
+                content = fatalLoopMsg
+              )
+              currentState = currentState.copy(
+                status = AgentStatus.FAILED,
+                currentAction = fatalLoopMsg,
+                error = fatalLoopMsg,
+                executionFeed = addOrUpdateStep(currentState.executionFeed, haltStep),
+                canCancel = false
+              )
+              updateStateIfActive(task, currentState)
+              return
             }
-            currentState = currentState.copy(
-              status = AgentStatus.REPLANNING,
-              currentAction = "Replanning: $replanReason",
-              messages = replanMessages,
-              executionFeed = addOrUpdateStep(currentState.executionFeed, replanStep)
-            )
-            if (!updateStateIfActive(task, currentState)) return
+          } else {
+            val isStagnantLoop = recoveryManager.loopDetector.getZeroProgressStreak() >= 3
+            val isIneffectiveStep = planner.isStepIneffective()
+            if (planner.hasReplanRequest() || planner.isStagnant() || isStagnantLoop || isIneffectiveStep) {
+              val replanReason = planner.getReplanReason() ?: when {
+                isStagnantLoop -> "Zero-progress loop detected: ${recoveryManager.loopDetector.getZeroProgressStreak()} consecutive operations produced no state delta or new information."
+                isIneffectiveStep -> "Ineffective plan step: Active step attempted repeatedly without progress. Alternative strategy required."
+                planner.isStagnant() -> "Stagnation detected: ${planner.getNoProgressCount()} turns without measurable progress."
+                else -> "Plan adjustment required based on recent observations."
+              }
+              planner.clearReplanReason()
+
+              val replanStep = ExecutionStep(
+                id = "step_replan_t${turnCounter}_${task.id}",
+                stepNumber = ++stepCounter,
+                type = StepType.REPLANNING,
+                title = "Replanning Required",
+                content = replanReason,
+                recoveryStrategy = RecoveryStrategy.REVISE_PLAN.name
+              )
+              val replanNotice = "System Notice (Replanning Required): $replanReason\n" +
+                "Please reconsider your approach, update the plan, and select a different action to make progress."
+              val replanMsg = AgentMessage(
+                role = MessageRole.USER,
+                content = replanNotice
+              )
+              val replanMessages = if (currentState.messages.lastOrNull()?.content == replanNotice) {
+                currentState.messages
+              } else {
+                currentState.messages + replanMsg
+              }
+              currentState = currentState.copy(
+                status = AgentStatus.REPLANNING,
+                currentAction = "Replanning: $replanReason",
+                messages = replanMessages,
+                executionFeed = addOrUpdateStep(currentState.executionFeed, replanStep)
+              )
+              if (!updateStateIfActive(task, currentState)) return
+            }
           }
         }
       }
@@ -2247,7 +2351,7 @@ class AgentEngine(
       } catch (e: Exception) {
         Log.w("AgentEngine", "syncArtifacts failed during final verification (non-fatal)", e)
       }
-      val finalVerification = verifyObjective(task, currentState)
+      val finalVerification = verifyObjective(task, currentState, planner)
       if (finalVerification.isSatisfied) {
         val autoConclusion = "Objective authoritatively verified on disk (${finalVerification.verifiedArtifacts.joinToString()}) upon reaching step budget."
         artifactManager.cleanTemporaryFiles()
@@ -2529,7 +2633,7 @@ class AgentEngine(
   fun extractRequiredOutputs(goal: String): Set<String> {
     val results = mutableSetOf<String>()
     val regexes = listOf(
-      Regex("""(?:record|write|save|output|produce|generate|create)\s+(?:findings|results|report|audit|document)?\s*(?:to|in|into)?\s+[`"']?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]{2,4})[`"']?""", RegexOption.IGNORE_CASE),
+      Regex("""(?:record|write|save|output|produce|generate|create)\s+(?:findings|results|report|audit|document|file)?\s*(?:to|in|into)?\s*[`"']?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]{2,4})[`"']?""", RegexOption.IGNORE_CASE),
       Regex("""(?:deliverable|artifact|report):\s*[`"']?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]{2,4})[`"']?""", RegexOption.IGNORE_CASE)
     )
     for (regex in regexes) {
@@ -2541,6 +2645,19 @@ class AgentEngine(
         }
       }
     }
+    // Also include explicit filenames mentioned in goal text
+    val words = goal.split("\\s+".toRegex())
+    for (word in words) {
+      val cleanWord = word.trim('.', ',', '"', '\'', '`')
+      if (cleanWord.contains('.') && cleanWord.length > 3) {
+        val ext = cleanWord.substringAfterLast('.', "").lowercase()
+        if (ext in listOf("txt", "md", "json", "py", "sh", "csv", "html", "docx", "xlsx", "xls", "pdf")) {
+          if (cleanWord !in listOf("scribd.com", "example.com", "google.com", "github.com", "index.html")) {
+            results.add(cleanWord)
+          }
+        }
+      }
+    }
     return results
   }
 
@@ -2548,69 +2665,164 @@ class AgentEngine(
    * Authoritatively verifies whether the objective is satisfied on the filesystem.
    *
    * Crucial invariants:
-   * 1. A successful tool call does NOT imply task completion.
-   * 2. Deliverables must be verified on disk: exist, be regular files, non-empty, and readable.
-   * 3. Acceptance checks must verify all requested deliverables.
+   * 1. Mark each requirement PASS, FAIL, BLOCKED, or NOT VERIFIED based on recorded evidence.
+   * 2. Never claim all checks passed when any required check is blocked, skipped, or unverified.
+   * 3. Deliverables must be verified on disk: exist, be regular files, non-empty, and readable.
    * 4. Missing requirements are reported honestly as partial completion when applicable.
    */
-  private fun verifyObjective(task: Task, state: AgentState): VerificationResult {
+  private fun verifyObjective(task: Task, state: AgentState, planner: TaskPlanner? = null): VerificationResult {
     val report = deliverableTracker.scanAndVerify(artifactManager)
+    val checks = mutableListOf<RequirementCheck>()
+    val verified = mutableListOf<String>()
+    val missing = mutableListOf<String>()
 
     // 0. Explicit expected deliverable or tracked deliverables check
     if (task.expectedArtifact != null || report.totalRequired > 0) {
-      if (report.allSatisfied) {
-        return VerificationResult(
-          isSatisfied = true,
-          details = "All ${report.verifiedCount} required deliverable(s) authoritatively verified on disk: [${report.verifiedNames.joinToString()}].",
-          verifiedArtifacts = report.verifiedNames
-        )
-      } else {
-        return VerificationResult(
-          isSatisfied = false,
-          details = "Required deliverable verification pending: ${report.pendingOrInvalidDetails}"
-        )
+      report.deliverables.forEach { d ->
+        val file = File(workspaceDir, d.path)
+        val matchingFile = if (file.exists()) file else deliverableTracker.findMatchingFile(d.name)
+        val targetPath = d.path
+
+        if (matchingFile != null && matchingFile.exists() && matchingFile.isFile && matchingFile.canRead() && matchingFile.length() > 0) {
+          val diskValidation = ArtifactValidatorRegistry.validateExistingFile(matchingFile)
+          if (diskValidation.isValid) {
+            checks.add(
+              RequirementCheck(
+                name = "Deliverable '${d.name}'",
+                status = RequirementCheckStatus.PASS,
+                evidence = "Verified on disk: ${matchingFile.length()} bytes, readable, passed format validation.",
+                target = targetPath
+              )
+            )
+            if (!verified.contains(targetPath)) verified.add(targetPath)
+          } else {
+            checks.add(
+              RequirementCheck(
+                name = "Deliverable '${d.name}'",
+                status = RequirementCheckStatus.FAIL,
+                evidence = "File exists (${matchingFile.length()} bytes) but failed format validation: ${diskValidation.errorMessage}",
+                target = targetPath
+              )
+            )
+            missing.add("${d.name} (${diskValidation.errorMessage})")
+          }
+        } else if (matchingFile != null && matchingFile.exists() && matchingFile.length() == 0L) {
+          checks.add(
+            RequirementCheck(
+              name = "Deliverable '${d.name}'",
+              status = RequirementCheckStatus.FAIL,
+              evidence = "File exists on disk but is 0 bytes (empty).",
+              target = targetPath
+            )
+          )
+          missing.add("${d.name} (0 bytes)")
+        } else {
+          val lastAttempt = state.executionFeed.lastOrNull { it.content.contains(d.name) || (it.toolName in listOf("write_file", "edit_file", "build_pdf_document", "recreate_document")) }
+          val isBlocked = lastAttempt?.structuredError?.failureClass in listOf(ToolFailureClass.PERMISSION_POLICY, ToolFailureClass.UNAVAILABLE_TOOL) ||
+            lastAttempt?.failureCategory in listOf(ActionFailureCategory.PERMISSION_ERROR.name, ActionFailureCategory.MISSING_DEPENDENCY.name)
+          if (isBlocked) {
+            checks.add(
+              RequirementCheck(
+                name = "Deliverable '${d.name}'",
+                status = RequirementCheckStatus.BLOCKED,
+                evidence = "Deliverable creation was blocked by security policy, permissions, or missing dependency.",
+                target = targetPath
+              )
+            )
+            missing.add("${d.name} [BLOCKED]")
+          } else {
+            checks.add(
+              RequirementCheck(
+                name = "Deliverable '${d.name}'",
+                status = RequirementCheckStatus.NOT_VERIFIED,
+                evidence = "Deliverable does not exist on disk in workspace.",
+                target = targetPath
+              )
+            )
+            missing.add("${d.name} [NOT VERIFIED]")
+          }
+        }
       }
     }
-
-    val verified = mutableListOf<String>()
-    val missing = mutableListOf<String>()
 
     // 1. Strict deliverable check from explicit task outputs (e.g. audit_scribd.md)
     val requiredOutputs = extractRequiredOutputs(task.goal)
     for (out in requiredOutputs) {
-      val f = File(workspaceDir, out)
-      if (!f.exists() || !f.isFile || !f.canRead() || f.length() == 0L) {
-        missing.add(out)
-      } else {
-        val validation = ArtifactValidatorRegistry.validateExistingFile(f)
-        if (validation.isValid) {
-          if (!verified.contains(out)) verified.add(out)
+      if (checks.none { it.target == out || it.name.contains(out) }) {
+        val f = File(workspaceDir, out)
+        if (!f.exists() || !f.isFile || !f.canRead() || f.length() == 0L) {
+          val lastAttempt = state.executionFeed.lastOrNull { it.content.contains(out) || (it.toolName in listOf("write_file", "edit_file", "build_pdf_document", "recreate_document")) }
+          val isBlocked = lastAttempt?.structuredError?.failureClass in listOf(ToolFailureClass.PERMISSION_POLICY, ToolFailureClass.UNAVAILABLE_TOOL) ||
+            lastAttempt?.failureCategory in listOf(ActionFailureCategory.PERMISSION_ERROR.name, ActionFailureCategory.MISSING_DEPENDENCY.name) ||
+            state.toolExecutions.any { it.arguments["path"]?.toString()?.contains(out) == true && it.status == ToolStatus.FAILED }
+          val checkStatus = if (isBlocked) RequirementCheckStatus.BLOCKED else RequirementCheckStatus.NOT_VERIFIED
+          checks.add(
+            RequirementCheck(
+              name = "Required output '$out'",
+              status = checkStatus,
+              evidence = if (isBlocked) "Blocked by policy or permissions" else "File missing or 0 bytes on disk.",
+              target = out
+            )
+          )
+          missing.add(if (isBlocked) "$out [BLOCKED]" else "$out [NOT VERIFIED]")
         } else {
-          missing.add("$out (${validation.errorMessage})")
+          val validation = ArtifactValidatorRegistry.validateExistingFile(f)
+          if (validation.isValid) {
+            checks.add(
+              RequirementCheck(
+                name = "Required output '$out'",
+                status = RequirementCheckStatus.PASS,
+                evidence = "Verified on disk: ${f.length()} bytes, readable, passed validation.",
+                target = out
+              )
+            )
+            if (!verified.contains(out)) verified.add(out)
+          } else {
+            checks.add(
+              RequirementCheck(
+                name = "Required output '$out'",
+                status = RequirementCheckStatus.FAIL,
+                evidence = "Validation failed: ${validation.errorMessage}",
+                target = out
+              )
+            )
+            missing.add("$out (${validation.errorMessage})")
+          }
         }
       }
     }
 
     // 2. Inferred deliverable from goal text
     val cleanWord = inferDeliverableFilename(task.goal)
-    if (cleanWord != null) {
+    if (cleanWord != null && checks.none { it.target == cleanWord || it.name.contains(cleanWord) }) {
       val file = File(workspaceDir, cleanWord)
       val goalLower = task.goal.lowercase()
       if (goalLower.contains("delete") || goalLower.contains("remove")) {
         if (file.exists()) {
-          return VerificationResult(
-            isSatisfied = false,
-            details = "File '$cleanWord' was requested to be deleted but still exists on disk.",
-            missingRequirements = listOf("Deletion of $cleanWord")
+          checks.add(
+            RequirementCheck(
+              name = "Deletion of '$cleanWord'",
+              status = RequirementCheckStatus.FAIL,
+              evidence = "File was requested to be deleted but still exists on disk.",
+              target = cleanWord
+            )
           )
+          missing.add("Deletion of $cleanWord")
         } else {
+          checks.add(
+            RequirementCheck(
+              name = "Deletion of '$cleanWord'",
+              status = RequirementCheckStatus.PASS,
+              evidence = "File deletion confirmed on disk.",
+              target = cleanWord
+            )
+          )
           if (!verified.contains("Deleted $cleanWord")) verified.add("Deleted $cleanWord")
         }
       } else if (goalLower.contains("create") || goalLower.contains("write") || goalLower.contains("produce") ||
                  goalLower.contains("generate") || goalLower.contains("record") || goalLower.contains("save") ||
                  goalLower.contains("store") || goalLower.contains("output") || goalLower.contains("transform")) {
         val effectiveFile = if (file.exists()) file else {
-          // If cleanWord is a .docx or .xlsx, check if any non-empty matching file exists in workspace
           if (cleanWord.endsWith(".docx", ignoreCase = true)) {
             workspaceDir.listFiles()?.firstOrNull { it.isFile && it.name.endsWith(".docx", ignoreCase = true) && it.length() > 0 } ?: file
           } else if (cleanWord.endsWith(".xlsx", ignoreCase = true) || cleanWord.endsWith(".xls", ignoreCase = true)) {
@@ -2620,31 +2832,128 @@ class AgentEngine(
           }
         }
         if (!effectiveFile.exists() || !effectiveFile.isFile || !effectiveFile.canRead() || effectiveFile.length() == 0L) {
-          if (!missing.contains(effectiveFile.name)) missing.add(effectiveFile.name)
+          checks.add(
+            RequirementCheck(
+              name = "Produce '${effectiveFile.name}'",
+              status = RequirementCheckStatus.NOT_VERIFIED,
+              evidence = "File missing or empty on disk.",
+              target = effectiveFile.name
+            )
+          )
+          missing.add(effectiveFile.name)
         } else {
           val diskValidation = ArtifactValidatorRegistry.validateExistingFile(effectiveFile)
           if (diskValidation.isValid) {
+            checks.add(
+              RequirementCheck(
+                name = "Produce '${effectiveFile.name}'",
+                status = RequirementCheckStatus.PASS,
+                evidence = "Verified on disk: ${effectiveFile.length()} bytes, readable, passed validation.",
+                target = effectiveFile.name
+              )
+            )
             if (!verified.contains(effectiveFile.name)) verified.add(effectiveFile.name)
           } else {
-            val desc = "${effectiveFile.name} (${diskValidation.errorMessage})"
-            if (!missing.contains(desc)) missing.add(desc)
+            checks.add(
+              RequirementCheck(
+                name = "Produce '${effectiveFile.name}'",
+                status = RequirementCheckStatus.FAIL,
+                evidence = "Validation failed: ${diskValidation.errorMessage}",
+                target = effectiveFile.name
+              )
+            )
+            missing.add("${effectiveFile.name} (${diskValidation.errorMessage})")
           }
         }
       }
     }
 
-    // If explicit deliverables were requested and any are missing:
-    if (missing.isNotEmpty()) {
-      return VerificationResult(
-        isSatisfied = false,
-        details = "Required deliverable(s) [${missing.joinToString()}] have not been verified on disk or are empty/unreadable.",
-        verifiedArtifacts = verified,
-        missingRequirements = missing,
-        isPartial = verified.isNotEmpty()
+    // 3. Actionable steps from plan
+    val actionableSteps = planner?.getActionableSteps() ?: emptyList()
+    if (actionableSteps.isNotEmpty()) {
+      for (step in actionableSteps) {
+        val checkName = "Plan Step: ${step.description.take(50)}"
+        when (step.status) {
+          ActionExecutionStatus.COMPLETED -> {
+            checks.add(
+              RequirementCheck(
+                name = checkName,
+                status = RequirementCheckStatus.PASS,
+                evidence = step.completionEvidence.firstOrNull() ?: step.observations.lastOrNull() ?: "Step marked completed with recorded result."
+              )
+            )
+          }
+          ActionExecutionStatus.BLOCKED -> {
+            checks.add(
+              RequirementCheck(
+                name = checkName,
+                status = RequirementCheckStatus.BLOCKED,
+                evidence = step.lastError ?: "Step marked blocked."
+              )
+            )
+          }
+          ActionExecutionStatus.SKIPPED -> {
+            val wasBlockedPredecessor = step.lastError?.contains("blocking", ignoreCase = true) == true ||
+              step.lastError?.contains("halting", ignoreCase = true) == true
+            checks.add(
+              RequirementCheck(
+                name = checkName,
+                status = if (wasBlockedPredecessor) RequirementCheckStatus.BLOCKED else RequirementCheckStatus.NOT_VERIFIED,
+                evidence = step.lastError ?: "Step skipped."
+              )
+            )
+          }
+          ActionExecutionStatus.FAILED -> {
+            checks.add(
+              RequirementCheck(
+                name = checkName,
+                status = RequirementCheckStatus.FAIL,
+                evidence = step.lastError ?: "Step execution failed."
+              )
+            )
+          }
+          ActionExecutionStatus.SUPERSEDED -> {
+            checks.add(
+              RequirementCheck(
+                name = checkName,
+                status = RequirementCheckStatus.NOT_VERIFIED,
+                evidence = step.lastError ?: "Step was superseded during plan revision."
+              )
+            )
+          }
+          ActionExecutionStatus.PLANNED, ActionExecutionStatus.DISPATCHED, ActionExecutionStatus.EXECUTING -> {
+            checks.add(
+              RequirementCheck(
+                name = checkName,
+                status = RequirementCheckStatus.NOT_VERIFIED,
+                evidence = "Step has not been completed or verified."
+              )
+            )
+          }
+          else -> {
+            checks.add(
+              RequirementCheck(
+                name = checkName,
+                status = RequirementCheckStatus.NOT_VERIFIED,
+                evidence = "Step status unverified."
+              )
+            )
+          }
+        }
+      }
+    }
+
+    // 4. Tool execution health
+    if (state.toolExecutions.isEmpty() && checks.isEmpty()) {
+      checks.add(
+        RequirementCheck(
+          name = "Perform task actions",
+          status = RequirementCheckStatus.NOT_VERIFIED,
+          evidence = "No actions or diagnostic verifications have been performed."
+        )
       )
     }
 
-    // 3. Last tool must not be in a failed state (unless it was an anti-stagnation intervention skip or diagnostic evaluation)
     val lastExecution = state.toolExecutions.lastOrNull()
     if (lastExecution != null && lastExecution.status == ToolStatus.FAILED) {
       val isInterventionSkip = lastExecution.error?.contains("Intervention:") == true
@@ -2652,50 +2961,61 @@ class AgentEngine(
         g.contains("test") || g.contains("check") || g.contains("see if") || g.contains("probe") || g.contains("inspect") || g.contains("diagnose") || g.contains("audit")
       }
       if (!isInterventionSkip && !isDiagnosticTask) {
-        return VerificationResult(
-          isSatisfied = false,
-          details = "The last tool execution ('${lastExecution.toolName}') failed with error: '${lastExecution.error}'. Cannot conclude in an unhandled failure state.",
-          missingRequirements = listOf("Resolve failure in ${lastExecution.toolName}"),
-          verifiedArtifacts = verified
+        val isBlocked = lastExecution.error?.contains("permission", ignoreCase = true) == true ||
+          lastExecution.error?.contains("blocked", ignoreCase = true) == true
+        checks.add(
+          RequirementCheck(
+            name = "Tool execution '${lastExecution.toolName}'",
+            status = if (isBlocked) RequirementCheckStatus.BLOCKED else RequirementCheckStatus.FAIL,
+            evidence = "Failed with error: '${lastExecution.error}'"
+          )
         )
       }
     }
 
-    // 4. If deliverables were requested and all were verified:
-    if (verified.isNotEmpty()) {
-      return VerificationResult(
-        isSatisfied = true,
-        details = "Deliverables verified on disk: [${verified.joinToString()}].",
-        verifiedArtifacts = verified
+    if (checks.isEmpty()) {
+      checks.add(
+        RequirementCheck(
+          name = "Task execution",
+          status = if (state.toolExecutions.isNotEmpty()) RequirementCheckStatus.PASS else RequirementCheckStatus.NOT_VERIFIED,
+          evidence = if (state.toolExecutions.isNotEmpty()) "${state.toolExecutions.size} action(s) completed" else "No actions performed"
+        )
       )
     }
 
-    // 5. Informational / Diagnostic task (no explicit file deliverables requested)
-    // A successful tool call alone does NOT imply task completion if the plan has pending actions!
-    val hasPendingPlanActions = state.plan.any { it.contains("[ ]") || it.contains("pending", ignoreCase = true) }
-    if (hasPendingPlanActions && state.toolExecutions.isNotEmpty()) {
-      val pendingItems = state.plan.filter { it.contains("[ ]") || it.contains("pending", ignoreCase = true) }
-      return VerificationResult(
-        isSatisfied = false,
-        details = "Plan has pending actions that have not been executed: ${pendingItems.joinToString("; ")}.",
-        missingRequirements = pendingItems,
-        isPartial = true
-      )
-    }
+    // CRITICAL COMPLETION INVARIANT:
+    // Never claim all checks passed when any required check is blocked, skipped, or unverified.
+    val hasBlocked = checks.any { it.status == RequirementCheckStatus.BLOCKED }
+    val hasFailed = checks.any { it.status == RequirementCheckStatus.FAIL }
+    val hasUnverified = checks.any { it.status == RequirementCheckStatus.NOT_VERIFIED }
 
-    if (state.toolExecutions.isEmpty()) {
-      return VerificationResult(
-        isSatisfied = false,
-        details = "No actions or diagnostic verifications have been performed.",
-        missingRequirements = listOf("Perform required task actions")
-      )
-    }
+    val allPassed = checks.isNotEmpty() && !hasBlocked && !hasFailed && !hasUnverified
+    val isSatisfied = allPassed
 
-    val readableArtifacts = artifactManager.getArtifacts().filter { it.isReadable && it.size > 0 }.map { it.path }
+    val details = buildString {
+      if (allPassed) {
+        appendLine("All ${checks.size} requirement check(s) PASSED based on recorded evidence:")
+      } else {
+        val reasons = mutableListOf<String>()
+        if (hasBlocked) reasons.add("BLOCKED checks")
+        if (hasFailed) reasons.add("FAILED checks")
+        if (hasUnverified) reasons.add("UNVERIFIED checks")
+        appendLine("Verification incomplete (${reasons.joinToString(", ")}):")
+      }
+      checks.forEach { c ->
+        appendLine("• [${c.status.name}] ${c.name}: ${c.evidence}")
+      }
+    }.trim()
+
+    val readableArtifacts = if (verified.isNotEmpty()) verified else artifactManager.getArtifacts().filter { it.isReadable && it.size > 0 }.map { it.path }
+
     return VerificationResult(
-      isSatisfied = true,
-      details = "Task objective verified: ${state.toolExecutions.size} action(s) completed without unmet deliverables.",
-      verifiedArtifacts = readableArtifacts
+      isSatisfied = isSatisfied,
+      details = details,
+      verifiedArtifacts = readableArtifacts,
+      missingRequirements = checks.filter { it.status != RequirementCheckStatus.PASS }.map { "${it.name} [${it.status.name}]" },
+      isPartial = checks.any { it.status == RequirementCheckStatus.PASS } && !isSatisfied,
+      checks = checks
     )
   }
 
@@ -2732,6 +3052,8 @@ class AgentEngine(
     if (state.isMultitasking || state.activeConcurrentTasks > 0) {
       sb.appendLine("- Multitasking State: Concurrently executing ${state.activeConcurrentTasks} operations.")
     }
+    sb.appendLine("- WORKFLOW LOOP POLICY: Do NOT repeat the same reasoning or tool call without new justification.")
+    sb.appendLine("- RECOVERY POLICY: Transient failures are retried once. For policy failures, switch to an approved alternative tool. Never repeat a blocked operation unchanged.")
     sb.appendLine()
     sb.appendLine(deliverableTracker.generatePromptSummary(deliverableReport))
 

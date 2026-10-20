@@ -94,6 +94,7 @@ enum class ActionExecutionStatus {
   EXECUTING,    // Actively running in sandbox or host
   COMPLETED,    // Successfully finished and verified
   FAILED,       // Execution failed
+  BLOCKED,      // Blocked by security policy, permissions, or missing dependency
   SKIPPED,      // Skipped because prerequisite failed or no longer needed
   SUPERSEDED    // Invalidated or replaced during dynamic plan revision
 }
@@ -1002,14 +1003,36 @@ data class Artifact(
 }
 
 /**
+ * Verification status for an individual requirement based on recorded evidence.
+ */
+enum class RequirementCheckStatus {
+  PASS,
+  FAIL,
+  BLOCKED,
+  NOT_VERIFIED
+}
+
+/**
+ * Objective recorded check for a specific requirement.
+ */
+data class RequirementCheck(
+  val name: String,
+  val status: RequirementCheckStatus,
+  val evidence: String,
+  val target: String? = null
+)
+
+/**
  * Result of objective verification by the engine.
+ * Never claims all checks passed when any required check is blocked, skipped, or unverified.
  */
 data class VerificationResult(
   val isSatisfied: Boolean,
   val details: String,
   val verifiedArtifacts: List<String> = emptyList(),
   val missingRequirements: List<String> = emptyList(),
-  val isPartial: Boolean = false
+  val isPartial: Boolean = false,
+  val checks: List<RequirementCheck> = emptyList()
 )
 
 /**
@@ -1054,7 +1077,8 @@ data class ExecutionStep(
   val failureCategory: String? = null,
   val actionStatus: ActionExecutionStatus? = null,
   val actionableStepId: String? = null,
-  val waveIndex: Int? = null
+  val waveIndex: Int? = null,
+  val structuredError: StructuredErrorReport? = null
 )
 
 /**

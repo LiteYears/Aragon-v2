@@ -72,7 +72,7 @@ class ReasoningDedupPipeline(
       }
 
       if (shouldCollapse) {
-        val logMsg = "[REASONING_DEDUP_HIT: Collapsed repeated reasoning from Turn ${previous.stepNumber} (Similarity: ${(similarity * 100).toInt()}%)]"
+        val logMsg = "[REASONING_DEDUP_HIT: Collapsed repeated reasoning from Turn ${previous.stepNumber} (No new justification or state change)]"
         return logMsg
       }
     }

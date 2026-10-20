@@ -382,13 +382,15 @@ class PlaywrightJsEngine(
     return items.map { evalExpr(it.trim(), env) }
   }
 
-  private fun evalMath(expr: String): Any {
-    val method = expr.removePrefix("Math.").substringBefore("(").trim()
-    val argsStr = expr.substringAfter("Math.$method(").substringBeforeLast(")").trim()
-    val args = argsStr.split(",").mapNotNull { it.trim().toDoubleOrNull() }
+  private fun evalMath(expr: String): Double {
+    val beforeParen = expr.substringBefore("(")
+    val method = beforeParen.removePrefix("Math.").trim()
+    val insideParen = if (expr.contains("(") && expr.contains(")")) expr.substringAfter("(").substringBefore(")") else ""
+    val afterParen = if (expr.contains(")")) expr.substringAfter(")").trim() else ""
+    val args = insideParen.split(",").mapNotNull { it.trim().toDoubleOrNull() }
 
-    return when (method) {
-      "round" -> Math.round(args.firstOrNull() ?: 0.0)
+    val baseValue: Double = when (method) {
+      "round" -> Math.round(args.firstOrNull() ?: 0.0).toDouble()
       "floor" -> Math.floor(args.firstOrNull() ?: 0.0)
       "ceil" -> Math.ceil(args.firstOrNull() ?: 0.0)
       "abs" -> Math.abs(args.firstOrNull() ?: 0.0)
@@ -401,6 +403,11 @@ class PlaywrightJsEngine(
       "random" -> Math.random()
       else -> 0.0
     }
+
+    if (afterParen.isNotBlank()) {
+      return evalBasicArithmetic("$baseValue $afterParen")
+    }
+    return baseValue
   }
 
   private fun evalMethodOnObject(obj: Any, methodCall: String, env: Map<String, Any?>): Any? {
@@ -524,33 +531,41 @@ class PlaywrightJsEngine(
       if (rawHtml.isBlank()) return elements
 
       val tagPattern = Pattern.compile("(?is)<([a-zA-Z0-9]+)([^>]*)>(.*?)</\\1>|<([a-zA-Z0-9]+)([^>]*)/?>")
-      val matcher = tagPattern.matcher(rawHtml)
 
-      while (matcher.find()) {
-        val tagName = (matcher.group(1) ?: matcher.group(4) ?: "").lowercase().trim()
-        val rawAttrs = matcher.group(2) ?: matcher.group(5) ?: ""
-        val innerContent = matcher.group(3) ?: ""
-        val outer = matcher.group(0) ?: ""
+      fun scan(content: String) {
+        val matcher = tagPattern.matcher(content)
+        while (matcher.find()) {
+          val tagName = (matcher.group(1) ?: matcher.group(4) ?: "").lowercase().trim()
+          val rawAttrs = matcher.group(2) ?: matcher.group(5) ?: ""
+          val innerContent = matcher.group(3) ?: ""
+          val outer = matcher.group(0) ?: ""
 
-        if (tagName.isBlank() || tagName == "html" || tagName == "head" || tagName == "body") continue
+          if (tagName.isNotBlank() && tagName != "html" && tagName != "head" && tagName != "body") {
+            val attrs = parseAttributes(rawAttrs, baseUrl)
+            val id = attrs["id"].orEmpty()
+            val classes = attrs["class"]?.split("\\s+".toRegex())?.filter { it.isNotBlank() } ?: emptyList()
+            val text = innerContent.replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim()
 
-        val attrs = parseAttributes(rawAttrs, baseUrl)
-        val id = attrs["id"].orEmpty()
-        val classes = attrs["class"]?.split("\\s+".toRegex())?.filter { it.isNotBlank() } ?: emptyList()
-        val text = innerContent.replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim()
+            elements.add(
+              DomElement(
+                tagName = tagName,
+                id = id,
+                classNames = classes,
+                attributes = attrs,
+                textContent = text,
+                innerHTML = innerContent,
+                outerHTML = outer
+              )
+            )
+          }
 
-        elements.add(
-          DomElement(
-            tagName = tagName,
-            id = id,
-            classNames = classes,
-            attributes = attrs,
-            textContent = text,
-            innerHTML = innerContent,
-            outerHTML = outer
-          )
-        )
+          if (innerContent.isNotBlank() && innerContent.contains("<")) {
+            scan(innerContent)
+          }
+        }
       }
+
+      scan(rawHtml)
       return elements
     }
 

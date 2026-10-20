@@ -602,106 +602,20 @@ fun AgentScreen(
             }
           )
 
-          // Outside selector pills on the left: Cloud Environment & Workspace Project
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .padding(start = 2.dp, end = 2.dp, bottom = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            // Enhanced Cloud selector pill
-            Surface(
-              shape = RoundedCornerShape(16.dp),
-              color = Color(0xFF101015),
-              border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0xFF262634)),
+          // Pure typography trigger to re-open workflow suggestions when hidden
+          if (!showSuggestions && state.executionFeed.isEmpty()) {
+            Row(
               modifier = Modifier
-                .clip(RoundedCornerShape(16.dp))
-                .clickable(role = Role.Button, onClickLabel = "Sandbox Configuration") {
-                  showSettingsDialog = true
-                }
-                .testTag("cloud_environment_pill")
+                .fillMaxWidth()
+                .padding(start = 2.dp, end = 2.dp, bottom = 6.dp),
+              horizontalArrangement = Arrangement.Start,
+              verticalAlignment = Alignment.CenterVertically
             ) {
-              Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-              ) {
-                Box(
-                  modifier = Modifier
-                    .size(6.dp)
-                    .clip(CircleShape)
-                    .background(if (sandboxMode == SandboxMode.E2B_CLOUD) Color(0xFF10B981) else Color(0xFF64748B))
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Icon(
-                  imageVector = Icons.Default.Cloud,
-                  contentDescription = "Cloud Sandbox",
-                  tint = if (sandboxMode == SandboxMode.E2B_CLOUD) Color(0xFF38BDF8) else Color(0xFF94A3B8),
-                  modifier = Modifier.size(13.dp)
-                )
-                Spacer(modifier = Modifier.width(5.dp))
-                Text(
-                  text = if (sandboxMode == SandboxMode.E2B_CLOUD) "Cloud" else "Local",
-                  fontFamily = InterFontFamily,
-                  fontSize = 11.5.sp,
-                  fontWeight = FontWeight.SemiBold,
-                  color = Color(0xFFE2E8F0)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Icon(
-                  imageVector = Icons.Default.KeyboardArrowDown,
-                  contentDescription = "Switch environment",
-                  tint = Color(0xFF71717A),
-                  modifier = Modifier.size(13.dp)
-                )
-              }
+              AmoledWorkflowReopenTrigger(
+                visible = true,
+                onClick = { showSuggestions = true }
+              )
             }
-
-            // Enhanced Project selector pill
-            Surface(
-              shape = RoundedCornerShape(16.dp),
-              color = Color(0xFF101015),
-              border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0xFF262634)),
-              modifier = Modifier
-                .clip(RoundedCornerShape(16.dp))
-                .clickable(role = Role.Button, onClickLabel = "Select Project") {
-                  showFilesDialog = true
-                }
-                .testTag("project_selector_pill")
-            ) {
-              Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-              ) {
-                Icon(
-                  imageVector = Icons.Default.Inventory2,
-                  contentDescription = "Project",
-                  tint = Color(0xFFA78BFA),
-                  modifier = Modifier.size(13.dp)
-                )
-                Spacer(modifier = Modifier.width(5.dp))
-                Text(
-                  text = if (currentExplorerPath.isNotBlank()) currentExplorerPath.substringAfterLast('/').ifEmpty { "Project" } else "Project",
-                  fontFamily = InterFontFamily,
-                  fontSize = 11.5.sp,
-                  fontWeight = FontWeight.SemiBold,
-                  color = Color(0xFFE2E8F0)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Icon(
-                  imageVector = Icons.Default.KeyboardArrowDown,
-                  contentDescription = "Select project",
-                  tint = Color(0xFF71717A),
-                  modifier = Modifier.size(13.dp)
-                )
-              }
-            }
-
-            // Pure typography trigger to re-open workflow suggestions when hidden
-            AmoledWorkflowReopenTrigger(
-              visible = !showSuggestions && state.executionFeed.isEmpty(),
-              onClick = { showSuggestions = true }
-            )
           }
 
           // Transformed user prompt input field container (AMOLED pure black with thinner crisp white outline)

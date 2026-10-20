@@ -104,17 +104,28 @@ data class EvaluationConclusion(
   val suggestedParams: Map<String, Any?>? = null,
   val backoffMs: Long = 0L,
   val retryAttempt: Int = 0,
-  val maxRetries: Int = 2,
-  val isDeterministic: Boolean = true
+  val maxRetries: Int = 1,
+  val isDeterministic: Boolean = true,
+  val toolFailureClass: ToolFailureClass? = null,
+  val structuredError: StructuredErrorReport? = null
 ) {
   /**
    * Generates high-signal system guidance formatted for LLM instruction injection.
    */
   fun toSystemGuidancePrompt(): String {
     val sb = StringBuilder()
-    sb.appendLine("RECOVERY GUIDANCE [${failureCategory?.code ?: "PROGRESS_CHECK"}]:")
+    val failureClassCode = toolFailureClass?.code ?: failureCategory?.code ?: "PROGRESS_CHECK"
+    sb.appendLine("RECOVERY GUIDANCE [$failureClassCode]:")
     sb.appendLine("Strategy: ${recoveryStrategy.code} - ${recoveryStrategy.description}")
     sb.appendLine("Diagnosis: $explanation")
+    if (structuredError != null) {
+      sb.appendLine("Exact Tool Error: ${structuredError.exactToolError}")
+      sb.appendLine("Observed Facts: ${structuredError.observedFact}")
+      if (!structuredError.inferredCause.isNullOrBlank()) {
+        sb.appendLine("Inferred Cause: ${structuredError.inferredCause}")
+      }
+      sb.appendLine("Recovery Result: ${structuredError.recoveryResult}")
+    }
     if (!suggestedTool.isNullOrBlank()) {
       sb.appendLine("Recommended Alternative Tool: '$suggestedTool'")
     }
@@ -127,7 +138,7 @@ data class EvaluationConclusion(
         sb.appendLine("Action Required: Do NOT repeat the exact same call. Correct invalid arguments or paths before proceeding.")
       }
       RecoveryStrategy.SWITCH_EQUIVALENT_TOOL -> {
-        sb.appendLine("Action Required: Use an alternative tool or approach to achieve this sub-goal.")
+        sb.appendLine("Action Required: Use approved alternative tool '$suggestedTool'. Never repeat a blocked operation unchanged.")
       }
       RecoveryStrategy.INSPECT_PARTIAL_RESULTS -> {
         sb.appendLine("Action Required: Examine the captured excerpt or spillover file rather than repeating the full query.")
@@ -136,10 +147,10 @@ data class EvaluationConclusion(
         sb.appendLine("Action Required: This path is blocked. Mark the current step blocked, update your plan, and pursue an alternative path.")
       }
       RecoveryStrategy.RETRY_WITH_BACKOFF -> {
-        sb.appendLine("Notice: Transient issue encountered. Automatic backoff applied (${backoffMs}ms).")
+        sb.appendLine("Notice: Transient issue encountered. Retrying once with automatic backoff (${backoffMs}ms).")
       }
       RecoveryStrategy.STOP_WITH_EXPLANATION -> {
-        sb.appendLine("Fatal: Unrecoverable situation encountered. Execution halted.")
+        sb.appendLine("Fatal: Unrecoverable situation or retry limit exhausted. Execution halted.")
       }
     }
     return sb.toString().trim()
@@ -539,13 +550,64 @@ class ActionEvaluator {
       )
     }
 
-    // 3. FAILURE CLASSIFICATION
-    val category = classifyFailure(toolResult, stdout, stderr, rawErr)
-    val strategy = selectRecoveryStrategy(category, priorAttempts, toolName, toolCall.arguments)
-    val backoffMs = calculateBackoffMs(category, priorAttempts)
-    val altTool = if (strategy == RecoveryStrategy.SWITCH_EQUIVALENT_TOOL) UnifiedLoopDetector.getAlternativeTool(toolName) else null
+    // 3. FAILURE CLASSIFICATION & DETERMINISTIC RECOVERY
+    val toolFailureClass = ErrorTaxonomyClassifier.classifyToolFailure(
+      exitCode = exitCode,
+      stdout = stdout,
+      stderr = stderr,
+      rawErr = rawErr,
+      errorType = toolResult.errorType
+    )
 
-    val diagExplanation = buildDiagnosticExplanation(category, toolResult, stdout, stderr, rawErr)
+    // Legacy ActionFailureCategory for backward compatibility
+    val category = when (toolFailureClass) {
+      ToolFailureClass.TRANSIENT -> ActionFailureCategory.TRANSIENT_NETWORK_FAILURE
+      ToolFailureClass.PERMISSION_POLICY -> ActionFailureCategory.PERMISSION_ERROR
+      ToolFailureClass.INVALID_INPUT -> ActionFailureCategory.INVALID_ARGUMENTS
+      ToolFailureClass.UNAVAILABLE_TOOL -> ActionFailureCategory.MISSING_DEPENDENCY
+      else -> ActionFailureCategory.UNRECOVERABLE_FAILURE
+    }
+
+    val (strategy, backoffMs, maxRetries, altTool, recoveryResult) = when (toolFailureClass) {
+      ToolFailureClass.TRANSIENT -> {
+        // Retry transient failures once
+        if (priorAttempts == 0) {
+          Tuple5(RecoveryStrategy.RETRY_WITH_BACKOFF, 1500L, 1, null, "Transient failure encountered. Retrying transient failure once with backoff.")
+        } else {
+          Tuple5(RecoveryStrategy.REVISE_PLAN, 0L, 1, null, "Transient retry limit reached (1 retry attempted). Halting retries and revising plan.")
+        }
+      }
+      ToolFailureClass.PERMISSION_POLICY -> {
+        // For policy failures, switch to an approved alternative. Never repeat a blocked operation unchanged.
+        val alt = getApprovedPolicyAlternative(toolName, toolCall.arguments)
+        Tuple5(RecoveryStrategy.SWITCH_EQUIVALENT_TOOL, 0L, 0, alt, "Permission/policy failure encountered. Switched to approved alternative tool '$alt'. Blocked operation must not be repeated unchanged.")
+      }
+      ToolFailureClass.INVALID_INPUT -> {
+        // Never repeat a blocked operation unchanged. Preserve the original error.
+        Tuple5(RecoveryStrategy.CHANGE_PARAMETERS, 0L, 0, null, "Invalid input or schema rejection. Parameters must be changed before retrying; cannot repeat unchanged.")
+      }
+      ToolFailureClass.UNAVAILABLE_TOOL -> {
+        val alt = getApprovedPolicyAlternative(toolName, toolCall.arguments)
+        Tuple5(RecoveryStrategy.SWITCH_EQUIVALENT_TOOL, 0L, 0, alt, "Tool or binary is unavailable. Switched to alternative tool '$alt'. Never repeat unchanged.")
+      }
+      else -> {
+        Tuple5(RecoveryStrategy.CHANGE_PARAMETERS, 0L, 0, null, "Operation failed and cannot be repeated unchanged.")
+      }
+    }
+
+    val sig = ActionSignature.compute(toolName, toolCall.arguments)
+    val exactToolError = (rawErr.ifBlank { stderr.ifBlank { stdout } }).ifBlank { "Tool execution failed" }.trim()
+    val structuredReport = ErrorTaxonomyClassifier.createStructuredErrorReport(
+      failedOperation = "${toolCall.toolName}(${sig.canonicalArgs})",
+      exactToolError = exactToolError,
+      failureClass = toolFailureClass,
+      exitCode = exitCode,
+      stdout = stdout,
+      stderr = stderr,
+      recoveryResult = recoveryResult
+    )
+
+    val diagExplanation = buildDiagnosticExplanation(category, toolResult, stdout, stderr, exactToolError)
 
     return EvaluationConclusion(
       callId = callId,
@@ -558,10 +620,34 @@ class ActionEvaluator {
       suggestedTool = altTool,
       backoffMs = backoffMs,
       retryAttempt = priorAttempts + 1,
-      maxRetries = maxRetriesForCategory(category),
-      isDeterministic = true
+      maxRetries = maxRetries,
+      isDeterministic = true,
+      toolFailureClass = toolFailureClass,
+      structuredError = structuredReport
     )
   }
+
+  companion object {
+    fun getApprovedPolicyAlternative(toolName: String, args: Map<String, Any?> = emptyMap()): String {
+      return when (toolName.lowercase(Locale.US)) {
+        "write_file", "edit_file", "append_file" -> "terminal"
+        "read_file" -> "terminal"
+        "list_directory" -> "terminal"
+        "web_fetch", "web_crawl" -> "web_search"
+        "browser_automation" -> "web_open"
+        "terminal" -> {
+          val cmd = args["command"]?.toString()?.lowercase(Locale.US) ?: ""
+          if (cmd.startsWith("cat ") || cmd.startsWith("head ") || cmd.startsWith("tail ")) "read_file"
+          else if (cmd.startsWith("echo ") || cmd.startsWith("tee ")) "write_file"
+          else if (cmd.startsWith("ls ")) "list_directory"
+          else "code_interpreter"
+        }
+        else -> "terminal"
+      }
+    }
+  }
+
+  private data class Tuple5<A, B, C, D, E>(val first: A, val second: B, val third: C, val fourth: D, val fifth: E)
 
   private fun checkPostconditions(
     toolCall: ToolCall,
@@ -737,6 +823,7 @@ class UnifiedRecoveryManager(
   private val retryCountsBySignature = ConcurrentHashMap<String, Int>()
   private val recoveryRecords = CopyOnWriteArrayList<RecoveryRecord>()
   private val deterministicFailures = ConcurrentHashMap<String, String>() // callHash -> errorMsg
+  private val blockedOperations = ConcurrentHashMap<String, StructuredErrorReport>() // callHash -> StructuredErrorReport
   private var consecutiveFailures = 0
 
   /**
@@ -747,6 +834,7 @@ class UnifiedRecoveryManager(
     retryCountsBySignature.clear()
     recoveryRecords.clear()
     deterministicFailures.clear()
+    blockedOperations.clear()
     consecutiveFailures = 0
   }
 
@@ -757,7 +845,15 @@ class UnifiedRecoveryManager(
   fun checkPreFlight(toolCall: ToolCall): PreFlightDecision {
     val sig = ActionSignature.compute(toolCall.toolName, toolCall.arguments)
 
-    // 1. Deterministic Failure Repeat Guard
+    // 1. Blocked Operation Repeat Guard (Never repeat a blocked operation unchanged. Preserve the original error.)
+    val blocked = blockedOperations[sig.callHash]
+    if (blocked != null) {
+      return PreFlightDecision.BlockDeterministicFailure(
+        priorError = blocked.exactToolError,
+        recoveryHint = "Blocked operation: '${blocked.failedOperation}' failed with ${blocked.failureClass.code}. Original Error: \"${blocked.exactToolError}\". Recovery: ${blocked.recoveryResult}. Never repeat a blocked operation unchanged!"
+      )
+    }
+
     val priorErr = deterministicFailures[sig.callHash]
     if (priorErr != null) {
       return PreFlightDecision.BlockDeterministicFailure(
@@ -807,13 +903,23 @@ class UnifiedRecoveryManager(
     if (conclusion.madeProgress && conclusion.isSatisfied) {
       retryCountsBySignature.remove(sig.callHash)
       deterministicFailures.remove(sig.callHash)
+      blockedOperations.remove(sig.callHash)
       consecutiveFailures = 0
     } else {
       consecutiveFailures++
       retryCountsBySignature[sig.callHash] = priorAttempts + 1
 
-      // Track deterministic failure to block immediate identical retry
-      if (conclusion.isDeterministic && conclusion.failureCategory in listOf(
+      // Block repeat of blocked operations unchanged, preserving exact error
+      val isBlockedOperation = conclusion.toolFailureClass in listOf(
+        ToolFailureClass.PERMISSION_POLICY,
+        ToolFailureClass.INVALID_INPUT,
+        ToolFailureClass.UNAVAILABLE_TOOL
+      ) || (conclusion.toolFailureClass == ToolFailureClass.TRANSIENT && priorAttempts >= 1)
+
+      if (isBlockedOperation && conclusion.structuredError != null) {
+        blockedOperations[sig.callHash] = conclusion.structuredError
+        deterministicFailures[sig.callHash] = conclusion.structuredError.exactToolError
+      } else if (conclusion.isDeterministic && conclusion.failureCategory in listOf(
           ActionFailureCategory.MISSING_DEPENDENCY,
           ActionFailureCategory.PERMISSION_ERROR,
           ActionFailureCategory.INVALID_ARGUMENTS
