@@ -425,6 +425,27 @@ class ToolRegistry {
       if (imgAlias != null) normArgs["imagePath"] = imgAlias
     }
 
+    // 7. Universal Schema-Driven Alias & Case/Snake Normalization
+    val targetTool = tools[canonicalName] ?: tools.values.firstOrNull { it.name.equals(canonicalName, ignoreCase = true) }
+    if (targetTool != null) {
+      for (param in targetTool.schema.parameters) {
+        if (!normArgs.containsKey(param.name)) {
+          val aliasMatch = param.aliases.firstNotNullOfOrNull { normArgs[it] }
+          if (aliasMatch != null) {
+            normArgs[param.name] = aliasMatch
+          } else {
+            val normalizedParamKey = param.name.replace("_", "").lowercase()
+            val fuzzyEntry = normArgs.entries.firstOrNull { (k, _) ->
+              k.replace("_", "").lowercase() == normalizedParamKey
+            }
+            if (fuzzyEntry != null && fuzzyEntry.value != null) {
+              normArgs[param.name] = fuzzyEntry.value
+            }
+          }
+        }
+      }
+    }
+
     return toolCall.copy(toolName = canonicalName, arguments = normArgs)
   }
 

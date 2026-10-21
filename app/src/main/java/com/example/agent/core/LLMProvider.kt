@@ -247,7 +247,13 @@ object MessageHistoryBounder {
 
     val initialUserMsg = messages.firstOrNull { it.role == MessageRole.USER }
     var tailStartIndex = messages.size - TAIL_SIZE
-    while (tailStartIndex > 0 && messages[tailStartIndex].role == MessageRole.TOOL) {
+    while (tailStartIndex > 0 && (
+      messages[tailStartIndex].role == MessageRole.TOOL ||
+        (messages[tailStartIndex].role == MessageRole.ASSISTANT &&
+          messages[tailStartIndex].toolCallId != null &&
+          messages[tailStartIndex - 1].role == MessageRole.ASSISTANT &&
+          messages[tailStartIndex - 1].toolCallId != null)
+      )) {
       tailStartIndex--
     }
     val recentTail = messages.subList(tailStartIndex, messages.size)
@@ -495,12 +501,18 @@ class GeminiLLMProvider(
           val funcCall = part.getJSONObject("functionCall")
           val fnName = funcCall.getString("name")
           val argsObj = funcCall.optJSONObject("args") ?: JSONObject()
-          val argsMap = mutableMapOf<String, Any?>()
-          val keys = argsObj.keys()
-          while (keys.hasNext()) {
-            val key = keys.next()
-            argsMap[key] = argsObj.get(key)
+          fun jsonValToKotlin(v: Any?): Any? = when (v) {
+            null, JSONObject.NULL -> null
+            is JSONObject -> {
+              val m = mutableMapOf<String, Any?>()
+              val ks = v.keys()
+              while (ks.hasNext()) { val k = ks.next(); m[k] = jsonValToKotlin(v.get(k)) }
+              m
+            }
+            is JSONArray -> (0 until v.length()).map { jsonValToKotlin(v.get(it)) }
+            else -> v
           }
+          val argsMap = jsonValToKotlin(argsObj) as? Map<String, Any?> ?: emptyMap()
           toolCalls.add(
             ToolCall(
               callId = ToolCall.generateCallId("gemini", messages.size * 100 + i),

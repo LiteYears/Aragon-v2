@@ -587,33 +587,35 @@ class NvidiaNimProvider(
           }
         } catch (_: Exception) {}
 
-        val contentText = accumulatedContent.toString().trim()
-        val reasoningText = accumulatedReasoning.toString().trim()
+        val rawContentText = accumulatedContent.toString().trim()
+        val thinkRegex = Regex("<think>(.*?)</think>", RegexOption.DOT_MATCHES_ALL)
+        val extractedThinkBlocks = thinkRegex.findAll(rawContentText)
+          .map { it.groupValues[1].trim() }
+          .filter { it.isNotBlank() }
+          .joinToString("\n")
+        val contentText = rawContentText.replace(thinkRegex, "").trim()
+        val reasoningText = listOf(accumulatedReasoning.toString().trim(), extractedThinkBlocks)
+          .filter { it.isNotBlank() }
+          .joinToString("\n")
+          .trim()
+
+        val cleanedContentForThought = contentText
+          .replace(Regex("<tool_call>.*?</tool_call>", RegexOption.DOT_MATCHES_ALL), "")
+          .trim()
         val combinedThought = when {
-          reasoningText.isNotBlank() && contentText.isNotBlank() -> {
-            if (reasoningText.equals(contentText, ignoreCase = true)) reasoningText
-            else "[Reasoning] $reasoningText\n$contentText"
+          reasoningText.isNotBlank() && cleanedContentForThought.isNotBlank() -> {
+            if (reasoningText.equals(cleanedContentForThought, ignoreCase = true)) reasoningText
+            else "[Reasoning] $reasoningText\n$cleanedContentForThought"
           }
           reasoningText.isNotBlank() -> reasoningText
-          else -> contentText
+          else -> cleanedContentForThought
         }
 
         val parsedToolCalls = if (toolCallBuffers.isNotEmpty()) {
           toolCallBuffers.values.mapNotNull { (callId, fnName, argsBuilder) ->
             if (fnName.isBlank()) return@mapNotNull null
             val rawArgs = argsBuilder.toString()
-            val argsMap = try {
-              val obj = JSONObject(rawArgs)
-              val map = mutableMapOf<String, Any?>()
-              val keys = obj.keys()
-              while (keys.hasNext()) {
-                val k = keys.next()
-                map[k] = obj.get(k)
-              }
-              map
-            } catch (_: Exception) {
-              emptyMap<String, Any?>()
-            }
+            val argsMap = parseArguments(rawArgs)
             ToolCall(
               callId = if (callId.isNotBlank()) callId else ToolCall.generateCallId("stream", (System.currentTimeMillis() % 100000).toInt()),
               toolName = fnName,
@@ -621,7 +623,7 @@ class NvidiaNimProvider(
             )
           }
         } else {
-          extractToolCalls(null, contentText, tools)
+          extractToolCalls(null, rawContentText, tools)
         }
 
         if (parsedToolCalls.isNotEmpty()) {
@@ -804,6 +806,17 @@ class NvidiaNimProvider(
       if (results.isNotEmpty()) return results
     }
 
+    // 2b. <tool_call>...</tool_call> XML format (Qwen / Hermes / GLM / Nemotron)
+    if (contentText.contains("<tool_call>")) {
+      val tcPattern = Pattern.compile("<tool_call>\\s*(\\{.*?\\})\\s*</tool_call>", Pattern.DOTALL)
+      val matcher = tcPattern.matcher(contentText)
+      while (matcher.find()) {
+        val jsonStr = matcher.group(1) ?: continue
+        parseSingleToolJson(jsonStr, toolNames)?.let { results.add(it) }
+      }
+      if (results.isNotEmpty()) return results
+    }
+
     // 3. Embedded JSON markdown block ```json ... ```
     if (contentText.contains("```")) {
       val codeBlockPattern = Pattern.compile("```(?:json)?\\s*(\\{.*?\\})\\s*```", Pattern.DOTALL)
@@ -879,13 +892,22 @@ class NvidiaNimProvider(
     return when (argsRaw) {
       is JSONObject -> jsonObjectToMap(argsRaw)
       is String -> {
-        val trimmed = argsRaw.trim()
+        var trimmed = argsRaw.trim()
+          .removePrefix("```json")
+          .removePrefix("```")
+          .removeSuffix("```")
+          .trim()
         if (trimmed.isNotBlank() && trimmed != "{}") {
           try {
-            val parsedJson = JSONObject(trimmed)
-            jsonObjectToMap(parsedJson)
+            jsonObjectToMap(JSONObject(trimmed))
           } catch (_: Exception) {
-            emptyMap()
+            try {
+              // Resilient recovery for trailing commas before closing brace/bracket
+              val repaired = trimmed.replace(Regex(",\\s*([}\\]])"), "$1")
+              jsonObjectToMap(JSONObject(repaired))
+            } catch (_: Exception) {
+              emptyMap()
+            }
           }
         } else {
           emptyMap()
@@ -897,7 +919,10 @@ class NvidiaNimProvider(
   }
 
   private fun cleanContentConclusion(raw: String): String {
-    return raw.replace("<|python_tag|>", "")
+    return raw
+      .replace(Regex("<think>.*?</think>", RegexOption.DOT_MATCHES_ALL), "")
+      .replace(Regex("<tool_call>.*?</tool_call>", RegexOption.DOT_MATCHES_ALL), "")
+      .replace("<|python_tag|>", "")
       .replace(Regex("<\\|.*?\\|>"), "")
       .trim()
   }

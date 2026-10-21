@@ -3196,6 +3196,10 @@ class AgentEngine(
     }
     sb.appendLine("- WORKFLOW LOOP POLICY: Do NOT repeat the same reasoning or tool call without new justification.")
     sb.appendLine("- RECOVERY POLICY: Transient failures are retried once. For policy failures, switch to an approved alternative tool. Never repeat a blocked operation unchanged.")
+    sb.appendLine("- FRONTIER SWE EXECUTION DISCIPLINE:")
+    sb.appendLine("  1. PARALLEL DISCOVERY: Batch independent read-only inspections (read_file, list_directory, web_search, wikipedia__*, fetch__*) in a single turn to execute concurrently.")
+    sb.appendLine("  2. READ-BEFORE-EDIT: Always inspect target file contents before invoking edit_file or apply_patch to ensure exact context matching.")
+    sb.appendLine("  3. DETERMINISTIC VERIFICATION: After writing code or generating artifacts, verify correctness via code_interpreter, terminal test execution, or file inspection before concluding.")
     sb.appendLine()
     sb.appendLine(deliverableTracker.generatePromptSummary(deliverableReport))
 
@@ -3324,9 +3328,17 @@ class AgentEngine(
       "diff_files", "web_search", "web_fetch", "web_open", "web_extract",
       "web_crawl", "check_tools", "sandbox_diagnostics",
       "document_search", "document_list",
-      "mcp_list_servers", "mcp_list_resources", "mcp_read_resource", "mcp_list_prompts"
+      "mcp_list_servers", "mcp_list_resources", "mcp_read_resource", "mcp_list_prompts",
+      "wikipedia__search", "wikipedia__summary", "wikipedia__article",
+      "fetch__fetch_url", "fetch__fetch_headers",
+      "sqlite__query", "sqlite__list_tables", "sqlite__describe_table"
     )
-    val isAllReadOnly = calls.all { registry.resolveToolName(it.toolName) in readOnlyTools }
+    val isAllReadOnly = calls.all { call ->
+      val resolved = registry.resolveToolName(call.toolName)
+      val toolObj = registry.getTool(resolved)
+      resolved in readOnlyTools ||
+        (toolObj != null && !toolObj.mutatesWorkspace && toolObj.permissions == setOf(ToolPermission.READ_ONLY))
+    }
     if (isAllReadOnly) return true
 
     // Independent writes to distinct file paths
