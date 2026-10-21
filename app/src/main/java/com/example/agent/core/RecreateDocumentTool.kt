@@ -317,6 +317,21 @@ class RecreateDocumentTool(
         extractedParagraphs.addAll(structure.blocks.map { it.text })
       }
 
+      if (isImage && extractedText.isBlank() && extractedHeadings.isEmpty() && extractedParagraphs.isEmpty() && extractedTables.isEmpty()) {
+        return ToolResult(
+          callId = callId,
+          toolName = name,
+          status = ToolStatus.FAILED,
+          arguments = arguments,
+          output = null,
+          error = "Could not extract text or structure from image '$sourceArg'. No readable text was detected by the OCR engine. For mobile photos, receipts, or complex visuals, inspect the image directly or use Python OCR (tesseract/PIL) in code_interpreter or terminal to extract content before compiling the deliverable.",
+          errorType = ToolErrorCode.SOURCE_TRUNCATED,
+          duration = System.currentTimeMillis() - startTime,
+          exitCode = 1,
+          outcome = ToolExecutionOutcome.CONDITION_NOT_FOUND
+        )
+      }
+
       // Apply substitutions
       val effectiveTitle = newTitle ?: detectedOriginalTitle ?: "Recreated Document"
       val effectiveAuthor = newAuthor ?: detectedOriginalAuthor ?: "Aragon Agent"

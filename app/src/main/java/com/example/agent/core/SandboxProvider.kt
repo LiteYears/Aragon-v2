@@ -1107,15 +1107,18 @@ class E2BSandboxProvider(
   override suspend fun executeCode(sessionId: String, request: RunCodeRequest): Execution {
     val lang = request.context.language.lowercase()
     val base64Code = java.util.Base64.getEncoder().encodeToString(request.code.toByteArray(Charsets.UTF_8))
+    val pathPrefix = "export PATH=\"/home/user/venv/bin:/home/user/.agent/venv/bin:/home/user/.local/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"; "
+    val pythonPathPrefix = "export PYTHONPATH=\"/home/user:/home/user/.local/lib/python3.11/site-packages:/usr/local/lib/python3.11/dist-packages:\$PYTHONPATH\"; "
+
     val scriptCmd = when (lang) {
       "python", "py", "python3" ->
-        "if [ -x /home/user/venv/bin/python3 ]; then PY=/home/user/venv/bin/python3; elif command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi; " +
-          "\"\$PY\" -u -c \"import base64, sys, os; os.chdir('/home/user'); sys.path.insert(0, '/home/user'); " +
-          "code = base64.b64decode('$base64Code').decode('utf-8'); " +
-          "g = {'__name__': '__main__', '__file__': '/home/user/aragon_exec_script.py'}; " +
-          "exec(compile(code, '/home/user/aragon_exec_script.py', 'exec'), g)\""
-      "javascript", "js", "node" -> "node -e \"eval(Buffer.from('$base64Code', 'base64').toString('utf-8'))\""
-      else -> "bash -c \"echo '$base64Code' | base64 -d | bash\""
+        "${pathPrefix}${pythonPathPrefix}cd /home/user; " +
+          "if [ -x /home/user/venv/bin/python3 ]; then PY=/home/user/venv/bin/python3; elif command -v python3 >/dev/null 2>&1; then PY=python3; elif command -v python >/dev/null 2>&1; then PY=python; else PY=/usr/bin/python3; fi; " +
+          "echo '$base64Code' | base64 -d > /home/user/.aragon_exec_script.py && \"\$PY\" -u /home/user/.aragon_exec_script.py"
+      "javascript", "js", "node" ->
+        "${pathPrefix}cd /home/user; echo '$base64Code' | base64 -d > /home/user/.aragon_exec_script.js && node /home/user/.aragon_exec_script.js"
+      else ->
+        "${pathPrefix}cd /home/user; echo '$base64Code' | base64 -d | bash"
     }
 
     val cmdReq = RunCommandRequest.builder()

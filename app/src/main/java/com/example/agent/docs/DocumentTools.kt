@@ -530,7 +530,7 @@ class ReadImageTool(
       if (res.fullText.isNotBlank()) {
         sb.append(res.fullText).append("\n\n")
       } else {
-        sb.append("[No text detected in image]\n\n")
+        sb.append("[No text detected in image]\nHint: For handwriting, photos, or receipts, inspect with Python (PIL / pytesseract) via code_interpreter or terminal.\n\n")
       }
       if (res.tables.isNotEmpty()) {
         sb.append("--- Extracted Tables (${res.tables.size}) ---\n")

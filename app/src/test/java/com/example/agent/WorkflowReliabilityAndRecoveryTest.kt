@@ -353,6 +353,73 @@ class WorkflowReliabilityAndRecoveryTest {
     assertTrue(allPassResult.isSatisfied)
   }
 
+  @Test
+  fun testCodeInterpreterRecovery_DoesNotBlockAfterPipInstall() {
+    val codeCall = ToolCall("call_code", "code_interpreter", mapOf("code" to "from docx import Document\ndoc = Document()"))
+    val codeResultFail = ToolResult(
+      callId = "call_code",
+      toolName = "code_interpreter",
+      status = ToolStatus.FAILED,
+      arguments = codeCall.arguments,
+      output = null,
+      error = "ModuleNotFoundError: No module named 'docx'",
+      errorType = ToolErrorCode.PROCESS_FAILED,
+      duration = 50L,
+      exitCode = 1,
+      stderr = "Traceback (most recent call last):\nModuleNotFoundError: No module named 'docx'"
+    )
+    val codeObs = com.example.agent.core.Observation(
+      callId = "call_code",
+      toolName = "code_interpreter",
+      status = ToolStatus.FAILED,
+      isSuccess = false,
+      inputsSummary = "code=from docx import Document...",
+      result = null,
+      error = "ModuleNotFoundError: No module named 'docx'",
+      summary = "ModuleNotFoundError",
+      outcome = ToolExecutionOutcome.EXECUTION_FAILED
+    )
+
+    // Evaluate failure
+    val conclusion = recoveryManager.evaluateExecution(codeCall, codeResultFail, codeObs, null)
+    assertNotNull(conclusion)
+
+    // Code interpreter should NOT be permanently placed into blockedOperations
+    val preFlightBefore = recoveryManager.checkPreFlight(codeCall)
+    assertFalse("Code interpreter should not be permanently locked out", preFlightBefore is PreFlightDecision.BlockDeterministicFailure)
+
+    // Now simulate terminal installing the package
+    val terminalCall = ToolCall("call_pip", "terminal", mapOf("command" to "pip install python-docx --no-cache-dir"))
+    val terminalResultSuccess = ToolResult(
+      callId = "call_pip",
+      toolName = "terminal",
+      status = ToolStatus.SUCCEEDED,
+      arguments = terminalCall.arguments,
+      output = "Successfully installed python-docx-1.2.0",
+      error = null,
+      duration = 2000L,
+      exitCode = 0,
+      stdout = "Successfully installed python-docx-1.2.0"
+    )
+    val terminalObs = com.example.agent.core.Observation(
+      callId = "call_pip",
+      toolName = "terminal",
+      status = ToolStatus.SUCCEEDED,
+      isSuccess = true,
+      inputsSummary = "pip install python-docx",
+      result = "Successfully installed",
+      error = null,
+      summary = "Successfully installed",
+      outcome = ToolExecutionOutcome.SUCCESS_WITH_RESULTS
+    )
+
+    recoveryManager.evaluateExecution(terminalCall, terminalResultSuccess, terminalObs, null)
+
+    // Verify code_interpreter can proceed cleanly
+    val preFlightAfter = recoveryManager.checkPreFlight(codeCall)
+    assertTrue("Preflight decision should be Proceed after package install", preFlightAfter is PreFlightDecision.Proceed)
+  }
+
   // Helper using reflection to access private verifyObjective
   private fun invokeVerifyObjective(
     engine: AgentEngine,

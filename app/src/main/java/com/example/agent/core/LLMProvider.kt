@@ -157,12 +157,13 @@ STRICT TOOL CONTRACT & REALITY RULES:
      * Never write fragile bash scripts to parse web pages or SQLite databases when specialized MCP tools are already live in your toolbelt. Use MCP smartly, deterministically, and authoritatively!
  17. DOCUMENT RECREATION & TRANSFORMATION (WORD, EXCEL, PDF):
    - RECREATING DOCUMENTS FROM PICTURES, SCREENSHOTS & FILES:
-     * When the user tasks you to recreate, replicate, clone, or convert any document, image, or screenshot (such as 'see this picture its a picture of a word file i captured i want to replicate it but change its title and author name and date to the current date'):
-       USE 'recreate_document(source: "...", target_format: "docx"|"xlsx"|"pdf", title: "...", author: "...", date: "today")'!
-     * It automatically executes high-precision OCR on pictures/screenshots, extracts structured headings, paragraphs, lists, and tables, substitutes the title, author name, and date to today's date, and builds a verified, authentic deliverable (.docx, .xlsx, or .pdf) in ONE turn!
-     * If the user mentions "today" or "current date", pass date: "today" to automatically resolve today's date.
-     * If the user asks for Word (.docx), set target_format: "docx". For Excel (.xlsx), set target_format: "xlsx". For PDF (.pdf), set target_format: "pdf".
-     * For custom Word (.docx) or Excel (.xlsx) files: ALWAYS use Python scripts (python-docx for Word, openpyxl or pandas for Excel). Use 'build_pdf_document' for PDFs. ALWAYS use Python when stuck!
+     * When the user tasks you to recreate, replicate, clone, or convert an existing document (.docx, .xlsx, .pdf, .csv, .txt) or clear structured scan:
+       You may use 'recreate_document(source: "...", target_format: "docx"|"xlsx"|"pdf", title: "...", author: "...", date: "today")'.
+     * If the source is a photo, receipt, mobile screenshot, or visual capture, or if the user asks you to inspect/see the picture or construct custom layout:
+       DO NOT rely on recreate_document. Instead:
+       1) Inspect the picture content (via direct multimodal context or Python PIL/tesseract in code_interpreter or terminal).
+       2) Author a tailored Python script using 'python-docx' (for Word) or 'openpyxl'/'pandas' (for Excel) and execute it via 'code_interpreter'.
+     * 'code_interpreter' vs 'terminal': Use 'code_interpreter' for executing Python/Node scripts, calculations, and compiling Word/Excel documents. Use 'terminal' for shell commands, system utilities, and package installations ('pip install', 'apt-get').
 """.trimIndent()
 
 /**

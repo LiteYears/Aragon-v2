@@ -117,7 +117,7 @@ class CodeInterpreterTool(
         val errorType = when {
           isSuccess -> null
           exitCode == -1 || execution.error?.name == "E2BTimeoutError" || stderr.contains("timed out") -> ToolErrorCode.TIMEOUT
-          exitCode == 127 || stderr.contains("not found") -> ToolErrorCode.COMMAND_NOT_FOUND
+          exitCode == 127 || (stderr.contains("command not found") && !stderr.contains("Traceback") && !stderr.contains("ModuleNotFoundError")) -> ToolErrorCode.COMMAND_NOT_FOUND
           execution.error?.name == "E2BAuthenticationError" -> ToolErrorCode.PERMISSION_DENIED
           execution.error?.name == "E2BProvisioningError" || execution.error?.name == "E2BConnectionError" -> ToolErrorCode.SANDBOX_ERROR
           else -> ToolErrorCode.PROCESS_FAILED
