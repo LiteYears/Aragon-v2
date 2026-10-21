@@ -1019,6 +1019,38 @@ class AgentEngine(
             }
           }
 
+          val parseError = toolCall.arguments["_parse_error"]?.toString()
+          if (!parseError.isNullOrBlank()) {
+            val truncMsg = "Tool call JSON arguments for '${toolCall.toolName}' were malformed or truncated ($parseError). Keep tool call arguments concise: write modular scripts (<120 lines) or build files in smaller chunks instead of embedding massive inline strings."
+            val synResult = ToolResult(
+              callId = toolCall.callId,
+              toolName = toolCall.toolName,
+              status = ToolStatus.FAILED,
+              arguments = toolCall.arguments,
+              output = null,
+              error = truncMsg,
+              errorType = ToolErrorCode.INVALID_ARGUMENTS,
+              duration = 0L,
+              exitCode = 1,
+              outcome = ToolExecutionOutcome.EXECUTION_FAILED
+            )
+            val synObs = Observation(
+              callId = toolCall.callId,
+              toolName = toolCall.toolName,
+              status = ToolStatus.FAILED,
+              isSuccess = false,
+              inputsSummary = formatArguments(toolCall.arguments),
+              result = null,
+              error = truncMsg,
+              errorType = ToolErrorCode.INVALID_ARGUMENTS,
+              summary = truncMsg,
+              rawOutput = truncMsg,
+              outcome = ToolExecutionOutcome.EXECUTION_FAILED
+            )
+            results.add(ExecutedToolResult(toolCall, synResult, synObs, isSkippedLoop = false))
+            continue
+          }
+
           // Pre-flight decision checks
           when (val preFlight = recoveryManager.checkPreFlight(toolCall)) {
             is PreFlightDecision.HaltLoop -> {
@@ -1313,14 +1345,14 @@ class AgentEngine(
       lastFilesystemStateFingerprint = currentFingerprint
 
       val hasNovelObservation = toolResult.status == ToolStatus.SUCCEEDED &&
-        observation.summary.isNotBlank() &&
-        observation.outcome != ToolExecutionOutcome.SUCCESS_EMPTY &&
+        !item.isSkippedLoop &&
         observation.outcome != ToolExecutionOutcome.CONDITION_NOT_FOUND &&
         observation.outcome != ToolExecutionOutcome.EXECUTION_FAILED
 
       val madeProgress = stateChanged || hasNovelObservation
       if (madeProgress) {
         consecutiveZeroProgressActions = 0
+        hasReplannedForZeroProgress = false
       } else {
         consecutiveZeroProgressActions++
       }
@@ -1769,6 +1801,8 @@ class AgentEngine(
    */
   private suspend fun run(task: Task) {
     var stepCounter = _state.value.executionFeed.size
+    consecutiveZeroProgressActions = 0
+    hasReplannedForZeroProgress = false
 
     val existingCheckpoint = scratchpad.loadCheckpoint()
     val isResuming = existingCheckpoint != null &&
@@ -1937,6 +1971,10 @@ class AgentEngine(
         var lastStreamUpdateMs = 0L
 
         val streamListener = object : LLMStreamListener {
+          override fun onReset() {
+            streamedTokens.setLength(0)
+          }
+
           override fun onToken(token: String) {
             streamedTokens.append(token)
             val now = System.currentTimeMillis()
@@ -2109,6 +2147,7 @@ class AgentEngine(
             stepCounterProvider = { ++stepCounter },
             onVerificationFailureIncremented = { consecutiveVerificationFailures = it }
           )
+          currentState = _state.value
           when (outcome) {
             is TurnOutcome.Terminal -> return
             is TurnOutcome.Continue -> continue
@@ -2140,6 +2179,7 @@ class AgentEngine(
                 stepCounterProvider = { ++stepCounter },
                 onVerificationFailureIncremented = { consecutiveVerificationFailures = it }
               )
+              currentState = _state.value
               if (outcome is TurnOutcome.Terminal) return
               continue
             }
@@ -2279,7 +2319,7 @@ class AgentEngine(
             AgentMessage(
               role = MessageRole.ASSISTANT,
               content = if (index == 0) {
-                decision.thought ?: "Executing ${validatedToolCalls.size} requested tool call(s)."
+                finalThought?.takeUnless { it.startsWith("[REASONING_DEDUP_HIT") } ?: "Executing ${validatedToolCalls.size} requested tool call(s)."
               } else "",
               toolCallId = call.callId,
               toolName = call.toolName,
@@ -2384,12 +2424,12 @@ class AgentEngine(
           // =========================================================================
           // PHASE 6: EVALUATE OUTCOME (SURGICAL LOOP GUARD & REPLANNING)
           // =========================================================================
-          if (consecutiveZeroProgressActions >= 2) {
+          if (consecutiveZeroProgressActions >= 3) {
             if (!hasReplannedForZeroProgress) {
               // Stop retrying, replan once!
               hasReplannedForZeroProgress = true
               consecutiveZeroProgressActions = 0 // Reset counter for the replanned turn
-              val loopReason = "Workflow loop detected: Two consecutive actions produced no new evidence or progress. Stopping retries and replanning once."
+              val loopReason = "Workflow loop detected: Multiple consecutive actions produced no new evidence or progress. Stopping retries and replanning once."
               planner.clearReplanReason()
 
               val replanStep = ExecutionStep(
@@ -2776,11 +2816,14 @@ class AgentEngine(
 
     if (!isExplicitCreation) return null
 
-    if (goalLower.contains("word file") || goalLower.contains("word doc") || goalLower.contains("word document")) {
+    if (goalLower.contains("word file") || goalLower.contains("wordfile") || goalLower.contains("word doc") || goalLower.contains("word document") || goalLower.contains(".docx")) {
       return "document.docx"
     }
     if (goalLower.contains("excel file") || goalLower.contains("spreadsheet") || goalLower.contains(".xlsx") || goalLower.contains("excel sheet")) {
       return "spreadsheet.xlsx"
+    }
+    if (goalLower.contains("pdf file") || goalLower.contains("pdf document") || goalLower.contains(".pdf")) {
+      return "document.pdf"
     }
     return null
   }

@@ -136,8 +136,13 @@ class ArtifactManager(
       nameLower.endsWith(".swp") ||
       nameLower.endsWith(".log")
 
+    val pathSegments = cleanRelPath.split('/').map { it.lowercase(java.util.Locale.ROOT) }
+    val isInternalPath = pathSegments.any { seg ->
+      seg.startsWith(".") || seg in setOf("notes", "tmp", "temp", "venv", ".venv", "node_modules", "__pycache__", "bin")
+    }
+
     val category = when {
-      cleanRelPath.startsWith(".observations/") -> ArtifactCategory.INTERNAL_OBSERVATION
+      cleanRelPath.startsWith(".observations/") || isInternalPath -> ArtifactCategory.INTERNAL_OBSERVATION
       cleanRelPath.startsWith("tmp/") || cleanRelPath.startsWith("temp/") || cleanRelPath.startsWith(".tmp_") || isTempName -> ArtifactCategory.TEMPORARY_SCRATCH
       else -> ArtifactCategory.USER_FACING_DELIVERABLE
     }
@@ -174,6 +179,10 @@ class ArtifactManager(
       category = category,
       version = currentVersion
     )
+
+    if (isInternalPath) {
+      return artifact
+    }
 
     if (exists && isReadable) {
       registeredArtifacts[cleanRelPath] = artifact
@@ -230,11 +239,14 @@ class ArtifactManager(
       return emptyList()
     }
 
-    // Prune registered files that no longer exist
+    val internalDirs = setOf(".git", ".sessions", ".mcp_data", ".observations", ".artifacts", "workspace", "venv", ".venv", "node_modules", "bin", "tmp", "temp", "notes", "__pycache__")
+
+    // Prune registered files that no longer exist or belong to internal folders
     val toRemove = mutableListOf<String>()
     for ((path, artifact) in registeredArtifacts) {
       val f = File(artifact.absolutePath.ifBlank { resolveFile(path).canonicalPath })
-      if (!f.exists() || !f.isFile) {
+      val hasInternalSeg = path.split('/').any { seg -> seg.startsWith(".") || seg.lowercase(java.util.Locale.ROOT) in internalDirs }
+      if (!f.exists() || !f.isFile || hasInternalSeg) {
         toRemove.add(path)
       }
     }
@@ -245,12 +257,25 @@ class ArtifactManager(
 
     // Scan directory for valid deliverable files, ignoring internal/session metadata and active databases
     workspaceDir.walkTopDown()
+      .onEnter { dir ->
+        if (dir == workspaceDir) true
+        else {
+          val dirName = dir.name.lowercase(java.util.Locale.ROOT)
+          !dirName.startsWith(".") && dirName !in internalDirs
+        }
+      }
       .maxDepth(5)
       .filter { file ->
         val name = file.name.lowercase(java.util.Locale.ROOT)
         val parentName = file.parentFile?.name.orEmpty().lowercase(java.util.Locale.ROOT)
+        val rel = PathSecurity.toCanonicalRelativePath(workspaceDir, PathSecurity.getRelativePath(workspaceDir, file))
+        val hasInternalSegment = rel.split('/').any { seg ->
+          val s = seg.lowercase(java.util.Locale.ROOT)
+          s.startsWith(".") || s in internalDirs
+        }
         val isLink = PathSecurity.isSymbolicLink(file)
-        val isTemp = name.startsWith(".tmp_") ||
+        val isTemp = name.startsWith(".") ||
+          name.startsWith(".tmp_") ||
           name.startsWith("temp_") ||
           name.startsWith("tmp_") ||
           name.startsWith("search_") ||
@@ -273,19 +298,8 @@ class ArtifactManager(
         file.isFile &&
           !isLink &&
           !isTemp &&
-          parentName != ".git" &&
-          parentName != ".sessions" &&
-          parentName != ".mcp_data" &&
-          parentName != ".observations" &&
-          parentName != ".artifacts" &&
-          parentName != "workspace" &&
-          parentName != "venv" &&
-          parentName != ".venv" &&
-          parentName != "node_modules" &&
-          parentName != "bin" &&
-          parentName != "tmp" &&
-          parentName != "temp" &&
-          parentName != "notes"
+          !hasInternalSegment &&
+          parentName !in internalDirs
       }
       .forEach { file ->
         val rel = PathSecurity.getRelativePath(workspaceDir, file)

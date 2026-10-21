@@ -866,7 +866,7 @@ print('___ARAGON_RES___' + json.dumps({
     // 2. Check Python packages (in venv or system)
     if (def.requiredPythonPackages.isNotEmpty()) {
       val importChecks = def.requiredPythonPackages.joinToString("; ") { "import ${toPythonImportName(it)}" }
-      val pyCmd = "([ -x /home/user/venv/bin/python3 ] && /home/user/venv/bin/python3 -c '$importChecks' 2>/dev/null) || python3 -c '$importChecks' 2>/dev/null"
+      val pyCmd = "export PATH=\"/home/user/venv/bin:/home/user/.agent/venv/bin:/home/user/.local/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"; ([ -x /home/user/venv/bin/python3 ] && /home/user/venv/bin/python3 -c '$importChecks' 2>/dev/null) || python3 -c '$importChecks' 2>/dev/null"
       val pyRes = provider.executeCommand(sessionId, RunCommandRequest.builder().command(pyCmd).timeout(Duration.ofSeconds(12)).build())
       if (pyRes.exitCode != 0) {
         val missingStatus = CapabilityStatus(
@@ -883,7 +883,7 @@ print('___ARAGON_RES___' + json.dumps({
     }
 
     // 3. Functional Verification (Concrete Smoke Test)
-    val testCmd = "([ -x /home/user/venv/bin/python3 ] && export PATH=\"/home/user/venv/bin:\$PATH\"); " + def.verificationCommand
+    val testCmd = "export PATH=\"/home/user/venv/bin:/home/user/.agent/venv/bin:/home/user/.local/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"; " + def.verificationCommand
     val verifyRes = provider.executeCommand(sessionId, RunCommandRequest.builder().command(testCmd).timeout(Duration.ofSeconds(20)).build())
     val verifyOk = verifyRes.exitCode == 0 && verifyRes.error == null
 
@@ -1334,7 +1334,7 @@ fi
       .substringBefore('>')
       .substringBefore('<')
       .trim()
-      .lowercase(Locale.ROOT)
+      .lowercase()
     return when (clean) {
       "python-docx", "docx" -> "docx"
       "python-pptx", "pptx" -> "pptx"

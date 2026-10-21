@@ -158,6 +158,7 @@ class DeliverableTracker(
             val relPath = PathSecurity.toCanonicalRelativePath(workspaceDir, PathSecurity.getRelativePath(workspaceDir, targetFile))
             deliverablesMap[path] = item.copy(
               path = relPath,
+              name = targetFile.name,
               status = DeliverableStatus.VERIFIED,
               sizeBytes = length,
               lastModified = lastMod,
@@ -396,13 +397,16 @@ class DeliverableTracker(
     }
 
     val lowerText = text.lowercase(Locale.ROOT)
-    if ((lowerText.contains("word file") || lowerText.contains("word doc") || lowerText.contains("word document")) && results.none { it.endsWith(".docx") }) {
+    if ((lowerText.contains("word file") || lowerText.contains("wordfile") || lowerText.contains("word doc") || lowerText.contains("word document") || lowerText.contains(".docx")) && results.none { it.endsWith(".docx") }) {
       results.add("document.docx")
     }
     if ((lowerText.contains("excel") || lowerText.contains("spreadsheet") || lowerText.contains("xlsx")) && results.none { it.endsWith(".xlsx") || it.endsWith(".xls") }) {
       results.add("spreadsheet.xlsx")
     }
-    if ((lowerText.contains("audit report") || lowerText.contains("research report") || lowerText.contains("summary report")) && results.none { it.endsWith(".md") }) {
+    if ((lowerText.contains("pdf file") || lowerText.contains("pdf document") || lowerText.contains(".pdf")) && results.none { it.endsWith(".pdf") }) {
+      results.add("document.pdf")
+    }
+    if ((lowerText.contains("audit report") || lowerText.contains("research report") || lowerText.contains("summary report")) && results.none { it.endsWith(".md") || it.endsWith(".docx") || it.endsWith(".pdf") }) {
       results.add("report.md")
     }
 

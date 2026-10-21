@@ -210,7 +210,7 @@ class TerminalTool(
       val defaultRemoteDir = "/home/user"
       val remoteWorkingDir = sessionWorkingDirs.getOrDefault(currentSession, defaultRemoteDir)
       val cdPrefix = if (remoteWorkingDir != defaultRemoteDir) "cd '$remoteWorkingDir' && " else ""
-      val pathPrefix = "export PATH=\"/home/user/venv/bin:/home/user/.local/bin:\$PATH\"; "
+      val pathPrefix = "export PATH=\"/home/user/venv/bin:/home/user/.agent/venv/bin:/home/user/.local/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"; "
       val wrappedRemoteCmd = "${pathPrefix}set -o pipefail; trap 'echo \"__ARAGON_CWD__:\$PWD\"' EXIT; $cdPrefix$effectiveCommand"
 
       val req = RunCommandRequest.builder()

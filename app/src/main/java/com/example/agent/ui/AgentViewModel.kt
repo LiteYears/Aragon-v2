@@ -1449,6 +1449,39 @@ class AgentViewModel(
     ArtifactDownloader.shareArtifact(context, artifact, engine.workspaceDir)
   }
 
+  private fun resolveDeliverableArtifact(deliverable: com.example.agent.core.TrackedDeliverable): Artifact {
+    val existing = engine.artifactManager.getArtifact(deliverable.path)
+    if (existing != null) return existing
+    val directFile = java.io.File(engine.workspaceDir, deliverable.path)
+    val matchedFile = if (directFile.exists()) directFile else engine.deliverableTracker.findMatchingFile(deliverable.name) ?: directFile
+    val relPath = if (matchedFile.exists()) {
+      PathSecurity.toCanonicalRelativePath(
+        engine.workspaceDir,
+        PathSecurity.getRelativePath(engine.workspaceDir, matchedFile)
+      )
+    } else deliverable.path
+    return Artifact(
+      id = engine.artifactManager.generateStableId(null, relPath),
+      path = relPath,
+      name = matchedFile.name.ifBlank { deliverable.name },
+      type = engine.artifactManager.determineFileType(matchedFile.name.ifBlank { deliverable.name }),
+      size = if (matchedFile.exists()) matchedFile.length() else deliverable.sizeBytes,
+      lastModified = if (matchedFile.exists()) matchedFile.lastModified() else deliverable.lastModified,
+      absolutePath = matchedFile.absolutePath
+    )
+  }
+
+  fun previewDeliverable(deliverable: com.example.agent.core.TrackedDeliverable) {
+    openArtifactPreview(resolveDeliverableArtifact(deliverable))
+  }
+
+  fun saveDeliverable(context: Context, deliverable: com.example.agent.core.TrackedDeliverable) {
+    ArtifactDownloader.downloadArtifact(context, resolveDeliverableArtifact(deliverable), engine.workspaceDir)
+  }
+
+  fun shareDeliverable(context: Context, deliverable: com.example.agent.core.TrackedDeliverable) {
+    ArtifactDownloader.shareArtifact(context, resolveDeliverableArtifact(deliverable), engine.workspaceDir)
+  }
 
   override fun onCleared() {
     super.onCleared()
