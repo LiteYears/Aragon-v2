@@ -1227,7 +1227,7 @@ class NvidiaNimProvider(
             val textSb = StringBuilder(msg.content)
             for (att in msg.attachments) {
               if (att.mimeType.startsWith("image/")) {
-                textSb.append("\n\n[Attached Image in Workspace: ${att.name} (${att.mimeType}) — use 'read_image', 'recreate_document', or 'document_process' to inspect its visual/OCR contents]")
+                textSb.append("\n\n[Attached Image: ${att.name} (${att.mimeType}) — placed at /home/user/${att.name} and workspace '${att.name}']")
               } else {
                 val textContent = try {
                   att.file?.readText() ?: att.base64Data?.let {

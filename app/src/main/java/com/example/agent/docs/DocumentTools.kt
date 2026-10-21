@@ -12,6 +12,7 @@ import com.example.agent.core.ToolSchema
 import com.example.agent.core.ToolStatus
 import com.example.agent.core.ToolExecutionOutcome
 import com.example.agent.core.ExecutionEnvironmentType
+import com.example.agent.core.SandboxProvider
 import java.io.File
 
 class DocumentListTool(
@@ -385,7 +386,10 @@ class DocumentProcessTool(
  */
 class ReadImageTool(
   private val workspaceDir: File,
-  private val ocrRouter: OcrRouter
+  private val ocrRouter: OcrRouter,
+  private val documentServiceSupplier: (() -> DocumentIntelligenceService?)? = null,
+  private val sandboxProviderSupplier: (() -> SandboxProvider?)? = null,
+  private val sessionIdProvider: () -> String = { "default" }
 ) : Tool {
   override val name: String = "read_image"
   override val description: String =
@@ -415,19 +419,103 @@ class ReadImageTool(
 
   override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult {
     val startTime = System.currentTimeMillis()
-    val pathArg = (arguments["path"] as? String)?.trim().orEmpty()
-    if (pathArg.isEmpty()) {
+    val rawPath = (arguments["path"] as? String)?.trim().orEmpty()
+    if (rawPath.isEmpty()) {
       return invalidArguments(callId, arguments, startTime, "Parameter 'path' is required.")
     }
-    val targetFile = PathSecurity.resolveSafe(workspaceDir, pathArg)
-    if (!targetFile.exists() || !targetFile.isFile) {
+    var cleanPath = rawPath.removeSurrounding("\"").removeSurrounding("'").trim()
+    while (cleanPath.startsWith("./")) cleanPath = cleanPath.removePrefix("./").trim()
+    when {
+      cleanPath.startsWith("/home/user/") -> cleanPath = cleanPath.removePrefix("/home/user/")
+      cleanPath.startsWith("home/user/") -> cleanPath = cleanPath.removePrefix("home/user/")
+      cleanPath.startsWith("/workspace/") -> cleanPath = cleanPath.removePrefix("/workspace/")
+      cleanPath.startsWith("workspace/") -> cleanPath = cleanPath.removePrefix("workspace/")
+      cleanPath.startsWith("/") -> cleanPath = cleanPath.removePrefix("/")
+    }
+
+    var targetFile: File? = null
+    // 1. Direct safe resolve
+    try {
+      val f = PathSecurity.resolveSafe(workspaceDir, cleanPath)
+      if (f.exists() && f.isFile) targetFile = f
+    } catch (_: Exception) {}
+
+    // 2. Direct workspace file by name or base name
+    if (targetFile == null) {
+      val f = File(workspaceDir, cleanPath)
+      if (f.exists() && f.isFile) targetFile = f
+    }
+    if (targetFile == null) {
+      val f = File(workspaceDir, File(cleanPath).name)
+      if (f.exists() && f.isFile) targetFile = f
+    }
+
+    // 3. DocumentIntelligenceService resolution
+    if (targetFile == null) {
+      val docService = documentServiceSupplier?.invoke()
+      val docFile = docService?.getOriginalFile(cleanPath)
+        ?: docService?.resolveDocumentFile(cleanPath)
+        ?: docService?.getOriginalFile(File(cleanPath).name)
+        ?: docService?.resolveDocumentFile(File(cleanPath).name)
+      if (docFile != null && docFile.exists() && docFile.isFile) {
+        val wsTarget = File(workspaceDir, File(cleanPath).name)
+        try { docFile.copyTo(wsTarget, overwrite = true) } catch (_: Exception) {}
+        targetFile = wsTarget
+      }
+    }
+
+    // 4. Recursive workspace scan by filename or ending
+    if (targetFile == null) {
+      val baseName = File(cleanPath).name.lowercase()
+      val found = workspaceDir.walkTopDown().filter { it.isFile && !it.name.startsWith(".") }
+        .firstOrNull { it.name.lowercase() == baseName || it.name.lowercase().contains(baseName) }
+      if (found != null) targetFile = found
+    }
+
+    // 5. Check documents/ folder directly
+    if (targetFile == null) {
+      val docsDir = File(workspaceDir, "documents")
+      if (docsDir.exists()) {
+        val found = docsDir.walkTopDown().filter { it.isFile && !it.name.startsWith(".") }
+          .firstOrNull {
+            it.name.startsWith("original") || it.name.lowercase() == File(cleanPath).name.lowercase()
+          }
+        if (found != null) {
+          val wsTarget = File(workspaceDir, File(cleanPath).name)
+          try { found.copyTo(wsTarget, overwrite = true) } catch (_: Exception) {}
+          targetFile = wsTarget
+        }
+      }
+    }
+
+    // 6. If only 1 image exists anywhere in workspace
+    if (targetFile == null) {
+      val imageExts = setOf("png", "jpg", "jpeg", "webp", "bmp", "gif")
+      val allImages = workspaceDir.walkTopDown().filter { it.isFile && it.extension.lowercase() in imageExts }.toList()
+      if (allImages.isNotEmpty()) {
+        targetFile = allImages.first()
+      }
+    }
+
+    // 7. Pull from remote E2B microVM if still not found
+    if (targetFile == null) {
+      val sbx = sandboxProviderSupplier?.invoke()
+      if (sbx != null && sbx.isRemote) {
+        val dest = File(workspaceDir, File(cleanPath).name)
+        if (sbx.pullFileFromRemote(sessionIdProvider(), cleanPath, dest) && dest.exists()) {
+          targetFile = dest
+        }
+      }
+    }
+
+    if (targetFile == null || !targetFile.exists() || !targetFile.isFile) {
       return ToolResult(
         callId = callId,
         toolName = name,
         status = ToolStatus.FAILED,
         arguments = arguments,
         output = null,
-        error = "File does not exist: $pathArg",
+        error = "File does not exist: $rawPath",
         errorType = ToolErrorCode.FILE_NOT_FOUND,
         duration = System.currentTimeMillis() - startTime,
         exitCode = 1

@@ -25,11 +25,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.ripple
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Image
+import com.example.agent.core.FileAttachment
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -755,6 +760,21 @@ fun TaskObjectiveView(step: ExecutionStep) {
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.Start
       ) {
+        if (step.attachments.isNotEmpty()) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(bottom = 8.dp)
+              .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            step.attachments.forEach { att ->
+              ModernAttachmentBadge(attachment = att)
+            }
+          }
+        }
+
         Text(
           text = step.content,
           style = MaterialTheme.typography.bodyMedium,
@@ -780,6 +800,78 @@ fun TaskObjectiveView(step: ExecutionStep) {
         label = "COPY",
         testTag = "copy_task_objective_${step.stepNumber}"
       )
+    }
+  }
+}
+
+/**
+ * Small, modern AMOLED attachment badge representing an uploaded image or document.
+ */
+@Composable
+fun ModernAttachmentBadge(
+  attachment: FileAttachment,
+  modifier: Modifier = Modifier
+) {
+  val isImage = attachment.mimeType.startsWith("image/") ||
+    attachment.name.lowercase().let {
+      it.endsWith(".jpg") || it.endsWith(".jpeg") || it.endsWith(".png") ||
+        it.endsWith(".webp") || it.endsWith(".gif") || it.endsWith(".bmp")
+    }
+
+  val ext = attachment.name.substringAfterLast('.', "").uppercase().ifBlank {
+    if (isImage) "IMG" else "FILE"
+  }
+
+  Surface(
+    shape = RoundedCornerShape(7.dp),
+    color = Color(0xFF131724),
+    border = BorderStroke(0.8.dp, Color(0xFF2A364F)),
+    modifier = modifier.testTag("user_attachment_badge_${attachment.name}")
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.5.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+      Box(
+        modifier = Modifier
+          .size(17.dp)
+          .clip(RoundedCornerShape(4.dp))
+          .background(if (isImage) Color(0xFF0F2B48) else Color(0xFF1E1E32)),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(
+          imageVector = if (isImage) Icons.Default.Image else Icons.Default.AttachFile,
+          contentDescription = "Attached File",
+          tint = if (isImage) Color(0xFF38BDF8) else Color(0xFFA78BFA),
+          modifier = Modifier.size(11.dp)
+        )
+      }
+
+      Text(
+        text = attachment.name.take(18) + if (attachment.name.length > 18) "…" else "",
+        fontFamily = JetBrainsMonoFontFamily,
+        fontSize = 10.5.sp,
+        fontWeight = FontWeight.Medium,
+        color = Color(0xFFF1F5F9),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+      )
+
+      Surface(
+        shape = RoundedCornerShape(3.dp),
+        color = Color(0xFF1E293B),
+        border = BorderStroke(0.5.dp, Color(0xFF334155))
+      ) {
+        Text(
+          text = ext,
+          fontFamily = JetBrainsMonoFontFamily,
+          fontSize = 8.sp,
+          fontWeight = FontWeight.Bold,
+          color = if (isImage) Color(0xFF38BDF8) else Color(0xFF94A3B8),
+          modifier = Modifier.padding(horizontal = 3.5.dp, vertical = 1.dp)
+        )
+      }
     }
   }
 }

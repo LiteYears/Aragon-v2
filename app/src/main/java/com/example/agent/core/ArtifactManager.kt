@@ -406,6 +406,7 @@ class ArtifactManager(
       workspaceDir.listFiles()?.forEach { file ->
         val name = file.name.lowercase()
         val isProtected = name == "bin" || name == "tmp" || name == "lib" ||
+          name == "documents" ||
           name.startsWith(".e2b_session") || name.startsWith(".sessions") ||
           name == "data.db" || name.startsWith("data.db-") || name == ".mcp_data" ||
           name == ".artifacts" ||

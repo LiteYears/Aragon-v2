@@ -188,13 +188,23 @@ class DocumentIntelligenceService(
         current.add(existing.id)
         _scope.value = current
         prefs.edit().putStringSet("documents_scope_ids", current).apply()
+        // Ensure workspace copy is restored if missing
+        val origFile = getOriginalFile(existing.id)
+        if (origFile != null && origFile.exists()) {
+          try {
+            val wsCopy = File(workspaceDir, existing.displayName)
+            if (!wsCopy.exists() || wsCopy.length() == 0L) {
+              origFile.copyTo(wsCopy, overwrite = true)
+            }
+          } catch (_: Exception) {}
+        }
         refreshDocuments()
         return@withContext ImportOutcome(existing.id, existing.displayName, true, "Attached '${existing.displayName}'")
       }
       val docId = UUID.randomUUID().toString().replace("-", "").take(16)
       val docDir = File(workspaceDir, "documents/$docId")
       docDir.mkdirs()
-      val ext = DocumentDetector.extensionFor(detection.type)
+      val ext = DocumentDetector.extensionFor(detection.type, temp)
       val hasExt = displayName.contains('.') && displayName.substringAfterLast('.').length in 1..5
       val effectiveDisplayName = if (hasExt) displayName else "$displayName.$ext"
       val original = File(docDir, "original.$ext")
@@ -207,11 +217,18 @@ class DocumentIntelligenceService(
         val workspaceCopy = File(workspaceDir, safeFileName)
         workspaceCopy.parentFile?.mkdirs()
         original.copyTo(workspaceCopy, overwrite = true)
+        if (effectiveDisplayName != safeFileName) {
+          val directCopy = File(workspaceDir, effectiveDisplayName)
+          original.copyTo(directCopy, overwrite = true)
+        }
         // Automatically sync to active E2B microVM at /home/user/<safeFileName>
         val sandbox = sandboxProviderSupplier()
         val sessId = sessionIdSupplier()
         if (sandbox != null && sandbox.isRemote && sessId.isNotBlank()) {
           sandbox.pushFileToRemote(sessId, safeFileName, workspaceCopy)
+          if (effectiveDisplayName != safeFileName) {
+            sandbox.pushFileToRemote(sessId, effectiveDisplayName, workspaceCopy)
+          }
         }
       } catch (_: Exception) {
       }
@@ -440,14 +457,32 @@ class DocumentIntelligenceService(
   }
 
   fun getOriginalFile(docId: String): File? {
-    val doc = _documents.value.firstOrNull { it.id == docId } ?: return null
-    val docDir = File(workspaceDir, "documents/${doc.id}")
+    val cleanId = docId.trim().removePrefix("./").removePrefix("/")
+    val doc = _documents.value.firstOrNull {
+      it.id.equals(cleanId, ignoreCase = true) ||
+      it.displayName.equals(cleanId, ignoreCase = true) ||
+      it.displayName.equals(File(cleanId).name, ignoreCase = true)
+    }
+
+    val targetId = doc?.id ?: cleanId
+    val docDir = File(workspaceDir, "documents/$targetId")
     val candidates = docDir.listFiles()?.filter { it.isFile && it.name.startsWith("original") }
-    if (!candidates.isNullOrEmpty()) return candidates.first()
-    val ws = File(workspaceDir, doc.displayName)
-    if (ws.exists()) return ws
-    val safeWs = File(workspaceDir, DocumentText.sanitizeFileName(doc.displayName))
-    if (safeWs.exists()) return safeWs
+    if (!candidates.isNullOrEmpty()) {
+      val orig = candidates.first()
+      if (doc != null) {
+        val ws = File(workspaceDir, doc.displayName)
+        if (!ws.exists() || ws.length() == 0L) {
+          try { orig.copyTo(ws, overwrite = true) } catch (_: Exception) {}
+        }
+      }
+      return orig
+    }
+    if (doc != null) {
+      val ws = File(workspaceDir, doc.displayName)
+      if (ws.exists()) return ws
+      val safeWs = File(workspaceDir, DocumentText.sanitizeFileName(doc.displayName))
+      if (safeWs.exists()) return safeWs
+    }
     return null
   }
 
@@ -456,34 +491,40 @@ class DocumentIntelligenceService(
     val direct = File(workspaceDir, cleanRef)
     if (direct.exists() && direct.isFile) return direct
 
-    val docByDisplayName = _documents.value.firstOrNull {
+    val doc = _documents.value.firstOrNull {
+      it.id.equals(cleanRef, ignoreCase = true) ||
       it.displayName.equals(cleanRef, ignoreCase = true) ||
       it.displayName.equals(File(cleanRef).name, ignoreCase = true)
     }
-    if (docByDisplayName != null) {
-      val orig = File(workspaceDir, "documents/${docByDisplayName.id}/original.${DocumentDetector.extensionFor(docByDisplayName.type)}")
-      if (orig.exists()) return orig
-      val ws = File(workspaceDir, docByDisplayName.displayName)
+
+    if (doc != null) {
+      val docDir = File(workspaceDir, "documents/${doc.id}")
+      val orig = docDir.listFiles()?.firstOrNull { it.isFile && it.name.startsWith("original") }
+      if (orig != null && orig.exists()) {
+        val ws = File(workspaceDir, doc.displayName)
+        if (!ws.exists() || ws.length() == 0L) {
+          try { orig.copyTo(ws, overwrite = true) } catch (_: Exception) {}
+        }
+        return orig
+      }
+      val ws = File(workspaceDir, doc.displayName)
       if (ws.exists()) return ws
+      val safeWs = File(workspaceDir, DocumentText.sanitizeFileName(doc.displayName))
+      if (safeWs.exists()) return safeWs
     }
 
     if (cleanRef.matches(Regex("""^[dD]\d+$"""))) {
       val idx = cleanRef.substring(1).toIntOrNull()?.minus(1)
       if (idx != null && idx in _documents.value.indices) {
-        val doc = _documents.value[idx]
-        val orig = File(workspaceDir, "documents/${doc.id}/original.${DocumentDetector.extensionFor(doc.type)}")
-        if (orig.exists()) return orig
-        val ws = File(workspaceDir, doc.displayName)
-        if (ws.exists()) return ws
+        val d = _documents.value[idx]
+        return getOriginalFile(d.id)
       }
     }
 
-    val docById = _documents.value.firstOrNull { it.id.equals(cleanRef, ignoreCase = true) }
-    if (docById != null) {
-      val orig = File(workspaceDir, "documents/${docById.id}/original.${DocumentDetector.extensionFor(docById.type)}")
-      if (orig.exists()) return orig
-      val ws = File(workspaceDir, docById.displayName)
-      if (ws.exists()) return ws
+    val candidateDir = File(workspaceDir, "documents/$cleanRef")
+    if (candidateDir.exists() && candidateDir.isDirectory) {
+      val orig = candidateDir.listFiles()?.firstOrNull { it.isFile && it.name.startsWith("original") }
+      if (orig != null && orig.exists()) return orig
     }
 
     return null

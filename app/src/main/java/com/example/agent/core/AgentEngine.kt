@@ -5,6 +5,9 @@ import com.example.agent.docs.DocumentIntelligenceService
 import com.example.agent.docs.DocumentListTool
 import com.example.agent.docs.DocumentProcessTool
 import com.example.agent.docs.DocumentSearchTool
+import com.example.agent.docs.DocumentDetector
+import com.example.agent.docs.DocumentText
+import com.example.agent.docs.DocumentStructureCodec
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -201,7 +204,15 @@ class AgentEngine(
       registry.register(DocumentListTool(docs))
       registry.register(DocumentSearchTool(docs))
       registry.register(DocumentProcessTool(workspaceDir, docs, artifactManager))
-      registry.register(com.example.agent.docs.ReadImageTool(workspaceDir, docs.ocrRouter))
+      registry.register(
+        com.example.agent.docs.ReadImageTool(
+          workspaceDir = workspaceDir,
+          ocrRouter = docs.ocrRouter,
+          documentServiceSupplier = { documentService },
+          sandboxProviderSupplier = { sandboxProvider },
+          sessionIdProvider = { _state.value.sessionId }
+        )
+      )
     }
 
     // 7. Native PDF Document Builder & Universal Replicator (Word & Excel are authored exclusively via Python)
@@ -491,23 +502,14 @@ class AgentEngine(
     }
     val startingStep = previousFeed.size
 
-    val newStep = ExecutionStep(
-      id = "step_intent_${task.id}",
-      stepNumber = startingStep + 1,
-      type = StepType.TASK_INTENT,
-      title = when {
-        isResuming -> "Task Resumed"
-        isFollowUp -> "Follow-up / Task Modification"
-        else -> "Task Received"
-      },
-      content = task.goal
-    )
-
     val inScopeIds = documentService?.scope?.value ?: emptySet()
-    val inScopeDocNames = if (inScopeIds.isNotEmpty()) {
-      documentService?.documents?.value
-        ?.filter { it.id in inScopeIds }
-        ?.map { it.displayName } ?: emptyList()
+    val allUploadedDocs = documentService?.documents?.value ?: emptyList()
+    val effectiveScopeIds = if (inScopeIds.isNotEmpty()) inScopeIds else allUploadedDocs.map { it.id }.toSet()
+
+    val inScopeDocNames = if (effectiveScopeIds.isNotEmpty()) {
+      allUploadedDocs
+        .filter { it.id in effectiveScopeIds }
+        .map { it.displayName }
     } else emptyList()
 
     val inputFiles = inScopeDocNames
@@ -526,12 +528,107 @@ class AgentEngine(
       )
       .distinct()
 
+    val messageAttachments = mutableListOf<FileAttachment>()
+    val attachedDocTexts = mutableListOf<Pair<String, String>>()
+    if (effectiveScopeIds.isNotEmpty()) {
+      for (doc in allUploadedDocs) {
+        if (doc.id in effectiveScopeIds) {
+          val f = documentService?.getOriginalFile(doc.id)
+            ?: documentService?.resolveDocumentFile(doc.id)
+            ?: File(workspaceDir, doc.displayName).takeIf { it.exists() }
+            ?: File(workspaceDir, DocumentText.sanitizeFileName(doc.displayName)).takeIf { it.exists() }
+          if (f != null && f.exists() && f.length() <= 20 * 1024 * 1024) {
+            val wsCopy = File(workspaceDir, doc.displayName)
+            if (!wsCopy.exists() || wsCopy.length() == 0L) {
+              try { f.copyTo(wsCopy, overwrite = true) } catch (_: Exception) {}
+            }
+            val mime = when (doc.type) {
+              com.example.agent.docs.DocumentType.IMAGE -> DocumentDetector.imageMimeType(f)
+              com.example.agent.docs.DocumentType.PDF -> "application/pdf"
+              com.example.agent.docs.DocumentType.CSV -> "text/csv"
+              com.example.agent.docs.DocumentType.TXT -> "text/plain"
+              com.example.agent.docs.DocumentType.DOCX -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              com.example.agent.docs.DocumentType.XLSX -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              else -> "application/octet-stream"
+            }
+            messageAttachments.add(FileAttachment(name = doc.displayName, mimeType = mime, file = f))
+
+            // Check if documentService has already extracted text / structure
+            val structFile = File(workspaceDir, "documents/${doc.id}/structure.json")
+            if (structFile.exists() && structFile.isFile) {
+              try {
+                val struct = DocumentStructureCodec.fromJson(structFile.readText())
+                val extracted = struct.blocks.mapNotNull { it.text.takeIf { t -> t.isNotBlank() } }.joinToString("\n")
+                if (extracted.isNotBlank()) {
+                  attachedDocTexts.add(Pair(doc.displayName, extracted))
+                }
+              } catch (_: Exception) {}
+            }
+          }
+        }
+      }
+    }
+
+    // Fallback: If no documentService attachments were found, look for standalone image files in workspace
+    if (messageAttachments.isEmpty()) {
+      val imageExts = setOf("png", "jpg", "jpeg", "webp", "bmp", "gif")
+      val wsImages = workspaceDir.walkTopDown().maxDepth(2)
+        .filter { f ->
+          f.isFile && !f.name.startsWith(".") &&
+            !f.relativeTo(workspaceDir).path.startsWith("documents/") &&
+            !f.relativeTo(workspaceDir).path.startsWith(".scratchpad/") &&
+            !f.relativeTo(workspaceDir).path.startsWith(".observations/") &&
+            f.extension.lowercase() in imageExts
+        }
+        .sortedByDescending { it.lastModified() }
+        .toList()
+      for (img in wsImages.take(3)) {
+        messageAttachments.add(
+          FileAttachment(
+            name = img.name,
+            mimeType = DocumentDetector.imageMimeType(img),
+            file = img
+          )
+        )
+      }
+    }
+
+    val newStep = ExecutionStep(
+      id = "step_intent_${task.id}",
+      stepNumber = startingStep + 1,
+      type = StepType.TASK_INTENT,
+      title = when {
+        isResuming -> "Task Resumed"
+        isFollowUp -> "Follow-up / Task Modification"
+        else -> "Task Received"
+      },
+      content = task.goal,
+      attachments = messageAttachments
+    )
+
     val userMessageContent = buildString {
       append(when {
         isResuming -> "Task Objective (Resumed): ${task.goal}"
         isFollowUp -> "User Follow-up Request: ${task.goal}"
         else -> "Task Objective: ${task.goal}"
       })
+      if (messageAttachments.isNotEmpty()) {
+        appendLine()
+        appendLine()
+        appendLine("[USER ATTACHMENTS (Direct Model Access)]:")
+        messageAttachments.forEach { att ->
+          appendLine("• ${att.name} (${att.mimeType}) — placed at /home/user/${att.name} and workspace '${att.name}'")
+        }
+        appendLine("NOTE: The user has attached these files. Inspect their contents directly or use 'read_image' / Python scripts in the sandbox.")
+      }
+      if (attachedDocTexts.isNotEmpty()) {
+        attachedDocTexts.forEach { (docName, textContent) ->
+          appendLine()
+          appendLine("[PRE-EXTRACTED CONTENT FOR '$docName']:")
+          appendLine(textContent.take(4000))
+          appendLine("[END PRE-EXTRACTED CONTENT]")
+        }
+      }
       if (inputFiles.isNotEmpty()) {
         appendLine()
         appendLine()
@@ -549,35 +646,6 @@ class AgentEngine(
         appendLine("  * Call 'recreate_document(source: \"<filename>\", target_format: \"docx\"|\"xlsx\"|\"pdf\", title: \"...\", author: \"...\", date: \"today\")'.")
         appendLine("  * It automatically executes high-precision OCR on pictures/screenshots, extracts sections/headings/tables, substitutes the title, author name, and date to the current date, and builds a verified deliverable.")
         appendLine("- To create Word (.docx) or Excel (.xlsx) files: ALWAYS write and execute a Python script in the sandbox using 'python-docx' for Word and 'openpyxl'/'pandas' for Excel. When stuck, ALWAYS turn to Python!")
-      }
-    }
-
-    val messageAttachments = mutableListOf<FileAttachment>()
-    if (inScopeIds.isNotEmpty()) {
-      val allDocs = documentService?.documents?.value ?: emptyList()
-      for (doc in allDocs) {
-        if (doc.id in inScopeIds) {
-          val f = documentService?.getOriginalFile(doc.id)
-          if (f != null && f.exists() && f.length() <= 10 * 1024 * 1024) {
-            val mime = when (doc.type) {
-              com.example.agent.docs.DocumentType.IMAGE -> {
-                when (f.extension.lowercase()) {
-                  "png" -> "image/png"
-                  "webp" -> "image/webp"
-                  "gif" -> "image/gif"
-                  else -> "image/jpeg"
-                }
-              }
-              com.example.agent.docs.DocumentType.PDF -> "application/pdf"
-              com.example.agent.docs.DocumentType.CSV -> "text/csv"
-              com.example.agent.docs.DocumentType.TXT -> "text/plain"
-              com.example.agent.docs.DocumentType.DOCX -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-              com.example.agent.docs.DocumentType.XLSX -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              else -> "text/plain"
-            }
-            messageAttachments.add(FileAttachment(name = doc.displayName, mimeType = mime, file = f))
-          }
-        }
       }
     }
 
@@ -702,20 +770,28 @@ class AgentEngine(
       try {
         val syncedFiles = mutableListOf<String>()
         val inScopeIds = documentService?.scope?.value ?: emptySet()
+        val allDocs = documentService?.documents?.value ?: emptyList()
+        val effectiveDocIds = if (inScopeIds.isNotEmpty()) inScopeIds else allDocs.map { it.id }.toSet()
         val hasRunningSession = (activeSandbox as? E2BSandboxProvider)?.hasActiveRunningSession(task.sessionId) == true
 
         // Avoid cold-booting a remote E2B Firecracker MicroVM before Turn 1's LLM call
-        // unless the user attached in-scope documents or a sandbox session is already running.
-        if (inScopeIds.isEmpty() && !hasRunningSession) {
+        // unless the user attached documents or a sandbox session is already running.
+        if (effectiveDocIds.isEmpty() && !hasRunningSession) {
           return
         }
 
-        if (inScopeIds.isNotEmpty()) {
-          val inScopeDocs = documentService?.documents?.value?.filter { it.id in inScopeIds } ?: emptyList()
+        if (effectiveDocIds.isNotEmpty()) {
+          val inScopeDocs = allDocs.filter { it.id in effectiveDocIds }
           for (doc in inScopeDocs) {
-            val localDocFile = documentService?.resolveDocumentFile(doc.id)
+            val localDocFile = documentService?.getOriginalFile(doc.id)
+              ?: documentService?.resolveDocumentFile(doc.id)
               ?: File(workspaceDir, doc.displayName).takeIf { it.exists() }
+              ?: File(workspaceDir, DocumentText.sanitizeFileName(doc.displayName)).takeIf { it.exists() }
             if (localDocFile != null && localDocFile.isFile) {
+              val wsCopy = File(workspaceDir, doc.displayName)
+              if (!wsCopy.exists() || wsCopy.length() == 0L) {
+                try { localDocFile.copyTo(wsCopy, overwrite = true) } catch (_: Exception) {}
+              }
               val ok = activeSandbox.pushFileToRemote(task.sessionId, doc.displayName, localDocFile)
               if (ok) syncedFiles.add(doc.displayName)
             }

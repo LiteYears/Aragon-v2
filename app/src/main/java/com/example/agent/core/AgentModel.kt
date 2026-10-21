@@ -546,6 +546,18 @@ data class TaskRecord(
         if (step.stderr != null) sObj.put("stderr", step.stderr)
         sObj.put("timestamp", step.timestamp)
         sObj.put("isCompleted", step.isCompleted)
+        if (step.attachments.isNotEmpty()) {
+          val attArr = org.json.JSONArray()
+          for (att in step.attachments) {
+            val aObj = org.json.JSONObject()
+            aObj.put("name", att.name)
+            aObj.put("mimeType", att.mimeType)
+            if (att.file != null) aObj.put("path", att.file.absolutePath)
+            if (att.base64Data != null) aObj.put("base64Data", att.base64Data)
+            attArr.put(aObj)
+          }
+          sObj.put("attachments", attArr)
+        }
         feedArr.put(sObj)
       }
       obj.put("executionFeed", feedArr)
@@ -748,7 +760,20 @@ data class TaskRecord(
                 stdout = if (sObj.has("stdout")) sObj.optString("stdout") else null,
                 stderr = if (sObj.has("stderr")) sObj.optString("stderr") else null,
                 timestamp = sObj.optLong("timestamp", System.currentTimeMillis()),
-                isCompleted = sObj.optBoolean("isCompleted", true)
+                isCompleted = sObj.optBoolean("isCompleted", true),
+                attachments = mutableListOf<FileAttachment>().apply {
+                  sObj.optJSONArray("attachments")?.let { aArr ->
+                    for (j in 0 until aArr.length()) {
+                      val aObj = aArr.getJSONObject(j)
+                      val aName = aObj.optString("name", "attachment")
+                      val aMime = aObj.optString("mimeType", "application/octet-stream")
+                      val aPath = aObj.optString("path", "")
+                      val aFile = if (aPath.isNotBlank()) java.io.File(aPath) else null
+                      val aB64 = if (aObj.has("base64Data")) aObj.optString("base64Data") else null
+                      add(FileAttachment(name = aName, mimeType = aMime, file = aFile, base64Data = aB64))
+                    }
+                  }
+                }
               )
             )
           }
@@ -1078,7 +1103,8 @@ data class ExecutionStep(
   val actionStatus: ActionExecutionStatus? = null,
   val actionableStepId: String? = null,
   val waveIndex: Int? = null,
-  val structuredError: StructuredErrorReport? = null
+  val structuredError: StructuredErrorReport? = null,
+  val attachments: List<FileAttachment> = emptyList()
 )
 
 /**

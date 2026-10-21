@@ -133,13 +133,52 @@ object DocumentDetector {
     }
   }
 
-  fun extensionFor(type: DocumentType): String = when (type) {
+  fun imageExtension(file: File): String? {
+    if (!file.exists() || !file.isFile) return null
+    return try {
+      val header = ByteArray(16)
+      val read = file.inputStream().use { it.read(header) }
+      if (read >= 4) {
+        if (header[0] == 0xFF.toByte() && header[1] == 0xD8.toByte() && header[2] == 0xFF.toByte()) "jpg"
+        else if (header[0] == 0x89.toByte() && header[1] == 0x50.toByte() && header[2] == 0x4E.toByte() && header[3] == 0x47.toByte()) "png"
+        else if (header[0] == 0x47.toByte() && header[1] == 0x49.toByte() && header[2] == 0x46.toByte() && header[3] == 0x38.toByte()) "gif"
+        else if (header[0] == 0x42.toByte() && header[1] == 0x4D.toByte()) "bmp"
+        else if (read >= 12 && String(header, 0, 4, Charsets.US_ASCII) == "RIFF" && String(header, 8, 4, Charsets.US_ASCII) == "WEBP") "webp"
+        else null
+      } else null
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  fun imageMimeType(file: File): String {
+    val ext = file.extension.lowercase()
+    return when (ext) {
+      "png" -> "image/png"
+      "webp" -> "image/webp"
+      "gif" -> "image/gif"
+      "bmp" -> "image/bmp"
+      "heic", "heif" -> "image/heic"
+      else -> {
+        val detected = imageExtension(file)
+        when (detected) {
+          "png" -> "image/png"
+          "webp" -> "image/webp"
+          "gif" -> "image/gif"
+          "bmp" -> "image/bmp"
+          else -> "image/jpeg"
+        }
+      }
+    }
+  }
+
+  fun extensionFor(type: DocumentType, file: File? = null): String = when (type) {
     DocumentType.PDF -> "pdf"
     DocumentType.DOCX -> "docx"
     DocumentType.XLSX -> "xlsx"
     DocumentType.CSV -> "csv"
     DocumentType.TXT -> "txt"
-    DocumentType.IMAGE -> "img"
+    DocumentType.IMAGE -> (file?.let { imageExtension(it) } ?: "jpg")
     DocumentType.UNSUPPORTED -> "bin"
   }
 }

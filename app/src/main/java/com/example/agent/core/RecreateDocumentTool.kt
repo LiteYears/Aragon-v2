@@ -559,11 +559,12 @@ class RecreateDocumentTool(
 
     // 2. Document reference via DocumentIntelligenceService (e.g. "D1" or display name)
     if (documentService != null && clean.isNotBlank()) {
-      val entity = documentService.resolveReference(clean)
-      if (entity != null) {
-        val f = documentService.resolveDocumentFile(entity.id)
-        if (f != null && f.exists()) return f
-      }
+      val f = documentService.getOriginalFile(clean)
+        ?: documentService.resolveDocumentFile(clean)
+        ?: documentService.getOriginalFile(File(clean).name)
+        ?: documentService.resolveDocumentFile(File(clean).name)
+        ?: documentService.resolveReference(clean)?.let { documentService.resolveDocumentFile(it.id) }
+      if (f != null && f.exists()) return f
     }
 
     // 3. Scan workspace recursively by exact name, prefix, or substring match
