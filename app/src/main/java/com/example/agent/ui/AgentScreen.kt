@@ -24,6 +24,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.ScrollableDefaults
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.graphics.graphicsLayer
@@ -447,13 +448,8 @@ fun AgentScreen(
     }
   }
 
-  // Follow newly added steps only when the user is at the live tail
-  LaunchedEffect(state.executionFeed.size) {
-    if (state.executionFeed.isNotEmpty() && isNearBottom) {
-      try {
-        listState.animateScrollToItem(state.executionFeed.size - 1)
-      } catch (_: Exception) {}
-    }
+  val isUserDragging by remember {
+    derivedStateOf { listState.isScrollInProgress }
   }
 
   val filterCounts = remember(state.executionFeed) {
@@ -485,6 +481,39 @@ fun AgentScreen(
       FeedFilter.REASONING -> visibleFeed.filter { it.type == StepType.THINKING || it.type == StepType.PLAN || it.type == StepType.CONCLUSION }
       FeedFilter.OUTPUTS -> visibleFeed.filter { !it.stdout.isNullOrBlank() || !it.stderr.isNullOrBlank() }
       FeedFilter.ERRORS -> visibleFeed.filter { it.type == StepType.ERROR || (it.exitCode != null && it.exitCode != 0) }
+    }
+  }
+
+  // Smooth elastic auto-scroll adhering to best practices for high-speed streaming agent feeds:
+  // 1. Never interrupt physics or animation if user is manually scrolling or has scrolled up (!isNearBottom).
+  // 2. Animate smoothly to new items or completion state.
+  // 3. For live streaming token additions, use instant smooth pin to bottom without restarting animations.
+  val currentFeedSize = filteredFeed.size
+  val currentStatus = state.status
+
+  LaunchedEffect(currentFeedSize, currentStatus) {
+    if (filteredFeed.isNotEmpty() && isNearBottom && !isUserDragging) {
+      val targetIndex = (filteredFeed.size - 1).coerceAtLeast(0)
+      try {
+        if (currentStatus == AgentStatus.COMPLETED) {
+          listState.animateScrollToItem(
+            index = targetIndex,
+            scrollOffset = 220
+          )
+        } else {
+          listState.animateScrollToItem(targetIndex)
+        }
+      } catch (_: Exception) {}
+    }
+  }
+
+  val lastStepContentLength = state.executionFeed.lastOrNull()?.content?.length ?: 0
+  LaunchedEffect(lastStepContentLength) {
+    if (filteredFeed.isNotEmpty() && isNearBottom && !isUserDragging && lastStepContentLength > 0) {
+      val targetIndex = (filteredFeed.size - 1).coerceAtLeast(0)
+      try {
+        listState.scrollToItem(targetIndex, 10000)
+      } catch (_: Exception) {}
     }
   }
 
@@ -833,16 +862,21 @@ fun AgentScreen(
                   verticalAlignment = Alignment.CenterVertically,
                   horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                  // Attachment button with options menu
+                  // Attachment button with options menu and rotation animation when opened
                   Box {
                     val attachInteraction = remember { MutableInteractionSource() }
+                    val attachRotation by animateFloatAsState(
+                      targetValue = if (showAttachmentMenu) 45f else 0f,
+                      animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f),
+                      label = "attach_rotation"
+                    )
                     Box(
                       modifier = Modifier
-                        .size(30.dp)
+                        .size(32.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF161622))
-                        .border(BorderStroke(0.8.dp, Color(0xFF262638)), CircleShape)
-                        .tactilePress(attachInteraction)
+                        .background(Color(0xFF0D0D14))
+                        .border(BorderStroke(0.9.dp, if (showAttachmentMenu) Color(0xFF38BDF8) else Color(0xFF222232)), CircleShape)
+                        .tactilePress(attachInteraction, pressedScale = 0.85f)
                         .clickable(
                           interactionSource = attachInteraction,
                           indication = ripple(color = Color.White.copy(alpha = 0.2f)),
@@ -857,8 +891,10 @@ fun AgentScreen(
                       Icon(
                         imageVector = Icons.Default.Add,
                         contentDescription = "Attach files",
-                        tint = Color(0xFFE2E8F0),
-                        modifier = Modifier.size(16.dp)
+                        tint = if (showAttachmentMenu) Color(0xFF38BDF8) else Color(0xFFE2E8F0),
+                        modifier = Modifier
+                          .size(17.dp)
+                          .graphicsLayer { rotationZ = attachRotation }
                       )
                     }
 
@@ -971,35 +1007,50 @@ fun AgentScreen(
                   horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                   if (inputText.isNotBlank()) {
+                    val clearInteraction = remember { MutableInteractionSource() }
                     Box(
                       modifier = Modifier
-                        .size(30.dp)
+                        .size(32.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF161622))
-                        .border(BorderStroke(0.8.dp, Color(0xFF262638)), CircleShape)
-                        .clickable(role = Role.Button, onClickLabel = "Clear text") {
+                        .background(Color(0xFF0D0D14))
+                        .border(BorderStroke(0.9.dp, Color(0xFF242436)), CircleShape)
+                        .tactilePress(clearInteraction, pressedScale = 0.85f)
+                        .clickable(
+                          interactionSource = clearInteraction,
+                          indication = ripple(color = Color(0xFFEF4444).copy(alpha = 0.3f)),
+                          role = Role.Button,
+                          onClickLabel = "Clear text"
+                        ) {
                           inputText = ""
-                        },
+                        }
+                        .testTag("clear_input_btn"),
                       contentAlignment = Alignment.Center
                     ) {
                       Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Clear",
-                        tint = Color(0xFFCBD5E1),
-                        modifier = Modifier.size(14.dp)
+                        tint = Color(0xFF94A3B8),
+                        modifier = Modifier.size(15.dp)
                       )
                     }
                   }
 
-                  // Microphone button
+                  // Microphone button with subtle tactile glow
+                  val micInteraction = remember { MutableInteractionSource() }
                   Box(
                     modifier = Modifier
-                      .size(30.dp)
+                      .size(32.dp)
                       .clip(CircleShape)
-                      .background(Color(0xFF161622))
-                      .border(BorderStroke(0.8.dp, Color(0xFF262638)), CircleShape)
-                      .clickable(role = Role.Button, onClickLabel = "Microphone input") {
-                        android.widget.Toast.makeText(context, "Listening for voice prompt...", android.widget.Toast.LENGTH_SHORT).show()
+                      .background(Color(0xFF0D0D14))
+                      .border(BorderStroke(0.9.dp, Color(0xFF222232)), CircleShape)
+                      .tactilePress(micInteraction, pressedScale = 0.85f)
+                      .clickable(
+                        interactionSource = micInteraction,
+                        indication = ripple(color = Color(0xFF38BDF8).copy(alpha = 0.25f)),
+                        role = Role.Button,
+                        onClickLabel = "Microphone input"
+                      ) {
+                        android.widget.Toast.makeText(context, "Voice input ready. Speak your instruction...", android.widget.Toast.LENGTH_SHORT).show()
                       }
                       .testTag("mic_input_btn"),
                     contentAlignment = Alignment.Center
@@ -1008,11 +1059,11 @@ fun AgentScreen(
                       imageVector = Icons.Default.Mic,
                       contentDescription = "Voice input",
                       tint = Color(0xFFE2E8F0),
-                      modifier = Modifier.size(15.dp)
+                      modifier = Modifier.size(16.dp)
                     )
                   }
 
-                  // Enhanced fluid animated circular Send / Stop button
+                  // Enhanced fluid animated circular Send / Stop button with AMOLED glowing states
                   val canSend = inputText.isNotBlank()
                   val isRunning = state.canCancel
 
@@ -1029,8 +1080,8 @@ fun AgentScreen(
 
                   val targetSendScale = when {
                     isRunning -> runningPulseScale
-                    canSend -> 1.08f
-                    else -> 0.88f
+                    canSend -> 1.10f
+                    else -> 0.92f
                   }
 
                   val sendScale by animateFloatAsState(
@@ -1044,22 +1095,32 @@ fun AgentScreen(
 
                   val sendBgColor by animateColorAsState(
                     targetValue = when {
-                      isRunning -> Color(0xFFEF4444)
-                      canSend -> Color(0xFF3B82F6)
-                      else -> Color(0xFF2C2C3A)
+                      isRunning -> Color(0xFFDC2626)
+                      canSend -> Color(0xFF2563EB)
+                      else -> Color(0xFF161622)
                     },
-                    animationSpec = tween(180),
+                    animationSpec = tween(200),
                     label = "send_btn_bg"
                   )
 
+                  val sendBorderColor by animateColorAsState(
+                    targetValue = when {
+                      isRunning -> Color(0xFFF87171)
+                      canSend -> Color(0xFF60A5FA)
+                      else -> Color(0xFF26263A)
+                    },
+                    animationSpec = tween(200),
+                    label = "send_btn_border"
+                  )
+
                   val sendIconRotation by animateFloatAsState(
-                    targetValue = if (canSend) 0f else -30f,
+                    targetValue = if (canSend) 0f else -25f,
                     animationSpec = spring(dampingRatio = 0.60f, stiffness = 420f),
                     label = "send_arrow_rotation"
                   )
 
                   val sendIconOffsetY by animateFloatAsState(
-                    targetValue = if (canSend) -1f else 2f,
+                    targetValue = if (canSend) -1.5f else 1.5f,
                     animationSpec = spring(dampingRatio = 0.55f, stiffness = 400f),
                     label = "send_arrow_offset_y"
                   )
@@ -1069,18 +1130,18 @@ fun AgentScreen(
                   Surface(
                     shape = CircleShape,
                     color = sendBgColor,
-                    shadowElevation = if (canSend || isRunning) 4.dp else 0.dp,
-                    border = if (!canSend && !isRunning) BorderStroke(0.8.dp, Color(0xFF3E3E50)) else null,
+                    shadowElevation = if (canSend || isRunning) 6.dp else 0.dp,
+                    border = BorderStroke(1.dp, sendBorderColor),
                     modifier = Modifier
-                      .size(34.dp)
+                      .size(36.dp)
                       .graphicsLayer {
                         scaleX = sendScale
                         scaleY = sendScale
                       }
-                      .tactilePress(sendInteractionSource, pressedScale = 0.84f)
+                      .tactilePress(sendInteractionSource, pressedScale = 0.82f)
                       .clickable(
                         interactionSource = sendInteractionSource,
-                        indication = ripple(color = Color.White.copy(alpha = 0.3f)),
+                        indication = ripple(color = Color.White.copy(alpha = 0.35f)),
                         enabled = canSend || isRunning,
                         role = Role.Button,
                         onClickLabel = if (isRunning) "Stop execution" else "Send prompt"
@@ -1103,16 +1164,16 @@ fun AgentScreen(
                         Text(
                           text = "◼",
                           color = Color.White,
-                          fontSize = 11.sp,
+                          fontSize = 12.sp,
                           fontWeight = FontWeight.Bold
                         )
                       } else {
                         Icon(
                           imageVector = Icons.Default.ArrowUpward,
                           contentDescription = "Send",
-                          tint = if (canSend) Color.White else Color(0xFF6B7280),
+                          tint = if (canSend) Color.White else Color(0xFF64748B),
                           modifier = Modifier
-                            .size(16.dp)
+                            .size(18.dp)
                             .graphicsLayer {
                               rotationZ = sendIconRotation
                               translationY = sendIconOffsetY
@@ -1372,10 +1433,11 @@ fun AgentScreen(
                 ) {
                   LazyColumn(
                     state = listState,
+                    flingBehavior = ScrollableDefaults.flingBehavior(),
                     modifier = Modifier
                       .fillMaxSize()
                       .testTag("execution_feed_list"),
-                    contentPadding = PaddingValues(top = 8.dp, bottom = 80.dp)
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp)
                   ) {
                     itemsIndexed(
                       items = filteredFeed,

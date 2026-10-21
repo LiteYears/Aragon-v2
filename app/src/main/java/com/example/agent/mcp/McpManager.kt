@@ -118,17 +118,28 @@ class McpManager(
       } catch (_: Exception) {}
     }
 
+    // Filter out removed DuckDuckGo server
+    configs.removeAll { it.id == "duckduckgo" || it.url.contains("duckduckgo") }
+
     if (configs.isEmpty()) {
       configs.addAll(getStarterTemplates())
       saveConfigurationInternal(configs)
     } else {
-      // Ensure newly added free zero-config internal templates are present
+      // Ensure all native zero-config internal tools are present and enabled
       val existingIds = configs.map { it.id }.toSet()
       val missingDefaults = getStarterTemplates().filter { it.transport == McpTransportType.INTERNAL && it.id !in existingIds }
       if (missingDefaults.isNotEmpty()) {
         configs.addAll(missingDefaults)
-        saveConfigurationInternal(configs)
       }
+      // Ensure all native internal MCP servers are active
+      val normalized = configs.map {
+        if (it.transport == McpTransportType.INTERNAL || it.url.startsWith("internal://")) {
+          it.copy(enabled = true, isNative = true)
+        } else it
+      }
+      configs.clear()
+      configs.addAll(normalized)
+      saveConfigurationInternal(configs)
     }
 
     _servers.value = configs
@@ -802,15 +813,8 @@ class McpManager(
       description = "Playwright-grade web browser automation, JavaScript DOM evaluation (browser_run_javascript), interactive links, forms submission, and visual wireframing",
       transport = McpTransportType.INTERNAL,
       url = "internal://playwright",
-      enabled = true
-    ),
-    McpServerConfig(
-      id = "duckduckgo",
-      name = "DuckDuckGo Free Search MCP",
-      description = "Free real-time web search and news headlines without requiring any API keys or authentication",
-      transport = McpTransportType.INTERNAL,
-      url = "internal://duckduckgo",
-      enabled = true
+      enabled = true,
+      isNative = true
     ),
     McpServerConfig(
       id = "wikipedia",
@@ -818,7 +822,8 @@ class McpManager(
       description = "Free Wikipedia encyclopedia search, summary extraction, and entity facts without API key",
       transport = McpTransportType.INTERNAL,
       url = "internal://wikipedia",
-      enabled = true
+      enabled = true,
+      isNative = true
     ),
     McpServerConfig(
       id = "arxiv",
@@ -826,7 +831,8 @@ class McpManager(
       description = "Scientific preprints, machine learning papers, and technical research paper search",
       transport = McpTransportType.INTERNAL,
       url = "internal://arxiv",
-      enabled = true
+      enabled = true,
+      isNative = true
     ),
     McpServerConfig(
       id = "math",
@@ -834,7 +840,8 @@ class McpManager(
       description = "Offline high-precision mathematical expression evaluator, statistics, and unit converter",
       transport = McpTransportType.INTERNAL,
       url = "internal://math",
-      enabled = true
+      enabled = true,
+      isNative = true
     ),
     McpServerConfig(
       id = "time",
@@ -842,7 +849,8 @@ class McpManager(
       description = "Real-time clock timestamps, timezone conversions, and elapsed time calculator",
       transport = McpTransportType.INTERNAL,
       url = "internal://time",
-      enabled = true
+      enabled = true,
+      isNative = true
     ),
     McpServerConfig(
       id = "sqlite",
@@ -850,7 +858,8 @@ class McpManager(
       description = "Native high-performance SQLite database query, schema inspection, and data storage MCP server",
       transport = McpTransportType.INTERNAL,
       url = "internal://sqlite",
-      enabled = true
+      enabled = true,
+      isNative = true
     ),
     McpServerConfig(
       id = "fetch",
@@ -858,7 +867,8 @@ class McpManager(
       description = "High-performance web fetch, HTTP header analysis, and markdown document extraction MCP server",
       transport = McpTransportType.INTERNAL,
       url = "internal://fetch",
-      enabled = true
+      enabled = true,
+      isNative = true
     ),
     McpServerConfig(
       id = "filesystem",
@@ -866,7 +876,8 @@ class McpManager(
       description = "MCP reference filesystem server for secure workspace access and file verification",
       transport = McpTransportType.INTERNAL,
       url = "internal://filesystem",
-      enabled = true
+      enabled = true,
+      isNative = true
     ),
     McpServerConfig(
       id = "memory",
@@ -874,7 +885,8 @@ class McpManager(
       description = "Persistent agent knowledge graph, structured facts, and cross-task entity memory MCP server",
       transport = McpTransportType.INTERNAL,
       url = "internal://memory",
-      enabled = true
+      enabled = true,
+      isNative = true
     ),
     McpServerConfig(
       id = "office",
@@ -882,7 +894,8 @@ class McpManager(
       description = "Zero-key authentic Microsoft Word (.docx) and Excel (.xlsx) document generation, styled tables, formulas, and office metadata",
       transport = McpTransportType.INTERNAL,
       url = "internal://office",
-      enabled = true
+      enabled = true,
+      isNative = true
     ),
     McpServerConfig(
       id = "data_tools",
@@ -890,7 +903,8 @@ class McpManager(
       description = "Free CSV-to-JSON, JSON-to-CSV, Base64 encoder/decoder, and JSON formatting without auth",
       transport = McpTransportType.INTERNAL,
       url = "internal://data_tools",
-      enabled = true
+      enabled = true,
+      isNative = true
     ),
     McpServerConfig(
       id = "markdown",
@@ -898,7 +912,8 @@ class McpManager(
       description = "Markdown-to-HTML compilation, ASCII markdown table generator, and reading statistics",
       transport = McpTransportType.INTERNAL,
       url = "internal://markdown",
-      enabled = true
+      enabled = true,
+      isNative = true
     ),
     McpServerConfig(
       id = "system",
@@ -906,7 +921,8 @@ class McpManager(
       description = "On-device JVM memory statistics, available CPU cores, Android SDK telemetry, and workspace storage inspection",
       transport = McpTransportType.INTERNAL,
       url = "internal://system",
-      enabled = true
+      enabled = true,
+      isNative = true
     ),
     McpServerConfig(
       id = "github",

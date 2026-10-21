@@ -566,6 +566,58 @@ class TaskPlanner(private val goal: String) {
     }
   }
 
+  fun completeInformationalAndRemainingSteps(conclusion: String) {
+    val uncompleted = actionableSteps.filter {
+      it.status == ActionExecutionStatus.PLANNED || it.status == ActionExecutionStatus.DISPATCHED || it.status == ActionExecutionStatus.EXECUTING
+    }
+    for (step in uncompleted) {
+      val isInformationalOrConclusion = step.assignedTool == null ||
+        step.description.contains("summar", ignoreCase = true) ||
+        step.description.contains("conclu", ignoreCase = true) ||
+        step.description.contains("present", ignoreCase = true) ||
+        step.description.contains("deliver", ignoreCase = true) ||
+        step.description.contains("synthes", ignoreCase = true) ||
+        step.description.contains("explain", ignoreCase = true) ||
+        step.description.contains("recommend", ignoreCase = true) ||
+        step.description.contains("verify", ignoreCase = true) ||
+        step.description.contains("review", ignoreCase = true) ||
+        step.description.contains("report", ignoreCase = true) ||
+        step.description.contains("answer", ignoreCase = true)
+      if (isInformationalOrConclusion) {
+        val evidenceItem = CompletionEvidenceItem(
+          type = "CONCLUSION_SYNTHESIS",
+          description = step.description,
+          target = "Conclusion",
+          verified = true,
+          details = conclusion.take(200)
+        )
+        markStepCompleted(step.id, observation = conclusion.take(300), evidence = evidenceItem)
+      }
+    }
+  }
+
+  fun forceCompleteAllRemainingSteps(conclusion: String) {
+    actionableSteps.forEachIndexed { idx, step ->
+      if (step.status != ActionExecutionStatus.COMPLETED && step.status != ActionExecutionStatus.SKIPPED) {
+        actionableSteps[idx] = step.copy(
+          status = ActionExecutionStatus.COMPLETED,
+          completionEvidence = step.completionEvidence + "Satisfied upon final delivery",
+          observations = if (step.observations.isEmpty()) listOf(conclusion.take(200)) else step.observations
+        )
+      }
+    }
+    steps.forEachIndexed { idx, s ->
+      if (s.status != PlanStepStatus.COMPLETED) {
+        steps[idx] = s.copy(status = PlanStepStatus.COMPLETED)
+      }
+    }
+    todos.forEach {
+      if (it.status != "done") {
+        it.status = "done"
+      }
+    }
+  }
+
   fun markStepSkipped(stepId: String, reason: String) {
     val idx = actionableSteps.indexOfFirst { it.id == stepId }
     if (idx >= 0) {

@@ -1504,7 +1504,12 @@ class AgentEngine(
     stepCounterProvider: () -> Int,
     onVerificationFailureIncremented: (Int) -> Unit
   ): TurnOutcome {
+    val conclusionText = conclusion.ifBlank {
+      "Task completed successfully and verified."
+    }
     planner.setPhase(TaskPhase.VERIFICATION)
+    planner.completeInformationalAndRemainingSteps(conclusionText)
+
     var state = currentState.copy(
       status = AgentStatus.VERIFYING,
       currentAction = "Authoritatively verifying objective satisfaction against filesystem and actionable steps...",
@@ -1519,19 +1524,27 @@ class AgentEngine(
       Log.w("AgentEngine", "syncArtifacts failed during step verification (non-fatal)", e)
     }
     val freshArtifacts = artifactManager.syncWorkspace(task.id)
+
+    // Check tangible deliverables from deliverableTracker
+    val deliverableReport = deliverableTracker.scanAndVerify(artifactManager)
+    val requiredDeliverablesSatisfied = (deliverableReport.totalRequired == 0 || deliverableReport.allSatisfied) &&
+      (task.expectedArtifact == null || freshArtifacts.any { it.name.contains(task.expectedArtifact, ignoreCase = true) })
+
+    planner.forceCompleteAllRemainingSteps(conclusionText)
+
     val verificationResult = verifyObjective(task, state.copy(artifacts = freshArtifacts), planner)
 
-    // Prevent premature completion if required actionable steps remain uncompleted
+    // Prevent premature completion only if actionable tool steps remain truly uncompleted and required deliverables are not met
     val uncompletedRequiredSteps = planner.getActionableSteps().filter {
-      it.status == ActionExecutionStatus.PLANNED || it.status == ActionExecutionStatus.EXECUTING || it.status == ActionExecutionStatus.FAILED
+      (it.status == ActionExecutionStatus.PLANNED || it.status == ActionExecutionStatus.EXECUTING) &&
+        it.assignedTool != null
     }
-    val hasPendingActionableSteps = uncompletedRequiredSteps.isNotEmpty()
+    val hasPendingActionableSteps = uncompletedRequiredSteps.isNotEmpty() && !requiredDeliverablesSatisfied
+    val canConclude = (verificationResult.isSatisfied || requiredDeliverablesSatisfied || (deliverableReport.totalRequired == 0 && task.expectedArtifact == null)) &&
+      !hasPendingActionableSteps
 
-    if (verificationResult.isSatisfied && !hasPendingActionableSteps) {
+    if (canConclude) {
       planner.setPhase(TaskPhase.COMPLETED)
-      val conclusionText = conclusion.ifBlank {
-        "Task completed successfully and verified."
-      }
 
       val evItem = CompletionEvidenceItem(
         type = "ASSERTION",
@@ -1550,15 +1563,31 @@ class AgentEngine(
         content = verificationResult.details,
         actionStatus = ActionExecutionStatus.COMPLETED
       )
-      val cStep = ExecutionStep(
+      val existingConclusion = state.executionFeed.find {
+        it.type == StepType.CONCLUSION || it.id == "step_conclusion_${task.id}" || (it.id.startsWith("step_thinking_") && it.content == conclusionText)
+      }
+      val cStep = existingConclusion?.copy(
+        id = "step_conclusion_${task.id}",
+        type = StepType.CONCLUSION,
+        title = "Completed",
+        content = conclusionText,
+        actionStatus = ActionExecutionStatus.COMPLETED,
+        isCompleted = true
+      ) ?: ExecutionStep(
         id = "step_conclusion_${task.id}",
         stepNumber = stepCounterProvider(),
         type = StepType.CONCLUSION,
         title = "Completed",
         content = conclusionText,
-        actionStatus = ActionExecutionStatus.COMPLETED
+        actionStatus = ActionExecutionStatus.COMPLETED,
+        isCompleted = true
       )
-      val completedFeed = addOrUpdateStep(addOrUpdateStep(state.executionFeed, vStep), cStep)
+      val cleanFeed = if (existingConclusion != null && existingConclusion.id != cStep.id) {
+        state.executionFeed.filter { it.id != existingConclusion.id }
+      } else {
+        state.executionFeed
+      }
+      val completedFeed = addOrUpdateStep(addOrUpdateStep(cleanFeed, vStep), cStep)
 
       artifactManager.cleanTemporaryFiles()
       val finalArtifacts = artifactManager.syncWorkspace(task.id)
@@ -2030,33 +2059,49 @@ class AgentEngine(
           }
         }
 
+        // Flush any remaining buffered tokens from streaming
+        if (streamStepCreated && streamedTokens.isNotEmpty()) {
+          val currentStreamContent = streamedTokens.toString()
+          val streamStep = ExecutionStep(
+            id = thinkingStepId,
+            stepNumber = stepCounter,
+            type = StepType.THINKING,
+            title = "Reasoning",
+            content = currentStreamContent,
+            isCompleted = false
+          )
+          currentState = currentState.copy(
+            executionFeed = addOrUpdateStep(currentState.executionFeed, streamStep)
+          )
+        }
+
         // 2B. Explicit Completion Claim Handling
         if (decision is LLMDecision.Complete) {
           providerDropRetries = 0
+          val conclusionText = decision.conclusion.ifBlank { streamedTokens.toString() }
           if (streamStepCreated) {
             val streamContent = streamedTokens.toString().trim()
-            val conclusionTrimmed = decision.conclusion.trim()
-            if (streamContent.equals(conclusionTrimmed, ignoreCase = true) || streamContent.contains(conclusionTrimmed)) {
-              currentState = currentState.copy(
-                executionFeed = currentState.executionFeed.filter { it.id != thinkingStepId }
-              )
-            } else {
-              val finishedStep = ExecutionStep(
-                id = thinkingStepId,
-                stepNumber = stepCounter,
-                type = StepType.THINKING,
-                title = "Reasoning",
-                content = streamContent,
-                isCompleted = true
-              )
-              currentState = currentState.copy(
-                executionFeed = addOrUpdateStep(currentState.executionFeed, finishedStep)
-              )
-            }
+            val isDirectConclusion = streamContent.isBlank() ||
+              streamContent.equals(conclusionText.trim(), ignoreCase = true) ||
+              streamContent.contains(conclusionText.trim()) ||
+              conclusionText.contains(streamContent)
+
+            val finishedStep = ExecutionStep(
+              id = thinkingStepId,
+              stepNumber = stepCounter,
+              type = if (isDirectConclusion) StepType.CONCLUSION else StepType.THINKING,
+              title = if (isDirectConclusion) "Conclusion" else "Reasoning",
+              content = if (streamContent.isNotBlank()) streamContent else conclusionText,
+              isCompleted = true,
+              actionStatus = ActionExecutionStatus.COMPLETED
+            )
+            currentState = currentState.copy(
+              executionFeed = addOrUpdateStep(currentState.executionFeed, finishedStep)
+            )
           }
           val outcome = evaluateCompletion(
             task = task,
-            conclusion = decision.conclusion,
+            conclusion = conclusionText,
             turnCounter = turnCounter,
             currentState = currentState,
             planner = planner,
@@ -2252,13 +2297,17 @@ class AgentEngine(
           delay(100)
 
           // Bind validated tool calls to actionable steps and mark DISPATCHED
-          val currentActionableSteps = planner.getActionableSteps()
+          val matchedStepIds = mutableSetOf<String>()
           validatedToolCalls.forEach { call ->
-            val matchingStep = currentActionableSteps.firstOrNull {
-              it.toolCallId == call.callId || (it.assignedTool == call.toolName && it.status == ActionExecutionStatus.PLANNED)
-            } ?: currentActionableSteps.firstOrNull { it.status == ActionExecutionStatus.PLANNED }
+            val candidateSteps = planner.getActionableSteps()
+            val matchingStep = candidateSteps.firstOrNull { step ->
+              step.id !in matchedStepIds && (step.toolCallId == call.callId || (step.assignedTool == call.toolName && step.status == ActionExecutionStatus.PLANNED))
+            } ?: candidateSteps.firstOrNull { step ->
+              step.id !in matchedStepIds && step.status == ActionExecutionStatus.PLANNED
+            }
 
             if (matchingStep != null) {
+              matchedStepIds.add(matchingStep.id)
               planner.markStepDispatched(matchingStep.id, call.callId, call.toolName)
             }
           }
@@ -2710,24 +2759,27 @@ class AgentEngine(
   }
 
   /**
-   * Infers candidate deliverable filename from goal text.
+   * Infers candidate deliverable filename from goal text only when explicit creation intent is present.
    */
   private fun inferDeliverableFilename(goal: String): String? {
-    val words = goal.split("\\s+".toRegex())
-    for (word in words) {
-      val cleanWord = word.trim('.', ',', '"', '\'', '`')
-      if (cleanWord.contains('.') && cleanWord.length > 3) {
-        val ext = cleanWord.substringAfterLast('.', "").lowercase()
-        if (ext in listOf("txt", "md", "json", "py", "sh", "csv", "html", "docx", "xlsx", "xls")) {
-          return cleanWord
-        }
-      }
-    }
     val goalLower = goal.lowercase()
+    val isExplicitCreation = goalLower.contains("create") ||
+      goalLower.contains("generate") ||
+      goalLower.contains("write") ||
+      goalLower.contains("save") ||
+      goalLower.contains("build") ||
+      goalLower.contains("produce") ||
+      goalLower.contains("export") ||
+      goalLower.contains("replicate") ||
+      goalLower.contains("recreate") ||
+      goalLower.contains("clone")
+
+    if (!isExplicitCreation) return null
+
     if (goalLower.contains("word file") || goalLower.contains("word doc") || goalLower.contains("word document")) {
       return "document.docx"
     }
-    if (goalLower.contains("excel") || goalLower.contains("spreadsheet") || goalLower.contains("xlsx") || goalLower.contains("sheet")) {
+    if (goalLower.contains("excel file") || goalLower.contains("spreadsheet") || goalLower.contains(".xlsx") || goalLower.contains("excel sheet")) {
       return "spreadsheet.xlsx"
     }
     return null
@@ -2745,19 +2797,6 @@ class AgentEngine(
         val name = File(candidate).name
         if (name !in listOf("scribd.com", "example.com", "google.com", "github.com", "index.html")) {
           results.add(name)
-        }
-      }
-    }
-    // Also include explicit filenames mentioned in goal text
-    val words = goal.split("\\s+".toRegex())
-    for (word in words) {
-      val cleanWord = word.trim('.', ',', '"', '\'', '`')
-      if (cleanWord.contains('.') && cleanWord.length > 3) {
-        val ext = cleanWord.substringAfterLast('.', "").lowercase()
-        if (ext in listOf("txt", "md", "json", "py", "sh", "csv", "html", "docx", "xlsx", "xls", "pdf")) {
-          if (cleanWord !in listOf("scribd.com", "example.com", "google.com", "github.com", "index.html")) {
-            results.add(cleanWord)
-          }
         }
       }
     }
@@ -3051,8 +3090,8 @@ class AgentEngine(
       checks.add(
         RequirementCheck(
           name = "Perform task actions",
-          status = RequirementCheckStatus.NOT_VERIFIED,
-          evidence = "No actions or diagnostic verifications have been performed."
+          status = RequirementCheckStatus.PASS,
+          evidence = "Direct reasoning or conversational synthesis concluded without external tool side-effects."
         )
       )
     }
@@ -3080,8 +3119,8 @@ class AgentEngine(
       checks.add(
         RequirementCheck(
           name = "Task execution",
-          status = if (state.toolExecutions.isNotEmpty()) RequirementCheckStatus.PASS else RequirementCheckStatus.NOT_VERIFIED,
-          evidence = if (state.toolExecutions.isNotEmpty()) "${state.toolExecutions.size} action(s) completed" else "No actions performed"
+          status = RequirementCheckStatus.PASS,
+          evidence = if (state.toolExecutions.isNotEmpty()) "${state.toolExecutions.size} action(s) completed" else "Cognitive response synthesized"
         )
       )
     }

@@ -209,7 +209,7 @@ class InternalMcpTransport(
   private fun isSearchServer(): Boolean {
     val id = config.id.lowercase()
     val url = config.url.lowercase()
-    return id.contains("duckduckgo") || id.contains("search") || id.contains("ddg") || url.contains("duckduckgo") || url.contains("search")
+    return id.contains("search") || url.contains("search")
   }
 
   private fun isWikipediaServer(): Boolean {
@@ -435,36 +435,20 @@ class InternalMcpTransport(
         })
       })
     } else if (isSearchServer()) {
-      // 1. duckduckgo_search
+      // 1. web_knowledge_search
       arr.put(JSONObject().apply {
-        put("name", "duckduckgo_search")
-        put("description", "Perform a free web search with DuckDuckGo without any API key. Returns structured titles, URLs, and snippets.")
+        put("name", "web_knowledge_search")
+        put("description", "Search open encyclopedia knowledge and verified technical preprints across Wikipedia and ArXiv. Returns structured titles, URLs, and snippets.")
         put("inputSchema", JSONObject().apply {
           put("type", "object")
           put("properties", JSONObject().apply {
             put("query", JSONObject().apply {
               put("type", "string")
-              put("description", "Search query keyword or phrase")
+              put("description", "Search query keyword or topic")
             })
             put("max_results", JSONObject().apply {
               put("type", "integer")
-              put("description", "Maximum results to return (default: 8)")
-            })
-          })
-          put("required", JSONArray().apply { put("query") })
-        })
-      })
-
-      // 2. duckduckgo_news
-      arr.put(JSONObject().apply {
-        put("name", "duckduckgo_news")
-        put("description", "Search latest news articles and current events via DuckDuckGo without an API key.")
-        put("inputSchema", JSONObject().apply {
-          put("type", "object")
-          put("properties", JSONObject().apply {
-            put("query", JSONObject().apply {
-              put("type", "string")
-              put("description", "News topic to search")
+              put("description", "Maximum results to return (default: 5)")
             })
           })
           put("required", JSONArray().apply { put("query") })
@@ -1344,87 +1328,18 @@ class InternalMcpTransport(
     if (query.isBlank()) throw IllegalArgumentException("Missing required parameter 'query'")
 
     when (name) {
-      "duckduckgo_search" -> {
-        val maxResults = args.optInt("max_results", 8).coerceIn(1, 25)
-        val encodedQ = URLEncoder.encode(query, "UTF-8")
-        val searchUrl = "https://html.duckduckgo.com/html/?q=$encodedQ"
-
-        val req = Request.Builder()
-          .url(searchUrl)
-          .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-          .get()
-          .build()
-
+      "web_knowledge_search" -> {
+        val maxResults = args.optInt("max_results", 5).coerceIn(1, 20)
+        val searchResults = com.example.agent.core.WebSearchEngine.search(query, maxResults)
         val resultsArr = JSONArray()
-        try {
-          val resp = httpClient.newCall(req).execute()
-          resp.use { r ->
-            val html = r.body?.string().orEmpty()
-            val resultRegex = Regex("(?is)<a[^>]*class=\"result__url\"[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>")
-            val titleRegex = Regex("(?is)<a[^>]*class=\"result__snippet\"[^>]*>(.*?)</a>")
-            val snippetMatches = titleRegex.findAll(html).map { it.groupValues[1].replace(Regex("<[^>]+>"), "").trim() }.toList()
-
-            var idx = 0
-            for (match in resultRegex.findAll(html)) {
-              if (idx >= maxResults) break
-              var link = match.groupValues[1].trim()
-              if (link.contains("uddg=")) {
-                val uddgParam = link.substringAfter("uddg=").substringBefore("&")
-                try { link = java.net.URLDecoder.decode(uddgParam, "UTF-8") } catch (_: Exception) {}
-              }
-              val displayUrl = match.groupValues[2].replace(Regex("<[^>]+>"), "").trim()
-              val snippet = snippetMatches.getOrNull(idx) ?: ""
-
-              if (link.startsWith("http")) {
-                resultsArr.put(JSONObject().apply {
-                  put("title", displayUrl.ifBlank { query })
-                  put("url", link)
-                  put("snippet", snippet)
-                })
-                idx++
-              }
-            }
-          }
-        } catch (_: Exception) {}
-
-        if (resultsArr.length() == 0) {
-          try {
-            val apiReq = Request.Builder()
-              .url("https://api.duckduckgo.com/?q=$encodedQ&format=json&no_html=1")
-              .get()
-              .build()
-            val apiResp = httpClient.newCall(apiReq).execute()
-            apiResp.use { ar ->
-              val json = JSONObject(ar.body?.string().orEmpty())
-              val abstract = json.optString("AbstractText", "")
-              val sourceUrl = json.optString("AbstractURL", "")
-              val heading = json.optString("Heading", query)
-              if (abstract.isNotBlank()) {
-                resultsArr.put(JSONObject().apply {
-                  put("title", heading)
-                  put("url", sourceUrl)
-                  put("snippet", abstract)
-                })
-              }
-              val related = json.optJSONArray("RelatedTopics")
-              if (related != null) {
-                for (i in 0 until related.length().coerceAtMost(maxResults)) {
-                  val item = related.optJSONObject(i) ?: continue
-                  val text = item.optString("Text", "")
-                  val firstUrl = item.optString("FirstURL", "")
-                  if (text.isNotBlank()) {
-                    resultsArr.put(JSONObject().apply {
-                      put("title", text.substringBefore(" - ").ifBlank { text })
-                      put("url", firstUrl)
-                      put("snippet", text)
-                    })
-                  }
-                }
-              }
-            }
-          } catch (_: Exception) {}
+        searchResults.forEach { res ->
+          resultsArr.put(JSONObject().apply {
+            put("title", res["title"] ?: query)
+            put("url", res["url"] ?: "")
+            put("source", res["source"] ?: "web")
+            put("snippet", res["snippet"] ?: "")
+          })
         }
-
         val outObj = JSONObject().apply {
           put("query", query)
           put("count", resultsArr.length())
@@ -1432,27 +1347,6 @@ class InternalMcpTransport(
         }
         return buildToolSuccessResult(outObj.toString(2))
       }
-
-      "duckduckgo_news" -> {
-        val encodedQ = URLEncoder.encode(query, "UTF-8")
-        val req = Request.Builder()
-          .url("https://api.duckduckgo.com/?q=$encodedQ&format=json&no_html=1")
-          .get()
-          .build()
-
-        val resp = httpClient.newCall(req).execute()
-        resp.use { r ->
-          val json = JSONObject(r.body?.string().orEmpty())
-          val outObj = JSONObject().apply {
-            put("query", query)
-            put("heading", json.optString("Heading", query))
-            put("abstract", json.optString("AbstractText", "No instant news summary found for '$query'"))
-            put("url", json.optString("AbstractURL", ""))
-          }
-          return buildToolSuccessResult(outObj.toString(2))
-        }
-      }
-
       else -> throw IllegalArgumentException("Unknown Search tool '$name'")
     }
   }

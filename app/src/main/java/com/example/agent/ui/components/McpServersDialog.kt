@@ -166,6 +166,10 @@ fun McpServersDialog(
       border = BorderStroke(1.dp, Color(0xFF1E1E2C))
     ) {
       Column(modifier = Modifier.fillMaxSize()) {
+        val customServers = remember(servers) {
+          servers.filter { !it.isNative && it.transport != McpTransportType.INTERNAL && !it.url.startsWith("internal://") }
+        }
+
         // Dialog Header
         Surface(
           modifier = Modifier.fillMaxWidth(),
@@ -187,7 +191,7 @@ fun McpServersDialog(
                 modifier = Modifier
                   .size(9.dp)
                   .clip(CircleShape)
-                  .background(if (servers.any { it.enabled }) Color(0xFF10B981) else Color(0xFF94A3B8))
+                  .background(if (customServers.any { it.enabled }) Color(0xFF10B981) else Color(0xFF94A3B8))
               )
               Spacer(modifier = Modifier.width(10.dp))
               Column {
@@ -203,7 +207,7 @@ fun McpServersDialog(
                   overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                  text = "${servers.size} servers · ${discoveredTools.size} tools · ${discoveredResources.size} resources",
+                  text = "${customServers.size} custom servers · ${discoveredTools.size} tools · ${discoveredResources.size} resources",
                   style = MaterialTheme.typography.labelSmall,
                   fontFamily = InterFontFamily,
                   color = Color(0xFF64748B),
@@ -250,7 +254,7 @@ fun McpServersDialog(
 
         // Tabs: ScrollableTabRow prevents clipping and overlap on mobile screens!
         val tabList = listOf(
-          Pair("SERVERS", servers.size),
+          Pair("CUSTOM SERVERS", customServers.size),
           Pair("TOOLS", discoveredTools.size),
           Pair("RESOURCES", discoveredResources.size),
           Pair("PROMPTS", discoveredPrompts.size),
@@ -395,76 +399,118 @@ private fun ServersTabContent(
   val scope = rememberCoroutineScope()
   val pingResults = remember { mutableStateMapOf<String, String>() }
   val pingingMap = remember { mutableStateMapOf<String, Boolean>() }
-  var filterMode by remember { mutableIntStateOf(0) } // 0: ALL, 1: ENABLED, 2: INTERNAL/FREE, 3: EXTERNAL
+  var filterMode by remember { mutableIntStateOf(0) } // 0: ALL CUSTOM, 1: ACTIVE
 
-  val filteredServers = remember(servers, filterMode) {
+  val customServers = remember(servers) {
+    servers.filter { !it.isNative && it.transport != McpTransportType.INTERNAL && !it.url.startsWith("internal://") }
+  }
+
+  val filteredServers = remember(customServers, filterMode) {
     when (filterMode) {
-      1 -> servers.filter { it.enabled }
-      2 -> servers.filter { it.transport == McpTransportType.INTERNAL }
-      3 -> servers.filter { it.transport != McpTransportType.INTERNAL }
-      else -> servers
+      1 -> customServers.filter { it.enabled }
+      else -> customServers
     }
   }
 
-  if (servers.isEmpty()) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-      Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.padding(24.dp)
+  Column(modifier = Modifier.fillMaxSize()) {
+    // Native Background Engine Status Banner (All native internal MCPs activated)
+    Surface(
+      shape = RoundedCornerShape(10.dp),
+      color = Color(0xFF0F172A),
+      border = BorderStroke(1.dp, Color(0xFF1E293B)),
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(bottom = 10.dp)
+    ) {
+      Row(
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically
       ) {
-        Text(
-          text = "No MCP Servers Configured",
-          style = MaterialTheme.typography.titleMedium,
-          fontFamily = InterFontFamily,
-          color = AmoledTextPrimary,
-          fontWeight = FontWeight.Bold
+        Box(
+          modifier = Modifier
+            .size(8.dp)
+            .clip(CircleShape)
+            .background(Color(0xFF10B981))
         )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-          text = "Extend Aragon with Playwright browser automation, free search, Wikipedia, or SQLite.",
-          style = MaterialTheme.typography.bodySmall,
-          fontFamily = InterFontFamily,
-          color = AmoledTextMuted,
-          textAlign = androidx.compose.ui.text.style.TextAlign.Center
-        )
-        Spacer(modifier = Modifier.height(18.dp))
-        Button(
-          onClick = onAddNew,
-          shape = RoundedCornerShape(8.dp),
-          colors = ButtonDefaults.buttonColors(
-            containerColor = AmoledActionPrimary,
-            contentColor = AmoledActionPrimaryOn
-          ),
-          modifier = Modifier.testTag("add_first_mcp_server_btn")
-        ) {
+        Spacer(modifier = Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
           Text(
-            text = "+ Add First MCP Server",
+            text = "12 NATIVE ENGINE MCP TOOLS ACTIVE",
             fontFamily = JetBrainsMonoFontFamily,
+            fontSize = 9.5.sp,
             fontWeight = FontWeight.Bold,
-            fontSize = 11.sp
+            color = Color(0xFF38BDF8)
+          )
+          Text(
+            text = "Playwright Browser, Wikipedia, ArXiv, Math, SQLite, Workspace Filesystem, Office & System Tools run natively.",
+            fontFamily = InterFontFamily,
+            fontSize = 8.5.sp,
+            color = Color(0xFF94A3B8)
           )
         }
       }
     }
-    return
-  }
 
-  Column(modifier = Modifier.fillMaxSize()) {
-    // Quick Filter Chips Row (Compact & Fast)
-    val filterScrollState = rememberScrollState()
+    if (customServers.isEmpty()) {
+      Box(
+        modifier = Modifier
+          .weight(1f)
+          .fillMaxWidth(),
+        contentAlignment = Alignment.Center
+      ) {
+        Column(
+          horizontalAlignment = Alignment.CenterHorizontally,
+          modifier = Modifier.padding(20.dp)
+        ) {
+          Text(
+            text = "No Custom MCP Servers Added",
+            style = MaterialTheme.typography.titleSmall,
+            fontFamily = InterFontFamily,
+            color = AmoledTextPrimary,
+            fontWeight = FontWeight.Bold
+          )
+          Spacer(modifier = Modifier.height(6.dp))
+          Text(
+            text = "All native internal tools run automatically in the background. Connect your custom MCP endpoints (SSE, HTTP, or GitHub) below.",
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = InterFontFamily,
+            fontSize = 10.5.sp,
+            color = AmoledTextMuted,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+          )
+          Spacer(modifier = Modifier.height(16.dp))
+          Button(
+            onClick = onAddNew,
+            shape = RoundedCornerShape(8.dp),
+            colors = ButtonDefaults.buttonColors(
+              containerColor = AmoledActionPrimary,
+              contentColor = AmoledActionPrimaryOn
+            ),
+            modifier = Modifier.testTag("add_custom_mcp_server_btn")
+          ) {
+            Text(
+              text = "+ Add Custom MCP Server",
+              fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = FontWeight.Bold,
+              fontSize = 11.sp
+            )
+          }
+        }
+      }
+      return
+    }
+
+    // Quick Filter Chips Row for Custom Servers
     Row(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(bottom = 8.dp)
-        .horizontalScroll(filterScrollState),
+        .padding(bottom = 8.dp),
       horizontalArrangement = Arrangement.spacedBy(6.dp),
       verticalAlignment = Alignment.CenterVertically
     ) {
       val filterOptions = listOf(
-        "ALL (${servers.size})",
-        "ACTIVE (${servers.count { it.enabled }})",
-        "FREE BUILT-IN (${servers.count { it.transport == McpTransportType.INTERNAL }})",
-        "EXTERNAL (${servers.count { it.transport != McpTransportType.INTERNAL }})"
+        "ALL CUSTOM (${customServers.size})",
+        "ACTIVE (${customServers.count { it.enabled }})"
       )
       filterOptions.forEachIndexed { idx, label ->
         val isSelected = filterMode == idx
@@ -1477,29 +1523,12 @@ private fun McpServerEditDialog(
   var id by remember { mutableStateOf(initialConfig?.id ?: "") }
   var name by remember { mutableStateOf(initialConfig?.name ?: "") }
   var description by remember { mutableStateOf(initialConfig?.description ?: "") }
-  var transport by remember { mutableStateOf(initialConfig?.transport ?: McpTransportType.INTERNAL) }
-  var url by remember { mutableStateOf(initialConfig?.url ?: "internal://sqlite") }
+  var transport by remember { mutableStateOf(initialConfig?.transport?.takeIf { it != McpTransportType.INTERNAL } ?: McpTransportType.HTTP) }
+  var url by remember { mutableStateOf(initialConfig?.url?.takeIf { !it.startsWith("internal://") } ?: "https://") }
   var command by remember { mutableStateOf(initialConfig?.command ?: "") }
   var args by remember { mutableStateOf(initialConfig?.args?.joinToString(" ") ?: "") }
   var timeoutSeconds by remember { mutableStateOf((initialConfig?.timeoutSeconds ?: 30L).toString()) }
   var autoReconnect by remember { mutableStateOf(initialConfig?.autoReconnect ?: true) }
-  var internalServiceType by remember {
-    val initUrl = initialConfig?.url.orEmpty().lowercase()
-    val initId = initialConfig?.id.orEmpty().lowercase()
-    val st = when {
-      initUrl.contains("playwright") || initId.contains("playwright") || initUrl.contains("browser") -> "playwright"
-      initUrl.contains("duckduckgo") || initId.contains("duckduckgo") || initUrl.contains("search") -> "duckduckgo"
-      initUrl.contains("wikipedia") || initId.contains("wikipedia") || initUrl.contains("wiki") -> "wikipedia"
-      initUrl.contains("arxiv") || initId.contains("arxiv") -> "arxiv"
-      initUrl.contains("math") || initId.contains("math") || initUrl.contains("calculator") -> "math"
-      initUrl.contains("time") || initId.contains("time") || initUrl.contains("clock") -> "time"
-      initUrl.contains("sqlite") || initId.contains("sqlite") -> "sqlite"
-      initUrl.contains("fetch") || initId.contains("fetch") -> "fetch"
-      initUrl.contains("memory") || initId.contains("memory") -> "memory"
-      else -> "filesystem"
-    }
-    mutableStateOf(st)
-  }
 
   var headersJson by remember {
     val h = initialConfig?.headers ?: emptyMap()
@@ -1545,17 +1574,11 @@ private fun McpServerEditDialog(
             horizontalArrangement = Arrangement.spacedBy(5.dp)
           ) {
             val quickTemplates = listOf(
-              Triple("playwright", "Playwright Browser", "internal://playwright"),
-              Triple("duckduckgo", "DuckDuckGo Search", "internal://duckduckgo"),
-              Triple("wikipedia", "Wikipedia Knowledge", "internal://wikipedia"),
-              Triple("arxiv", "ArXiv Papers", "internal://arxiv"),
-              Triple("math", "Math & Calculator", "internal://math"),
-              Triple("time", "World Clock & Time", "internal://time"),
-              Triple("sqlite", "Workspace SQLite", "internal://sqlite"),
-              Triple("fetch", "Web Fetch MCP", "internal://fetch"),
-              Triple("filesystem", "Workspace Filesystem", "internal://filesystem"),
-              Triple("memory", "Knowledge Memory", "internal://memory"),
-              Triple("github", "GitHub MCP API", "https://api.github.com/mcp")
+              Triple("github", "GitHub MCP API", "https://api.github.com/mcp"),
+              Triple("weather", "Weather Service SSE", "https://weather.mcp.example.com/sse"),
+              Triple("postgres", "Remote PostgreSQL MCP", "http://localhost:8080/mcp"),
+              Triple("linear", "Linear Project MCP", "https://linear.mcp.example.com/sse"),
+              Triple("custom_http", "Custom HTTP Endpoint", "https://api.custom-agent.dev/mcp")
             )
             quickTemplates.forEach { (tId, tName, tUrl) ->
               Surface(
@@ -1566,12 +1589,7 @@ private fun McpServerEditDialog(
                   id = tId
                   name = tName
                   url = tUrl
-                  if (tUrl.startsWith("internal://")) {
-                    transport = McpTransportType.INTERNAL
-                    internalServiceType = tId
-                  } else {
-                    transport = McpTransportType.HTTP
-                  }
+                  transport = if (tUrl.contains("/sse")) McpTransportType.SSE else McpTransportType.HTTP
                 }
               ) {
                 Text(
@@ -1641,15 +1659,10 @@ private fun McpServerEditDialog(
                 .horizontalScroll(transportScrollState),
               horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-              McpTransportType.entries.forEach { t ->
+              listOf(McpTransportType.HTTP, McpTransportType.SSE, McpTransportType.STDIO).forEach { t ->
                 val selected = transport == t
                 OutlinedButton(
-                  onClick = {
-                    transport = t
-                    if (t == McpTransportType.INTERNAL && url.isBlank()) {
-                      url = "internal://$internalServiceType"
-                    }
-                  },
+                  onClick = { transport = t },
                   colors = ButtonDefaults.outlinedButtonColors(
                     containerColor = if (selected) AmoledActionPrimary else AmoledSurface,
                     contentColor = if (selected) AmoledActionPrimaryOn else AmoledTextPrimary
@@ -1665,62 +1678,7 @@ private fun McpServerEditDialog(
             }
           }
 
-          if (transport == McpTransportType.INTERNAL) {
-            item {
-              Column {
-                Text(
-                  text = "INTERNAL SERVICE ADAPTER",
-                  style = MaterialTheme.typography.labelSmall,
-                  fontFamily = JetBrainsMonoFontFamily,
-                  color = AmoledTextSecondary
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                val internalTypes = listOf(
-                  "playwright",
-                  "duckduckgo",
-                  "wikipedia",
-                  "arxiv",
-                  "math",
-                  "time",
-                  "sqlite",
-                  "fetch",
-                  "filesystem",
-                  "memory"
-                )
-                val internalScrollState = rememberScrollState()
-                Row(
-                  modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(internalScrollState),
-                  horizontalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                  internalTypes.forEach { st ->
-                    val selected = internalServiceType == st
-                    OutlinedButton(
-                      onClick = {
-                        internalServiceType = st
-                        url = "internal://$st"
-                        if (id.isBlank() || id in internalTypes) id = st
-                        if (name.isBlank() || name in internalTypes.map { it.replaceFirstChar(Char::uppercase) }) {
-                          name = "${st.replaceFirstChar(Char::uppercase)} MCP"
-                        }
-                      },
-                      shape = RoundedCornerShape(4.dp),
-                      colors = ButtonDefaults.outlinedButtonColors(
-                        containerColor = if (selected) AmoledActionPrimary else AmoledSurface,
-                        contentColor = if (selected) AmoledActionPrimaryOn else AmoledTextPrimary
-                      ),
-                      contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp),
-                      border = BorderStroke(1.dp, if (selected) AmoledActionPrimary else AmoledBorder),
-                      modifier = Modifier.height(26.dp)
-                    ) {
-                      Text(st.uppercase(), fontSize = 8.sp, fontFamily = JetBrainsMonoFontFamily, fontWeight = FontWeight.Bold)
-                    }
-                  }
-                }
-              }
-            }
-          } else if (transport == McpTransportType.HTTP || transport == McpTransportType.SSE) {
+          if (transport == McpTransportType.HTTP || transport == McpTransportType.SSE) {
             item {
               OutlinedTextField(
                 value = url,

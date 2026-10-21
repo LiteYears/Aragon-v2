@@ -71,7 +71,8 @@ data class McpServerConfig(
   val timeoutSeconds: Long = 30L,
   val enabled: Boolean = true,
   val autoReconnect: Boolean = true,
-  val namespace: String = ""
+  val namespace: String = "",
+  val isNative: Boolean = (transport == McpTransportType.INTERNAL || url.startsWith("internal://"))
 ) {
   val effectiveNamespace: String get() = namespace.ifBlank { id.replace("-", "_") }
 
@@ -83,6 +84,7 @@ data class McpServerConfig(
     obj.put("transport", transport.name)
     obj.put("url", url)
     obj.put("command", command)
+    obj.put("isNative", isNative)
 
     val argsArr = JSONArray()
     args.forEach { argsArr.put(it) }
@@ -151,7 +153,8 @@ data class McpServerConfig(
         timeoutSeconds = obj.optLong("timeoutSeconds", 30L),
         enabled = obj.optBoolean("enabled", true),
         autoReconnect = obj.optBoolean("autoReconnect", true),
-        namespace = obj.optString("namespace", "")
+        namespace = obj.optString("namespace", ""),
+        isNative = obj.optBoolean("isNative", transport == McpTransportType.INTERNAL || obj.optString("url").startsWith("internal://"))
       )
     }
   }
