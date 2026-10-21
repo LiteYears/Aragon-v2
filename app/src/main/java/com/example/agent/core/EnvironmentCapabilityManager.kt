@@ -865,7 +865,7 @@ print('___ARAGON_RES___' + json.dumps({
 
     // 2. Check Python packages (in venv or system)
     if (def.requiredPythonPackages.isNotEmpty()) {
-      val importChecks = def.requiredPythonPackages.joinToString("; ") { "import $it" }
+      val importChecks = def.requiredPythonPackages.joinToString("; ") { "import ${toPythonImportName(it)}" }
       val pyCmd = "([ -x /home/user/venv/bin/python3 ] && /home/user/venv/bin/python3 -c '$importChecks' 2>/dev/null) || python3 -c '$importChecks' 2>/dev/null"
       val pyRes = provider.executeCommand(sessionId, RunCommandRequest.builder().command(pyCmd).timeout(Duration.ofSeconds(12)).build())
       if (pyRes.exitCode != 0) {
@@ -1067,14 +1067,15 @@ test -x /home/user/venv/bin/python3 && echo 'VENV_CREATED'
       }
     }
 
-    // 5b. Python packages via pip in virtualenv
+    // 5b. Python packages via pip in both system Python and virtualenv
     if (def.requiredPythonPackages.isNotEmpty()) {
       val pkgs = def.requiredPythonPackages.joinToString(" ")
       val pipCmd = """
+(python3 -m pip install --no-cache-dir --disable-pip-version-check --quiet $pkgs 2>/dev/null || python3 -m pip install --break-system-packages --no-cache-dir --disable-pip-version-check --quiet $pkgs 2>/dev/null || true)
 if [ -x /home/user/venv/bin/pip ]; then
   /home/user/venv/bin/pip install --no-cache-dir --disable-pip-version-check --quiet $pkgs
 else
-  python3 -m pip install --break-system-packages --no-cache-dir --disable-pip-version-check --quiet $pkgs
+  python3 -m pip install --no-cache-dir --disable-pip-version-check --quiet $pkgs || python3 -m pip install --break-system-packages --no-cache-dir --disable-pip-version-check --quiet $pkgs
 fi
       """.trimIndent()
 
@@ -1324,5 +1325,30 @@ fi
 
     sb.appendLine("=========================================")
     return sb.toString().trim()
+  }
+
+  fun toPythonImportName(pkgName: String): String {
+    val clean = pkgName
+      .substringBefore('[')
+      .substringBefore('=')
+      .substringBefore('>')
+      .substringBefore('<')
+      .trim()
+      .lowercase(Locale.ROOT)
+    return when (clean) {
+      "python-docx", "docx" -> "docx"
+      "python-pptx", "pptx" -> "pptx"
+      "python-bidi", "bidi" -> "bidi"
+      "python-dateutil", "dateutil" -> "dateutil"
+      "python-dotenv", "dotenv" -> "dotenv"
+      "beautifulsoup4", "bs4" -> "bs4"
+      "pillow", "pil" -> "PIL"
+      "scikit-learn", "sklearn" -> "sklearn"
+      "pyyaml", "yaml" -> "yaml"
+      "pymupdf", "fitz" -> "fitz"
+      "opencv-python", "opencv-python-headless", "cv2" -> "cv2"
+      "arabic-reshaper" -> "arabic_reshaper"
+      else -> clean.replace('-', '_')
+    }
   }
 }

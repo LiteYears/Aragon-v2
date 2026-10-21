@@ -27,9 +27,9 @@ data class NvidiaNimConfig(
   val apiKey: String = "",
   val apiKeys: List<String> = if (apiKey.isNotBlank()) listOf(apiKey) else emptyList(),
   val temperature: Double? = 0.2,
-  val maxTokens: Int? = 4096,
+  val maxTokens: Int? = 8192,
   val topP: Double? = null,
-  val timeoutSeconds: Long = 40,
+  val timeoutSeconds: Long = 45,
   val enableReasoning: Boolean = true
 ) {
   companion object {
@@ -46,8 +46,11 @@ object NvidiaNimModels {
   const val LLAMA_3_2_90B = "meta/llama-3.2-90b-vision-instruct"
   const val MUSE_GLIMMER_30B = "meta/muse-glimmer-30b"
   const val NEMOTRON_3_5_LIGHTNING = "nvidia/nemotron-3.5-lightning-30b-a3b"
+  const val NEMOTRON_3_5_SUPER = "nvidia/nemotron-3.5-super-vl-120b-a12b"
   const val NEMOTRON_3_SUPER = "nvidia/nemotron-3-super-120b-a12b"
   const val NEMOTRON_3_ULTRA = "nvidia/nemotron-3-ultra-550b-a55b"
+  const val NEMOTRON_3_NANO_REASONING = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+  const val STEP_5_PREVIEW = "stepfun-ai/step-5-preview"
   const val DIFFUSION_GEMMA_26B = "google/diffusiongemma-26b-a4b-it"
   const val GPT_OSS_20B = "openai/gpt-oss-20b"
   const val RIVA_TRANSLATE_4B = "nvidia/riva-translate-4b-instruct-v2"
@@ -69,8 +72,8 @@ object NvidiaNimModels {
   enum class ToolCallingConfidence { VERIFIED, LIKELY, UNKNOWN }
 
   fun toolCallingConfidence(modelId: String): ToolCallingConfidence = when (modelId) {
-    GLM_5_3, GLM_5_3_FLASH -> ToolCallingConfidence.VERIFIED
-    NEMOTRON_3_5_LIGHTNING -> ToolCallingConfidence.LIKELY
+    GLM_5_3, NEMOTRON_3_5_LIGHTNING, NEMOTRON_3_5_SUPER, STEP_5_PREVIEW, GPT_OSS_20B, NEMOTRON_3_NANO_REASONING -> ToolCallingConfidence.VERIFIED
+    GLM_5_3_FLASH -> ToolCallingConfidence.LIKELY
     else -> ToolCallingConfidence.UNKNOWN
   }
 
@@ -388,13 +391,12 @@ class NvidiaNimProvider(
     }
     add(activeConfigured)
     val orderedFallbacks = listOf(
-      NvidiaNimConfig.DEFAULT_MODEL,
       NvidiaNimModels.NEMOTRON_3_5_LIGHTNING,
-      NvidiaNimModels.GLM_5_3_FLASH,
-      NvidiaNimModels.CODESTRAL_22B,
-      NvidiaNimModels.MISTRAL_LARGE_2,
-      NvidiaNimModels.DEEPSEEK_V4_1_FLASH,
-      NvidiaNimModels.KIMI_K2_6
+      NvidiaNimModels.NEMOTRON_3_5_SUPER,
+      NvidiaNimModels.STEP_5_PREVIEW,
+      NvidiaNimModels.GPT_OSS_20B,
+      NvidiaNimModels.NEMOTRON_3_NANO_REASONING,
+      NvidiaNimConfig.DEFAULT_MODEL
     ).filterNot { it.contains("vision") }
       .filterNot { NvidiaModelRegistry.isModelDeprecated(it) }
       .sortedByDescending { confidenceRank(it) }
@@ -435,6 +437,7 @@ class NvidiaNimProvider(
     streamListener: LLMStreamListener? = null
   ): LLMDecision {
     val activeConfig = currentConfig
+    streamListener?.onReset()
 
     try {
       val baseUrlClean = activeConfig.baseUrl.trimEnd('/')
@@ -549,34 +552,43 @@ class NvidiaNimProvider(
                   val chunkObj = JSONObject(data)
                   val choices = chunkObj.optJSONArray("choices")
                   if (choices != null && choices.length() > 0) {
-                    val choice = choices.getJSONObject(0)
-                    val delta = choice.optJSONObject("delta")
+                    val choice = choices.optJSONObject(0)
+                    val delta = choice?.optJSONObject("delta")
                     if (delta != null) {
-                      val contentDelta = delta.optString("content", "")
-                      val reasoningDelta = delta.optString("reasoning_content", "")
-                        .ifBlank { delta.optString("reasoning", "") }
+                      val contentDelta = delta.optCleanString("content")
+                      val reasoningDelta = delta.optCleanString("reasoning_content")
+                        .ifEmpty { delta.optCleanString("reasoning") }
 
                       if (reasoningDelta.isNotEmpty()) {
                         accumulatedReasoning.append(reasoningDelta)
                         streamListener?.onToken(reasoningDelta)
-                      } else if (contentDelta.isNotEmpty()) {
+                      }
+                      if (contentDelta.isNotEmpty()) {
                         accumulatedContent.append(contentDelta)
-                        streamListener?.onToken(contentDelta)
+                        // Only stream contentDelta into live thinking preview if reasoning_content wasn't already streamed,
+                        // preventing double-reasoning display during SSE streaming.
+                        if (accumulatedReasoning.isEmpty()) {
+                          streamListener?.onToken(contentDelta)
+                        }
                       }
 
-                      if (delta.has("tool_calls")) {
-                        val tcArr = delta.getJSONArray("tool_calls")
-                        for (k in 0 until tcArr.length()) {
-                          val tc = tcArr.getJSONObject(k)
-                          val idx = tc.optInt("index", k)
-                          val existing = toolCallBuffers[idx]
-                          val id = if (tc.has("id")) tc.getString("id") else existing?.first ?: ""
-                          val fn = tc.optJSONObject("function")
-                          val fnName = if (fn != null && fn.has("name")) fn.getString("name") else existing?.second ?: ""
-                          val fnArgs = if (fn != null && fn.has("arguments")) fn.getString("arguments") else ""
-                          val argsBuilder = existing?.third ?: StringBuilder()
-                          argsBuilder.append(fnArgs)
-                          toolCallBuffers[idx] = Triple(id, fnName, argsBuilder)
+                      if (delta.has("tool_calls") && !delta.isNull("tool_calls")) {
+                        val tcArr = delta.optJSONArray("tool_calls")
+                        if (tcArr != null) {
+                          for (k in 0 until tcArr.length()) {
+                            val tc = tcArr.optJSONObject(k) ?: continue
+                            val idx = tc.optInt("index", k)
+                            val existing = toolCallBuffers[idx]
+                            val idChunk = tc.optCleanString("id")
+                            val id = if (idChunk.isNotBlank()) idChunk else existing?.first ?: ""
+                            val fn = tc.optJSONObject("function")
+                            val nameChunk = fn?.optCleanString("name").orEmpty()
+                            val fnName = if (nameChunk.isNotBlank()) nameChunk else existing?.second ?: ""
+                            val fnArgs = fn?.optCleanString("arguments").orEmpty()
+                            val argsBuilder = existing?.third ?: StringBuilder()
+                            argsBuilder.append(fnArgs)
+                            toolCallBuffers[idx] = Triple(id, fnName, argsBuilder)
+                          }
                         }
                       }
                     }
@@ -593,23 +605,20 @@ class NvidiaNimProvider(
           .map { it.groupValues[1].trim() }
           .filter { it.isNotBlank() }
           .joinToString("\n")
-        val contentText = rawContentText.replace(thinkRegex, "").trim()
+        val contentText = rawContentText
+          .replace(thinkRegex, "")
+          .replace(Regex("^\\s*\\[Reasoning]\\s*", RegexOption.IGNORE_CASE), "")
+          .trim()
         val reasoningText = listOf(accumulatedReasoning.toString().trim(), extractedThinkBlocks)
           .filter { it.isNotBlank() }
           .joinToString("\n")
+          .replace(Regex("^\\s*\\[Reasoning]\\s*", RegexOption.IGNORE_CASE), "")
           .trim()
 
         val cleanedContentForThought = contentText
           .replace(Regex("<tool_call>.*?</tool_call>", RegexOption.DOT_MATCHES_ALL), "")
+          .replace(Regex("^\\s*\\[Reasoning]\\s*", RegexOption.IGNORE_CASE), "")
           .trim()
-        val combinedThought = when {
-          reasoningText.isNotBlank() && cleanedContentForThought.isNotBlank() -> {
-            if (reasoningText.equals(cleanedContentForThought, ignoreCase = true)) reasoningText
-            else "[Reasoning] $reasoningText\n$cleanedContentForThought"
-          }
-          reasoningText.isNotBlank() -> reasoningText
-          else -> cleanedContentForThought
-        }
 
         val parsedToolCalls = if (toolCallBuffers.isNotEmpty()) {
           toolCallBuffers.values.mapNotNull { (callId, fnName, argsBuilder) ->
@@ -625,6 +634,12 @@ class NvidiaNimProvider(
         } else {
           extractToolCalls(null, rawContentText, tools)
         }
+
+        val combinedThought = mergeReasoningAndContent(
+          reasoningText = reasoningText,
+          contentText = cleanedContentForThought,
+          hasToolCalls = parsedToolCalls.isNotEmpty()
+        )
 
         if (parsedToolCalls.isNotEmpty()) {
           return LLMDecision.ExecuteTool(
@@ -665,37 +680,27 @@ class NvidiaNimProvider(
       val messageObj = firstChoice.optJSONObject("message")
         ?: return LLMDecision.ProviderError("NVIDIA NIM response choice missing required 'message' object.", kind = ProviderFailureKind.EMPTY_RESPONSE)
 
-      val contentText = messageObj.optString("content", "")
-      val reasoningText = messageObj.optString("reasoning_content", "")
-        .ifBlank { messageObj.optString("reasoning", "") }
-
-      val combinedThought = when {
-        reasoningText.isNotBlank() && contentText.isNotBlank() -> {
-          val rClean = reasoningText.trim()
-          val cClean = contentText.trim()
-          if (rClean.equals(cClean, ignoreCase = true)) {
-            rClean
-          } else if (rClean.contains(cClean, ignoreCase = true)) {
-            rClean
-          } else if (cClean.contains(rClean, ignoreCase = true)) {
-            cClean
-          } else {
-            "[Reasoning] $rClean\n$cClean"
-          }
-        }
-        reasoningText.isNotBlank() -> reasoningText.trim()
-        else -> contentText.trim()
-      }
+      val contentText = messageObj.optCleanString("content")
+        .replace(Regex("^\\s*\\[Reasoning]\\s*", RegexOption.IGNORE_CASE), "")
+        .trim()
+      val reasoningText = messageObj.optCleanString("reasoning_content")
+        .ifBlank { messageObj.optCleanString("reasoning") }
+        .replace(Regex("^\\s*\\[Reasoning]\\s*", RegexOption.IGNORE_CASE), "")
+        .trim()
 
       // 7. Multi-Format Tool Calls Extraction
       val parsedToolCalls = extractToolCalls(messageObj, contentText, tools)
+
+      val combinedThought = mergeReasoningAndContent(
+        reasoningText = reasoningText,
+        contentText = contentText,
+        hasToolCalls = parsedToolCalls.isNotEmpty()
+      )
 
       // 8. Normalize decision to LLMDecision
       return if (parsedToolCalls.isNotEmpty()) {
         LLMDecision.ExecuteTool(
           toolCalls = parsedToolCalls,
-          // Native structured tool calls are already authoritative; visible reasoning is
-          // optional and many NVIDIA-hosted models legitimately return it as null.
           thought = combinedThought.ifBlank { "Executing ${parsedToolCalls.size} requested tool call(s)." }
         )
       } else {
@@ -918,12 +923,54 @@ class NvidiaNimProvider(
     }
   }
 
+  private fun JSONObject.optCleanString(key: String): String {
+    if (!has(key) || isNull(key)) return ""
+    val v = optString(key, "")
+    return if (v == "null") "" else v
+  }
+
+  private fun mergeReasoningAndContent(
+    reasoningText: String,
+    contentText: String,
+    hasToolCalls: Boolean
+  ): String {
+    val rClean = reasoningText.replace(Regex("^\\s*\\[Reasoning]\\s*", RegexOption.IGNORE_CASE), "").trim()
+    val cClean = contentText.replace(Regex("^\\s*\\[Reasoning]\\s*", RegexOption.IGNORE_CASE), "").trim()
+    return when {
+      rClean.isNotBlank() && cClean.isNotBlank() -> {
+        if (hasToolCalls) {
+          // On tool-calling turns, reasoning_content already captures the pre-tool thought;
+          // appending contentText duplicates the same reasoning in slightly different words.
+          rClean
+        } else if (rClean.equals(cClean, ignoreCase = true) || rClean.contains(cClean, ignoreCase = true)) {
+          rClean
+        } else if (cClean.contains(rClean, ignoreCase = true)) {
+          cClean
+        } else {
+          val rWords = rClean.lowercase().split(Regex("\\s+")).filter { it.length > 3 }.toSet()
+          val cWords = cClean.lowercase().split(Regex("\\s+")).filter { it.length > 3 }.toSet()
+          val overlap = if (rWords.isEmpty() || cWords.isEmpty()) 0.0 else {
+            rWords.intersect(cWords).size.toDouble() / minOf(rWords.size, cWords.size).toDouble()
+          }
+          if (overlap >= 0.45) {
+            if (cClean.length >= rClean.length) cClean else rClean
+          } else {
+            "$rClean\n\n$cClean"
+          }
+        }
+      }
+      rClean.isNotBlank() -> rClean
+      else -> cClean
+    }
+  }
+
   private fun cleanContentConclusion(raw: String): String {
     return raw
       .replace(Regex("<think>.*?</think>", RegexOption.DOT_MATCHES_ALL), "")
       .replace(Regex("<tool_call>.*?</tool_call>", RegexOption.DOT_MATCHES_ALL), "")
       .replace("<|python_tag|>", "")
       .replace(Regex("<\\|.*?\\|>"), "")
+      .replace(Regex("^\\s*\\[Reasoning]\\s*", RegexOption.IGNORE_CASE), "")
       .trim()
   }
 
@@ -1071,15 +1118,9 @@ class NvidiaNimProvider(
           assistantObj.put("role", "assistant")
 
           if (msg.toolCallId != null && msg.toolName != null) {
-            // Assistant requested one or more native tool calls.
-            val isFillerContent = msg.content.isBlank() ||
-              msg.content.startsWith("Dispatched tool") ||
-              (msg.content.startsWith("Executing ") && msg.content.contains("requested tool call"))
-            if (!isFillerContent) {
-              assistantObj.put("content", msg.content)
-            } else {
-              assistantObj.put("content", JSONObject.NULL)
-            }
+            // For native tool calls in conversation history, keep content null so reasoning models
+            // (GLM, DeepSeek, Nemotron) do not learn to echo internal reasoning blocks inside content.
+            assistantObj.put("content", JSONObject.NULL)
 
             val toolCallsArr = JSONArray()
             var batchIndex = messageIndex

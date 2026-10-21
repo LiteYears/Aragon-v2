@@ -291,6 +291,7 @@ object MessageHistoryBounder {
  * Event-driven stream listener for progressive token and tool-call arrival.
  */
 interface LLMStreamListener {
+  fun onReset() {}
   fun onToken(token: String) {}
   fun onToolCallDiscovered(call: ToolCall) {}
 }

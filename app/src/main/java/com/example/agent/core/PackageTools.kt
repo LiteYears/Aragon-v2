@@ -183,12 +183,14 @@ class InstallPackageTool(
       )
     }
 
+    val pyModule = capabilityManager?.toPythonImportName(packageName) ?: packageName.replace('-', '_')
     val cmd =
       "(sudo -n true 2>/dev/null && SUDO=\"sudo\") || SUDO=\"\"; " +
-        "if ([ -x /home/user/venv/bin/python3 ] && /home/user/venv/bin/python3 -c \"import $packageName\" 2>/dev/null) || python3 -c \"import $packageName\" 2>/dev/null; then " +
+        "if (python3 -c \"import $pyModule\" 2>/dev/null && ([ ! -x /home/user/venv/bin/python3 ] || /home/user/venv/bin/python3 -c \"import $pyModule\" 2>/dev/null)); then " +
         "V=\$(([ -x /home/user/venv/bin/python3 ] && /home/user/venv/bin/python3 -c \"import importlib.metadata as m; print(m.version('$packageName'))\" 2>/dev/null) || python3 -c \"import importlib.metadata as m; print(m.version('$packageName'))\" 2>/dev/null || true); " +
         "echo \"__ARAGON_PKG_OK__ pip \$V\"; " +
-        "elif ([ -x /home/user/venv/bin/pip ] && /home/user/venv/bin/pip install --no-cache-dir --disable-pip-version-check --quiet '$packageName') || python3 -m pip install --break-system-packages --no-cache-dir --disable-pip-version-check --quiet '$packageName'; then " +
+        "elif (python3 -m pip install --no-cache-dir --disable-pip-version-check --quiet '$packageName' 2>/dev/null || python3 -m pip install --break-system-packages --no-cache-dir --disable-pip-version-check --quiet '$packageName' 2>/dev/null) || ([ -x /home/user/venv/bin/pip ] && /home/user/venv/bin/pip install --no-cache-dir --disable-pip-version-check --quiet '$packageName'); then " +
+        "([ -x /home/user/venv/bin/pip ] && /home/user/venv/bin/pip install --no-cache-dir --disable-pip-version-check --quiet '$packageName' 2>/dev/null || true); " +
         "V=\$(([ -x /home/user/venv/bin/python3 ] && /home/user/venv/bin/python3 -c \"import importlib.metadata as m; print(m.version('$packageName'))\" 2>/dev/null) || python3 -c \"import importlib.metadata as m; print(m.version('$packageName'))\" 2>/dev/null || true); " +
         "echo \"__ARAGON_PKG_OK__ pip \$V\"; " +
         "elif \$SUDO apt-get install -y -qq --no-install-recommends '$packageName' 2>/dev/null || (\$SUDO apt-get update -qq && \$SUDO apt-get install -y -qq --no-install-recommends '$packageName'); then " +

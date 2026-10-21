@@ -8,10 +8,7 @@ debug.keystore
 debug.keystore.base64
 __pycache__/
 *.pyc
-*.apk
 *.aab
-/apk/
-apk/
 /.build-outputs/
 .build-outputs/
 /.aistudio/

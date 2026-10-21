@@ -26,16 +26,16 @@ class ReasoningDedupPipeline(
   ): String {
     if (rawThought.isNullOrBlank()) return ""
 
-    // 1. Strip null/undefined tokens & non-printable null bytes
+    // 1. Strip null/undefined tokens, non-printable null bytes, and redundant [Reasoning] markers
     val sanitized = rawThought
       .replace("\u0000", "")
-      .replace(Regex("""\bnull\b"""), "")
-      .replace(Regex("""\bundefined\b"""), "")
+      .replace(Regex("""\[Reasoning]\s*""", RegexOption.IGNORE_CASE), "")
+      .replace(Regex("""^(?:ing]|-docx)\s*""", RegexOption.IGNORE_CASE), "")
       .trim()
 
     if (sanitized.isBlank()) return ""
 
-    // 2. Intra-thought sentence deduplication (adjacent duplicate sentences)
+    // 2. Intra-thought sentence & paragraph deduplication (preserving markdown line breaks)
     val dedupedWithinBlock = deduplicateAdjacentSentences(sanitized)
 
     // 3. Sliding time-window similarity check
@@ -86,17 +86,41 @@ class ReasoningDedupPipeline(
   }
 
   private fun deduplicateAdjacentSentences(text: String): String {
-    val sentences = text.split(SENTENCE_SPLIT_REGEX).filter { it.isNotBlank() }
-    val result = mutableListOf<String>()
-    for (s in sentences) {
-      if (result.isEmpty() || !result.last().trim().equals(s.trim(), ignoreCase = true)) {
-        result.add(s)
+    val lines = text.lines()
+    val dedupedLines = mutableListOf<String>()
+    for (line in lines) {
+      val trimmedLine = line.trim()
+      if (trimmedLine.isBlank()) {
+        if (dedupedLines.isNotEmpty() && dedupedLines.last().isNotBlank()) {
+          dedupedLines.add("")
+        }
+        continue
+      }
+      val sentences = trimmedLine.split(SENTENCE_SPLIT_REGEX).filter { it.isNotBlank() }
+      val uniqueSentences = mutableListOf<String>()
+      for (s in sentences) {
+        val cleanS = s.trim()
+        val isDupSentence = uniqueSentences.any { existing ->
+          existing.equals(cleanS, ignoreCase = true) ||
+            (cleanS.length > 24 && existing.length > 24 && calculateJaccardSimilarity(existing, cleanS) >= 0.72)
+        }
+        if (!isDupSentence) {
+          uniqueSentences.add(cleanS)
+        }
+      }
+      val reconstructedLine = uniqueSentences.joinToString(" ")
+      val isDupLine = dedupedLines.filter { it.isNotBlank() }.any { existingLine ->
+        existingLine.equals(reconstructedLine, ignoreCase = true) ||
+          (reconstructedLine.length > 30 && existingLine.length > 30 && calculateJaccardSimilarity(existingLine, reconstructedLine) >= 0.70)
+      }
+      if (!isDupLine) {
+        dedupedLines.add(reconstructedLine)
       }
     }
-    return result.joinToString(" ")
+    return dedupedLines.joinToString("\n").trim()
   }
 
-  private fun calculateJaccardSimilarity(s1: String, s2: String): Double {
+  fun calculateJaccardSimilarity(s1: String, s2: String): Double {
     val set1 = s1.lowercase().split(WHITESPACE_SPLIT_REGEX).filter { it.length > 2 }.toSet()
     val set2 = s2.lowercase().split(WHITESPACE_SPLIT_REGEX).filter { it.length > 2 }.toSet()
     if (set1.isEmpty() && set2.isEmpty()) return 1.0
