@@ -347,10 +347,10 @@ fun AutonomyPolicyDialog(
 ) {
   Dialog(onDismissRequest = onDismiss) {
     Surface(
-      shape = RoundedCornerShape(22.dp),
-      color = Color.White,
-      shadowElevation = 16.dp,
-      border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+      shape = RoundedCornerShape(20.dp),
+      color = Color(0xFF09090D),
+      shadowElevation = 24.dp,
+      border = BorderStroke(1.dp, Color(0xFF1E1E2C)),
       modifier = Modifier
         .fillMaxWidth()
         .widthIn(max = 520.dp)
@@ -367,7 +367,7 @@ fun AutonomyPolicyDialog(
             style = MaterialTheme.typography.titleSmall,
             fontFamily = InterFontFamily,
             fontWeight = FontWeight.Bold,
-            color = Color(0xFF0F172A),
+            color = Color.White,
             letterSpacing = 1.sp
           )
 
@@ -384,7 +384,7 @@ fun AutonomyPolicyDialog(
         Text(
           text = "Controls how tools, terminal commands, and workspace changes are approved during agent task runs.",
           style = MaterialTheme.typography.bodySmall,
-          color = Color(0xFF64748B),
+          color = Color(0xFF94A3B8),
           fontSize = 11.sp
         )
 
@@ -421,7 +421,7 @@ fun AutonomyPolicyDialog(
           PolicyCard(
             title = "STRICT CONFINED SANDBOX",
             badge = "STRICT",
-            badgeColor = Color(0xFF0284C7),
+            badgeColor = Color(0xFF38BDF8),
             description = "Disallows raw process execution, package installation, and network crawling. Restricts the agent to read-only inspections and confined file edits.",
             isSelected = currentPolicy == ApprovalPolicy.STRICT_SANDBOX,
             onClick = {
@@ -446,10 +446,10 @@ private fun PolicyCard(
 ) {
   Surface(
     shape = RoundedCornerShape(12.dp),
-    color = if (isSelected) Color(0xFFF1F5F9) else Color(0xFFF8FAFC),
+    color = if (isSelected) Color(0xFF161624) else Color(0xFF0F0F14),
     border = BorderStroke(
       1.dp,
-      if (isSelected) Color(0xFF0F172A) else Color(0xFFE2E8F0)
+      if (isSelected) Color(0xFF38BDF8) else Color(0xFF1E1E28)
     ),
     modifier = Modifier
       .fillMaxWidth()
@@ -467,8 +467,8 @@ private fun PolicyCard(
         ) {
           Surface(
             shape = RoundedCornerShape(4.dp),
-            color = Color.White,
-            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+            color = Color(0xFF161622),
+            border = BorderStroke(0.8.dp, Color(0xFF2E2E42)),
             modifier = Modifier.padding(end = 4.dp)
           ) {
             Text(
@@ -487,7 +487,7 @@ private fun PolicyCard(
             fontFamily = InterFontFamily,
             fontWeight = FontWeight.SemiBold,
             fontSize = 11.sp,
-            color = Color(0xFF0F172A)
+            color = if (isSelected) Color.White else Color(0xFFF1F5F9)
           )
         }
 
@@ -497,7 +497,7 @@ private fun PolicyCard(
             fontFamily = JetBrainsMonoFontFamily,
             fontWeight = FontWeight.Bold,
             fontSize = 9.sp,
-            color = Color(0xFF0F172A)
+            color = Color(0xFF10B981)
           )
         }
       }
@@ -507,7 +507,7 @@ private fun PolicyCard(
       Text(
         text = description,
         style = MaterialTheme.typography.bodySmall,
-        color = Color(0xFF475569),
+        color = if (isSelected) Color(0xFFCBD5E1) else Color(0xFF94A3B8),
         fontSize = 10.sp,
         lineHeight = 15.sp
       )

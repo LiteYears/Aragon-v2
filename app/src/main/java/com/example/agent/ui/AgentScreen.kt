@@ -593,12 +593,12 @@ fun AgentScreen(
             }
           }
 
-          // Floating modern dark grey user prompt input field container
+          // Flat modern AMOLED user prompt input field container
           Surface(
-            shape = RoundedCornerShape(26.dp),
-            color = Color(0xFF1E1E26),
-            border = BorderStroke(1.dp, if (isInputActive) Color(0xFF3B82F6).copy(alpha = 0.85f) else Color(0xFF30303E)),
-            shadowElevation = 4.dp,
+            shape = RoundedCornerShape(18.dp),
+            color = Color(0xFF0C0C12),
+            border = BorderStroke(1.dp, if (isInputActive) Color(0xFF38BDF8).copy(alpha = 0.8f) else Color(0xFF1E1E28)),
+            shadowElevation = 0.dp,
             modifier = Modifier
               .fillMaxWidth()
               .animateContentSize(
@@ -612,7 +612,7 @@ fun AgentScreen(
             Column(
               modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 7.dp, horizontal = 6.dp)
+                .padding(vertical = 6.dp, horizontal = 6.dp)
             ) {
 
               // Attached Documents Strip (if any)
@@ -624,16 +624,16 @@ fun AgentScreen(
                 Row(
                   modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 2.dp)
+                    .padding(horizontal = 12.dp, vertical = 2.dp)
                     .horizontalScroll(docChipScrollState),
                   horizontalArrangement = Arrangement.spacedBy(6.dp),
                   verticalAlignment = Alignment.CenterVertically
                 ) {
                   documentMessages.forEach { message ->
                     Surface(
-                      shape = RoundedCornerShape(8.dp),
-                      color = Color(0xFF282836),
-                      border = BorderStroke(0.8.dp, Color(0xFF38384A)),
+                      shape = RoundedCornerShape(6.dp),
+                      color = Color(0xFF161622),
+                      border = BorderStroke(0.8.dp, Color(0xFF28283C)),
                       modifier = Modifier.clickable { viewModel.clearDocumentMessages() }
                     ) {
                       Text(
@@ -649,9 +649,9 @@ fun AgentScreen(
                   }
                   attachedDocuments.forEach { doc ->
                     Surface(
-                      shape = RoundedCornerShape(8.dp),
-                      color = Color(0xFF14241C),
-                      border = BorderStroke(0.8.dp, Color(0xFF1E3A2E)),
+                      shape = RoundedCornerShape(6.dp),
+                      color = Color(0xFF0B1E15),
+                      border = BorderStroke(0.8.dp, Color(0xFF16422C)),
                       modifier = Modifier.testTag("doc_chip_${doc.id}")
                     ) {
                       Row(
@@ -681,23 +681,114 @@ fun AgentScreen(
                 }
               }
 
-              // Text Input Area
+              // Text Features & Quick Action Strip (Shows when focused or when text is present)
+              AnimatedVisibility(
+                visible = isInputActive,
+                enter = fadeIn(tween(140)) + expandVertically(tween(140)),
+                exit = fadeOut(tween(100)) + shrinkVertically(tween(100))
+              ) {
+                Row(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 2.dp),
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                  verticalAlignment = Alignment.CenterVertically
+                ) {
+                  Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                  ) {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                    Surface(
+                      shape = RoundedCornerShape(6.dp),
+                      color = Color(0xFF14141E),
+                      border = BorderStroke(0.7.dp, Color(0xFF242436)),
+                      modifier = Modifier.clickable {
+                        val clipText = clipboard?.primaryClip?.getItemAt(0)?.text?.toString()
+                        if (!clipText.isNullOrBlank()) {
+                          inputText = if (inputText.isBlank()) clipText else "$inputText $clipText"
+                        }
+                      }
+                    ) {
+                      Text(
+                        text = "📋 PASTE",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF94A3B8),
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                      )
+                    }
+
+                    Surface(
+                      shape = RoundedCornerShape(6.dp),
+                      color = Color(0xFF14141E),
+                      border = BorderStroke(0.7.dp, Color(0xFF242436)),
+                      modifier = Modifier.clickable {
+                        inputText = if (inputText.isBlank()) "```python\n\n```" else "$inputText\n```python\n\n```"
+                      }
+                    ) {
+                      Text(
+                        text = "💻 CODE",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF38BDF8),
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                      )
+                    }
+
+                    Surface(
+                      shape = RoundedCornerShape(6.dp),
+                      color = Color(0xFF14141E),
+                      border = BorderStroke(0.7.dp, Color(0xFF242436)),
+                      modifier = Modifier.clickable {
+                        inputText = if (inputText.isBlank()) "$ E = mc^2 $" else "$inputText $ formula $"
+                      }
+                    ) {
+                      Text(
+                        text = "∑ MATH",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF34D399),
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                      )
+                    }
+                  }
+
+                  val tokenCount = (inputText.length / 4).coerceAtLeast(if (inputText.isEmpty()) 0 else 1)
+                  Text(
+                    text = "${inputText.length}c · ~${tokenCount}t",
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFF64748B)
+                  )
+                }
+              }
+
+              // Text Input Area with Center-Justified Smaller Placeholder
               Box(
                 modifier = Modifier
                   .fillMaxWidth()
                   .heightIn(min = 38.dp)
-                  .padding(horizontal = 14.dp, vertical = 4.dp)
+                  .padding(horizontal = 12.dp, vertical = 4.dp),
+                contentAlignment = Alignment.CenterStart
               ) {
                 if (inputText.isEmpty()) {
                   Text(
                     text = if (state.status == AgentStatus.COMPLETED) "Continue conversation with a follow-up..." else "Ask Aragon or describe a task...",
                     style = TextStyle(
-                      fontFamily = InterFontFamily,
-                      fontSize = 14.5.sp,
-                      color = Color(0xFF888899),
-                      lineHeight = 21.sp,
-                      fontWeight = FontWeight.Normal
-                    )
+                      fontFamily = JetBrainsMonoFontFamily,
+                      fontSize = 12.5.sp,
+                      color = Color(0xFF64748B),
+                      lineHeight = 18.sp,
+                      letterSpacing = 0.5.sp,
+                      fontWeight = FontWeight.Normal,
+                      textAlign = TextAlign.Center
+                    ),
+                    modifier = Modifier.fillMaxWidth()
                   )
                 }
 
@@ -706,12 +797,12 @@ fun AgentScreen(
                   onValueChange = { inputText = it },
                   textStyle = TextStyle(
                     fontFamily = InterFontFamily,
-                    fontSize = 14.5.sp,
+                    fontSize = 13.5.sp,
                     color = Color(0xFFF8FAFC),
-                    lineHeight = 21.sp,
+                    lineHeight = 20.sp,
                     fontWeight = FontWeight.Normal
                   ),
-                  cursorBrush = SolidColor(Color(0xFF60A5FA)),
+                  cursorBrush = SolidColor(Color(0xFF38BDF8)),
                   maxLines = 6,
                   keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                   keyboardActions = KeyboardActions(onSend = {
@@ -733,11 +824,11 @@ fun AgentScreen(
               Row(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .padding(start = 10.dp, end = 10.dp, top = 2.dp, bottom = 3.dp),
+                  .padding(start = 8.dp, end = 8.dp, top = 2.dp, bottom = 3.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
               ) {
-                // Left action buttons: Attachment (+) with clean popover, and tool status pill
+                // Left action buttons: Attachment (+) with clean AMOLED popover, and tool status pill
                 Row(
                   verticalAlignment = Alignment.CenterVertically,
                   horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -747,10 +838,10 @@ fun AgentScreen(
                     val attachInteraction = remember { MutableInteractionSource() }
                     Box(
                       modifier = Modifier
-                        .size(32.dp)
+                        .size(30.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF2C2C3A))
-                        .border(BorderStroke(0.8.dp, Color(0xFF3E3E50)), CircleShape)
+                        .background(Color(0xFF161622))
+                        .border(BorderStroke(0.8.dp, Color(0xFF262638)), CircleShape)
                         .tactilePress(attachInteraction)
                         .clickable(
                           interactionSource = attachInteraction,
@@ -767,7 +858,7 @@ fun AgentScreen(
                         imageVector = Icons.Default.Add,
                         contentDescription = "Attach files",
                         tint = Color(0xFFE2E8F0),
-                        modifier = Modifier.size(17.dp)
+                        modifier = Modifier.size(16.dp)
                       )
                     }
 
@@ -775,18 +866,18 @@ fun AgentScreen(
                       expanded = showAttachmentMenu,
                       onDismissRequest = { showAttachmentMenu = false },
                       modifier = Modifier
-                        .background(Color(0xFF1E1E28))
-                        .border(BorderStroke(1.dp, Color(0xFF333346)), RoundedCornerShape(16.dp))
+                        .background(Color(0xFF0C0C12))
+                        .border(BorderStroke(1.dp, Color(0xFF1E1E2C)), RoundedCornerShape(14.dp))
                     ) {
                       DropdownMenuItem(
                         text = {
                           Column {
-                            Text("Upload Documents & Files", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color(0xFFF1F5F9))
-                            Text("PDF, DOCX, XLSX, CSV, Code, Text", fontFamily = InterFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+                            Text("Upload Documents & Files", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, color = Color(0xFFF1F5F9))
+                            Text("PDF, DOCX, XLSX, CSV, Code, Text", fontFamily = JetBrainsMonoFontFamily, fontSize = 9.5.sp, color = Color(0xFF94A3B8))
                           }
                         },
                         leadingIcon = {
-                          Icon(Icons.Default.FolderOpen, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(18.dp))
+                          Icon(Icons.Default.FolderOpen, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(17.dp))
                         },
                         onClick = {
                           showAttachmentMenu = false
@@ -797,12 +888,12 @@ fun AgentScreen(
                       DropdownMenuItem(
                         text = {
                           Column {
-                            Text("Upload Photos & Gallery", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color(0xFFF1F5F9))
-                            Text("Images, diagrams, screenshots", fontFamily = InterFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+                            Text("Upload Photos & Gallery", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, color = Color(0xFFF1F5F9))
+                            Text("Images, diagrams, screenshots", fontFamily = JetBrainsMonoFontFamily, fontSize = 9.5.sp, color = Color(0xFF94A3B8))
                           }
                         },
                         leadingIcon = {
-                          Icon(Icons.Default.GraphicEq, contentDescription = null, tint = Color(0xFF34D399), modifier = Modifier.size(18.dp))
+                          Icon(Icons.Default.GraphicEq, contentDescription = null, tint = Color(0xFF34D399), modifier = Modifier.size(17.dp))
                         },
                         onClick = {
                           showAttachmentMenu = false
@@ -813,12 +904,12 @@ fun AgentScreen(
                       DropdownMenuItem(
                         text = {
                           Column {
-                            Text("Upload Folder", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color(0xFFF1F5F9))
-                            Text("Directory tree or project codebase", fontFamily = InterFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+                            Text("Upload Folder", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, color = Color(0xFFF1F5F9))
+                            Text("Directory tree or project codebase", fontFamily = JetBrainsMonoFontFamily, fontSize = 9.5.sp, color = Color(0xFF94A3B8))
                           }
                         },
                         leadingIcon = {
-                          Icon(Icons.Default.Inventory2, contentDescription = null, tint = Color(0xFFFBBF24), modifier = Modifier.size(18.dp))
+                          Icon(Icons.Default.Inventory2, contentDescription = null, tint = Color(0xFFFBBF24), modifier = Modifier.size(17.dp))
                         },
                         onClick = {
                           showAttachmentMenu = false
@@ -829,12 +920,12 @@ fun AgentScreen(
                       DropdownMenuItem(
                         text = {
                           Column {
-                            Text("Manage Documents (${documents.size})", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color(0xFFF1F5F9))
-                            Text("OCR, search indexing, and scope", fontFamily = InterFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+                            Text("Manage Documents (${documents.size})", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, color = Color(0xFFF1F5F9))
+                            Text("OCR, search indexing, and scope", fontFamily = JetBrainsMonoFontFamily, fontSize = 9.5.sp, color = Color(0xFF94A3B8))
                           }
                         },
                         leadingIcon = {
-                          Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFA78BFA), modifier = Modifier.size(18.dp))
+                          Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFA78BFA), modifier = Modifier.size(17.dp))
                         },
                         onClick = {
                           showAttachmentMenu = false
@@ -847,14 +938,14 @@ fun AgentScreen(
 
                   // Quick tools indicator pill
                   Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFF282836),
-                    border = BorderStroke(0.8.dp, Color(0xFF3A3A4C)),
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFF14141E),
+                    border = BorderStroke(0.8.dp, Color(0xFF242436)),
                     modifier = Modifier.clickable { showMcpDialog = true }
                   ) {
                     Row(
                       verticalAlignment = Alignment.CenterVertically,
-                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.5.dp)
+                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
                       Box(
                         modifier = Modifier
@@ -882,10 +973,10 @@ fun AgentScreen(
                   if (inputText.isNotBlank()) {
                     Box(
                       modifier = Modifier
-                        .size(32.dp)
+                        .size(30.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF2C2C3A))
-                        .border(BorderStroke(0.8.dp, Color(0xFF3E3E50)), CircleShape)
+                        .background(Color(0xFF161622))
+                        .border(BorderStroke(0.8.dp, Color(0xFF262638)), CircleShape)
                         .clickable(role = Role.Button, onClickLabel = "Clear text") {
                           inputText = ""
                         },
@@ -895,7 +986,7 @@ fun AgentScreen(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Clear",
                         tint = Color(0xFFCBD5E1),
-                        modifier = Modifier.size(15.dp)
+                        modifier = Modifier.size(14.dp)
                       )
                     }
                   }
@@ -903,10 +994,10 @@ fun AgentScreen(
                   // Microphone button
                   Box(
                     modifier = Modifier
-                      .size(32.dp)
+                      .size(30.dp)
                       .clip(CircleShape)
-                      .background(Color(0xFF2C2C3A))
-                      .border(BorderStroke(0.8.dp, Color(0xFF3E3E50)), CircleShape)
+                      .background(Color(0xFF161622))
+                      .border(BorderStroke(0.8.dp, Color(0xFF262638)), CircleShape)
                       .clickable(role = Role.Button, onClickLabel = "Microphone input") {
                         android.widget.Toast.makeText(context, "Listening for voice prompt...", android.widget.Toast.LENGTH_SHORT).show()
                       }
@@ -917,7 +1008,7 @@ fun AgentScreen(
                       imageVector = Icons.Default.Mic,
                       contentDescription = "Voice input",
                       tint = Color(0xFFE2E8F0),
-                      modifier = Modifier.size(16.dp)
+                      modifier = Modifier.size(15.dp)
                     )
                   }
 
@@ -2649,7 +2740,7 @@ fun EmptyExecutionState(
 
     // Slogan with Typewriter Effect
     AmoledTypewriterQuote(
-      quote = "Synthesizing cognition into autonomous execution."
+      quote = "From ambiguous intent to deterministic reality."
     )
 
     Spacer(modifier = Modifier.height(20.dp))
@@ -2657,13 +2748,13 @@ fun EmptyExecutionState(
     // Middle Aragon Model: Interactive Model Selector Capsule (AMOLED Sleek & Justified)
     val modelInteraction = remember { MutableInteractionSource() }
     Surface(
-      shape = RoundedCornerShape(16.dp),
-      color = Color(0xFF101018),
+      shape = RoundedCornerShape(12.dp),
+      color = Color(0xFF0C0C12),
       shadowElevation = 0.dp,
-      border = BorderStroke(1.dp, Color(0xFF242436)),
+      border = BorderStroke(1.dp, Color(0xFF1E1E2C)),
       modifier = Modifier
         .tactilePress(modelInteraction)
-        .clip(RoundedCornerShape(16.dp))
+        .clip(RoundedCornerShape(12.dp))
         .clickable(
           interactionSource = modelInteraction,
           indication = ripple(color = Color.White.copy(alpha = 0.15f)),
@@ -2675,21 +2766,21 @@ fun EmptyExecutionState(
       Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
-        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.5.dp)
       ) {
         Box(
           modifier = Modifier
-            .size(7.dp)
+            .size(6.5.dp)
             .clip(CircleShape)
             .background(Color(0xFF10B981))
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
-          text = "MODEL",
+          text = "ENGINE",
           style = MaterialTheme.typography.labelSmall,
           fontFamily = JetBrainsMonoFontFamily,
           fontWeight = FontWeight.Bold,
-          fontSize = 9.sp,
+          fontSize = 8.5.sp,
           letterSpacing = 0.8.sp,
           color = Color(0xFF94A3B8)
         )
@@ -2697,25 +2788,25 @@ fun EmptyExecutionState(
         Text(
           text = currentModelName,
           style = MaterialTheme.typography.bodySmall,
-          fontFamily = InterFontFamily,
+          fontFamily = JetBrainsMonoFontFamily,
           fontWeight = FontWeight.SemiBold,
-          fontSize = 11.5.sp,
+          fontSize = 11.sp,
           color = Color.White
         )
-        Spacer(modifier = Modifier.width(10.dp))
+        Spacer(modifier = Modifier.width(8.dp))
         Surface(
-          shape = RoundedCornerShape(8.dp),
-          color = Color(0xFF1A1A28),
-          border = BorderStroke(0.6.dp, Color(0xFF2E2E42))
+          shape = RoundedCornerShape(6.dp),
+          color = Color(0xFF161622),
+          border = BorderStroke(0.7.dp, Color(0xFF2E2E42))
         ) {
           Text(
-            text = "SWITCH",
+            text = "SWITCH ▾",
             fontFamily = JetBrainsMonoFontFamily,
-            fontSize = 8.5.sp,
+            fontSize = 8.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = 0.6.sp,
             color = Color(0xFF38BDF8),
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp)
           )
         }
       }
@@ -2734,8 +2825,69 @@ fun EmptyExecutionState(
 }
 
 /**
+ * AMOLED Typewriter Quote:
+ * Animates inspiring text character-by-character with a sleek pulsing cursor,
+ * unified JetBrains Mono typography, centered justification, and pure AMOLED styling.
+ */
+@Composable
+fun AmoledTypewriterQuote(
+  quote: String,
+  modifier: Modifier = Modifier
+) {
+  var displayedLength by remember(quote) { mutableIntStateOf(0) }
+
+  LaunchedEffect(quote) {
+    displayedLength = 0
+    for (i in 1..quote.length) {
+      displayedLength = i
+      kotlinx.coroutines.delay(32L)
+    }
+  }
+
+  val infiniteTransition = rememberInfiniteTransition(label = "quote_cursor_trans")
+  val cursorAlpha by infiniteTransition.animateFloat(
+    initialValue = 1f,
+    targetValue = 0f,
+    animationSpec = infiniteRepeatable(
+      animation = tween(450, easing = LinearEasing),
+      repeatMode = RepeatMode.Reverse
+    ),
+    label = "quote_cursor_alpha"
+  )
+
+  val displayText = remember(quote, displayedLength) {
+    quote.take(displayedLength)
+  }
+
+  Row(
+    modifier = modifier
+      .fillMaxWidth()
+      .padding(horizontal = 24.dp),
+    horizontalArrangement = Arrangement.Center,
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    Text(
+      text = displayText,
+      fontFamily = JetBrainsMonoFontFamily,
+      fontSize = 11.5.sp,
+      fontWeight = FontWeight.Medium,
+      letterSpacing = 0.6.sp,
+      color = Color(0xFFCBD5E1),
+      textAlign = TextAlign.Center
+    )
+    Text(
+      text = "▌",
+      fontFamily = JetBrainsMonoFontFamily,
+      fontSize = 11.5.sp,
+      color = Color(0xFF38BDF8).copy(alpha = cursorAlpha),
+      modifier = Modifier.padding(start = 2.dp)
+    )
+  }
+}
+
+/**
  * Normal Model Selector Dialog:
- * Shows list of available models cleanly with instant search and direct access to Developer Settings.
+ * Shows list of available models cleanly in unified AMOLED style.
  */
 @Composable
 fun ModelSelectorDialog(
@@ -2752,10 +2904,10 @@ fun ModelSelectorDialog(
 
   Dialog(onDismissRequest = onDismiss) {
     Surface(
-      shape = RoundedCornerShape(22.dp),
-      color = Color.White,
-      shadowElevation = 16.dp,
-      border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+      shape = RoundedCornerShape(20.dp),
+      color = Color(0xFF09090D),
+      shadowElevation = 24.dp,
+      border = BorderStroke(1.dp, Color(0xFF1E1E2C)),
       modifier = Modifier
         .fillMaxWidth()
         .widthIn(max = 560.dp)
@@ -2774,7 +2926,7 @@ fun ModelSelectorDialog(
             style = MaterialTheme.typography.titleSmall,
             fontFamily = InterFontFamily,
             fontWeight = FontWeight.Bold,
-            color = Color(0xFF0F172A),
+            color = Color.White,
             letterSpacing = 1.sp
           )
 
@@ -2788,11 +2940,11 @@ fun ModelSelectorDialog(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Search Bar for Models
+        // Search Bar for Models (AMOLED Unified)
         Surface(
-          shape = RoundedCornerShape(12.dp),
-          color = Color(0xFFF1F5F9),
-          border = null,
+          shape = RoundedCornerShape(10.dp),
+          color = Color(0xFF121218),
+          border = BorderStroke(1.dp, Color(0xFF1E1E2A)),
           modifier = Modifier.fillMaxWidth()
         ) {
           Row(
@@ -2802,9 +2954,9 @@ fun ModelSelectorDialog(
             Text(
               text = "FILTER",
               fontFamily = JetBrainsMonoFontFamily,
-              fontSize = 9.sp,
+              fontSize = 8.5.sp,
               fontWeight = FontWeight.Bold,
-              color = Color(0xFF0284C7),
+              color = Color(0xFF38BDF8),
               modifier = Modifier.padding(end = 6.dp)
             )
             BasicTextField(
@@ -2818,16 +2970,16 @@ fun ModelSelectorDialog(
               textStyle = MaterialTheme.typography.bodySmall.copy(
                 fontFamily = InterFontFamily,
                 fontSize = 12.sp,
-                color = Color(0xFF0F172A)
+                color = Color.White
               ),
-              cursorBrush = SolidColor(Color(0xFF0F172A)),
+              cursorBrush = SolidColor(Color(0xFF38BDF8)),
               decorationBox = { innerTextField ->
                 if (searchQuery.isEmpty()) {
                   Text(
                     text = "Search by model name or keyword...",
                     fontFamily = InterFontFamily,
                     fontSize = 11.sp,
-                    color = Color(0xFF94A3B8)
+                    color = Color(0xFF64748B)
                   )
                 }
                 innerTextField()
@@ -2838,7 +2990,7 @@ fun ModelSelectorDialog(
                 text = "✕",
                 fontFamily = JetBrainsMonoFontFamily,
                 fontSize = 11.sp,
-                color = Color(0xFF475569),
+                color = Color(0xFF94A3B8),
                 modifier = Modifier
                   .clip(RoundedCornerShape(3.dp))
                   .clickable { searchQuery = "" }
@@ -2871,9 +3023,9 @@ fun ModelSelectorDialog(
 
             val isSandboxActive = currentProvider == ProviderType.SANDBOX_ENGINE
             Surface(
-              shape = RoundedCornerShape(14.dp),
-              color = if (isSandboxActive) Color(0xFF0F172A) else Color(0xFFF8FAFC),
-              border = BorderStroke(1.dp, if (isSandboxActive) Color(0xFF0F172A) else Color(0xFFE2E8F0)),
+              shape = RoundedCornerShape(12.dp),
+              color = if (isSandboxActive) Color(0xFF161624) else Color(0xFF0F0F14),
+              border = BorderStroke(1.dp, if (isSandboxActive) Color(0xFF38BDF8) else Color(0xFF1E1E28)),
               modifier = Modifier
                 .fillMaxWidth()
                 .clickable { onSelectSandbox() }
@@ -2889,7 +3041,7 @@ fun ModelSelectorDialog(
                     style = MaterialTheme.typography.bodyMedium,
                     fontFamily = InterFontFamily,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (isSandboxActive) Color.White else Color(0xFF0F172A)
+                    color = if (isSandboxActive) Color.White else Color(0xFFF1F5F9)
                   )
                   Text(
                     text = "Built-in rule-based agent loop driving the same sandbox tools — no model API key needed",
@@ -2950,9 +3102,9 @@ fun ModelSelectorDialog(
             filteredNvidiaModels.forEach { modelEntry ->
               val isModelActive = currentProvider == ProviderType.NVIDIA_NIM && currentNvidiaModel == modelEntry.id
               Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = if (isModelActive) Color(0xFF0F172A) else Color(0xFFF8FAFC),
-                border = BorderStroke(1.dp, if (isModelActive) Color(0xFF0F172A) else Color(0xFFE2E8F0)),
+                shape = RoundedCornerShape(12.dp),
+                color = if (isModelActive) Color(0xFF161624) else Color(0xFF0F0F14),
+                border = BorderStroke(1.dp, if (isModelActive) Color(0xFF38BDF8) else Color(0xFF1E1E28)),
                 modifier = Modifier
                   .fillMaxWidth()
                   .clickable { onSelectNvidiaModel(modelEntry.id) }
@@ -2969,7 +3121,7 @@ fun ModelSelectorDialog(
                         style = MaterialTheme.typography.bodyMedium,
                         fontFamily = InterFontFamily,
                         fontWeight = FontWeight.SemiBold,
-                        color = if (isModelActive) Color.White else Color(0xFF0F172A)
+                        color = if (isModelActive) Color.White else Color(0xFFF1F5F9)
                       )
                       if (modelEntry.badge.isNotBlank()) {
                         Spacer(modifier = Modifier.width(6.dp))
@@ -2978,7 +3130,7 @@ fun ModelSelectorDialog(
                           style = MaterialTheme.typography.labelSmall,
                           fontFamily = JetBrainsMonoFontFamily,
                           fontSize = 8.sp,
-                          color = if (isModelActive) Color(0xFF38BDF8) else Color(0xFF0284C7)
+                          color = Color(0xFF38BDF8)
                         )
                       }
                     }
@@ -3022,9 +3174,9 @@ fun ModelSelectorDialog(
 
             val isGeminiActive = currentProvider == ProviderType.GEMINI_LIVE_API
             Surface(
-              shape = RoundedCornerShape(14.dp),
-              color = if (isGeminiActive) Color(0xFF0F172A) else Color(0xFFF8FAFC),
-              border = BorderStroke(1.dp, if (isGeminiActive) Color(0xFF0F172A) else Color(0xFFE2E8F0)),
+              shape = RoundedCornerShape(12.dp),
+              color = if (isGeminiActive) Color(0xFF161624) else Color(0xFF0F0F14),
+              border = BorderStroke(1.dp, if (isGeminiActive) Color(0xFF38BDF8) else Color(0xFF1E1E28)),
               modifier = Modifier
                 .fillMaxWidth()
                 .clickable { onSelectGemini() }
@@ -3040,7 +3192,7 @@ fun ModelSelectorDialog(
                     style = MaterialTheme.typography.bodyMedium,
                     fontFamily = InterFontFamily,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (isGeminiActive) Color.White else Color(0xFF0F172A)
+                    color = if (isGeminiActive) Color.White else Color(0xFFF1F5F9)
                   )
                   Text(
                     text = "gemini-2.5-flash with function calling",
@@ -3145,19 +3297,19 @@ fun SettingsProviderDialog(
       onResetSandboxConnectionStatus()
       onDismiss()
     },
-    containerColor = Color.White,
+    containerColor = Color(0xFF09090D),
     title = {
       Column {
         Text(
           text = "Settings & Configuration",
           style = MaterialTheme.typography.titleMedium,
           fontWeight = FontWeight.SemiBold,
-          color = Color(0xFF0F172A)
+          color = Color.White
         )
         Text(
           text = "AI provider, API keys, and the E2B execution sandbox. Changes apply to new tasks.",
           style = MaterialTheme.typography.labelSmall,
-          color = Color(0xFF64748B),
+          color = Color(0xFF94A3B8),
           fontSize = 10.sp,
           modifier = Modifier.padding(top = 2.dp)
         )

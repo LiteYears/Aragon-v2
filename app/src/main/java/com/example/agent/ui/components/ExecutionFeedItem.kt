@@ -983,24 +983,27 @@ fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
       continue
     }
 
-    // 2. Display Math Block: $$ ... $$
-    if (trimmed.startsWith("$$")) {
+    // 2. Display Math Block: $$ ... $$ or \[ ... \]
+    if (trimmed.startsWith("$$") || trimmed.startsWith("\\[")) {
+      val isBracket = trimmed.startsWith("\\[")
+      val delimiter = if (isBracket) "\\]" else "$$"
+      val prefix = if (isBracket) "\\[" else "$$"
       val mathLines = mutableListOf<String>()
-      val remainder = trimmed.removePrefix("$$").trim()
-      if (remainder.endsWith("$$") && remainder.length > 2) {
+      val remainder = trimmed.removePrefix(prefix).trim()
+      if (remainder.endsWith(delimiter) && remainder.length > 2) {
         // Single-line display math
-        blocks.add(MarkdownBlock.MathBlock(formula = remainder.removeSuffix("$$").trim()))
+        blocks.add(MarkdownBlock.MathBlock(formula = remainder.removeSuffix(delimiter).trim()))
         i++
         continue
       }
       if (remainder.isNotEmpty()) mathLines.add(remainder)
       i++
-      while (i < lines.size && !lines[i].trim().endsWith("$$")) {
+      while (i < lines.size && !lines[i].trim().endsWith(delimiter)) {
         mathLines.add(lines[i].trim())
         i++
       }
       if (i < lines.size) {
-        val lastLine = lines[i].trim().removeSuffix("$$").trim()
+        val lastLine = lines[i].trim().removeSuffix(delimiter).trim()
         if (lastLine.isNotEmpty()) mathLines.add(lastLine)
         i++
       }
@@ -1008,23 +1011,23 @@ fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
       continue
     }
 
-    // 3. Markdown Table: consecutive lines starting with '|'
-    if (trimmed.startsWith("|") && trimmed.count { it == '|' } >= 2) {
+    // 3. Markdown Table: lines containing pipes '|' with separator row
+    if (trimmed.contains("|") && (trimmed.startsWith("|") || (i + 1 < lines.size && lines[i + 1].trim().contains("---")))) {
       val tableLines = mutableListOf<String>()
-      while (i < lines.size && lines[i].trim().startsWith("|") && lines[i].trim().count { it == '|' } >= 2) {
-        tableLines.add(lines[i].trim())
-        i++
+      var peekIdx = i
+      while (peekIdx < lines.size && lines[peekIdx].trim().contains("|")) {
+        tableLines.add(lines[peekIdx].trim())
+        peekIdx++
       }
-      if (tableLines.isNotEmpty()) {
+      if (tableLines.size >= 2) {
         fun parseTableRow(row: String): List<String> {
           val parts = row.split('|')
-          // Dropping the leading and trailing empty entries if bounded by pipes
           val start = if (parts.firstOrNull()?.isBlank() == true) 1 else 0
           val end = if (parts.lastOrNull()?.isBlank() == true) parts.size - 1 else parts.size
-          return if (start < end) parts.subList(start, end).map { it.trim() } else emptyList()
+          return if (start < end) parts.subList(start, end).map { it.trim() } else parts.map { it.trim() }
         }
 
-        // Filter out separator rows like |---|:---:|---|
+        // Filter out separator rows like |---|:---:|---| or --- | ---
         val isSeparator: (String) -> Boolean = { row ->
           val cleaned = row.replace("|", "").replace("-", "").replace(":", "").replace(" ", "")
           cleaned.isEmpty()
@@ -1035,6 +1038,7 @@ fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
           val headers = parseTableRow(nonSeparators.first())
           val dataRows = nonSeparators.drop(1).map { parseTableRow(it) }
           blocks.add(MarkdownBlock.Table(headers = headers, rows = dataRows))
+          i = peekIdx
           continue
         }
       }
@@ -1201,16 +1205,18 @@ fun parseInlineMarkdown(text: String): AnnotatedString {
         if (end != -1 && end > i + 1 && text[end - 1] != '\\') {
           val formula = text.substring(i + 1, end).trim()
           if (formula.isNotEmpty()) {
+            val formatted = formatMathExpression(formula)
             withStyle(
               SpanStyle(
                 fontFamily = JetBrainsMonoFontFamily,
                 color = Color(0xFF38BDF8),
-                background = Color(0xFF0F172A),
-                fontStyle = FontStyle.Italic,
-                fontSize = 11.5.sp
+                background = Color(0xFF0C1924),
+                fontStyle = FontStyle.Normal,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Medium
               )
             ) {
-              append(formula)
+              append(formatted)
             }
             i = end + 1
             continue
@@ -1419,14 +1425,20 @@ fun StreamingTextContent(
                   .background(AmoledActionPrimary.copy(alpha = 0.6f))
               )
               Spacer(modifier = Modifier.width(8.dp))
-              Text(
+              val uriHandler = LocalUriHandler.current
+              ClickableText(
                 text = block.parsedText,
                 style = MaterialTheme.typography.bodySmall.copy(
                   fontStyle = FontStyle.Italic,
                   color = AmoledTextSecondary,
                   lineHeight = 17.sp,
                   fontSize = 11.5.sp
-                )
+                ),
+                onClick = { offset ->
+                  block.parsedText.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { annotation ->
+                    try { uriHandler.openUri(annotation.item) } catch (_: Exception) {}
+                  }
+                }
               )
             }
           }
@@ -1594,7 +1606,8 @@ fun StreamingTextContent(
 /**
  * AMOLED Markdown Table Composable:
  * Renders structured markdown tables with AMOLED styling, bold header rows,
- * subtle cell borders, alternating row backgrounds, and horizontal scrolling.
+ * subtle cell borders, alternating row backgrounds, horizontal scrolling,
+ * and rich cell formatting with clickable URLs.
  */
 @Composable
 fun AmoledMarkdownTable(
@@ -1602,6 +1615,8 @@ fun AmoledMarkdownTable(
   rows: List<List<String>>
 ) {
   val horizontalScroll = rememberScrollState()
+  val uriHandler = LocalUriHandler.current
+
   Surface(
     shape = RoundedCornerShape(8.dp),
     color = Color(0xFF0C0C12),
@@ -1623,7 +1638,7 @@ fun AmoledMarkdownTable(
             headers.forEach { header ->
               Box(
                 modifier = Modifier
-                  .widthIn(min = 90.dp, max = 200.dp)
+                  .widthIn(min = 90.dp, max = 220.dp)
                   .padding(horizontal = 6.dp)
               ) {
                 Text(
@@ -1654,14 +1669,23 @@ fun AmoledMarkdownTable(
             row.forEach { cell ->
               Box(
                 modifier = Modifier
-                  .widthIn(min = 90.dp, max = 200.dp)
+                  .widthIn(min = 90.dp, max = 220.dp)
                   .padding(horizontal = 6.dp)
               ) {
-                Text(
-                  text = cell,
-                  fontFamily = InterFontFamily,
-                  fontSize = 11.sp,
-                  color = Color(0xFFE2E8F0)
+                val parsedCell = remember(cell) { parseInlineMarkdown(cell) }
+                ClickableText(
+                  text = parsedCell,
+                  style = MaterialTheme.typography.bodySmall.copy(
+                    fontFamily = InterFontFamily,
+                    fontSize = 11.sp,
+                    color = Color(0xFFE2E8F0),
+                    lineHeight = 16.sp
+                  ),
+                  onClick = { offset ->
+                    parsedCell.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { annotation ->
+                      try { uriHandler.openUri(annotation.item) } catch (_: Exception) {}
+                    }
+                  }
                 )
               }
             }
@@ -1676,6 +1700,101 @@ fun AmoledMarkdownTable(
 }
 
 /**
+ * Transforms LaTeX math markup into clean, readable mathematical symbols and Unicode representations.
+ */
+fun formatMathExpression(raw: String): String {
+  var s = raw.trim()
+  s = s.replace(Regex("""\\left\(""", RegexOption.IGNORE_CASE), "(")
+       .replace(Regex("""\\right\)""", RegexOption.IGNORE_CASE), ")")
+       .replace(Regex("""\\left\[""", RegexOption.IGNORE_CASE), "[")
+       .replace(Regex("""\\right\]""", RegexOption.IGNORE_CASE), "]")
+       .replace(Regex("""\\left\{""", RegexOption.IGNORE_CASE), "{")
+       .replace(Regex("""\\right\}""", RegexOption.IGNORE_CASE), "}")
+       .replace(Regex("""\\text\{([^}]*)\}"""), "$1")
+       .replace(Regex("""\\mathbf\{([^}]*)\}"""), "$1")
+       .replace(Regex("""\\mathit\{([^}]*)\}"""), "$1")
+       .replace(Regex("""\\mathrm\{([^}]*)\}"""), "$1")
+
+  // Fractions & Roots
+  s = s.replace(Regex("""\\frac\{([^}]*)\}\{([^}]*)\}"""), "($1)/($2)")
+  s = s.replace(Regex("""\\sqrt\[([^\]]*)\]\{([^}]*)\}"""), "^$1√($2)")
+       .replace(Regex("""\\sqrt\{([^}]*)\}"""), "√($1)")
+
+  // Operators & Logic
+  s = s.replace("\\times", "×")
+       .replace("\\cdot", "·")
+       .replace("\\div", "÷")
+       .replace("\\pm", "±")
+       .replace("\\mp", "∓")
+       .replace("\\approx", "≈")
+       .replace("\\neq", "≠")
+       .replace("\\ne", "≠")
+       .replace("\\leq", "≤")
+       .replace("\\le", "≤")
+       .replace("\\geq", "≥")
+       .replace("\\ge", "≥")
+       .replace("\\infty", "∞")
+       .replace("\\sum", "∑")
+       .replace("\\prod", "∏")
+       .replace("\\int", "∫")
+       .replace("\\partial", "∂")
+       .replace("\\nabla", "∇")
+       .replace("\\in", "∈")
+       .replace("\\notin", "∉")
+       .replace("\\subset", "⊂")
+       .replace("\\subseteq", "⊆")
+       .replace("\\cup", "∪")
+       .replace("\\cap", "∩")
+       .replace("\\to", "→")
+       .replace("\\rightarrow", "→")
+       .replace("\\leftarrow", "←")
+       .replace("\\Rightarrow", "⇒")
+       .replace("\\forall", "∀")
+       .replace("\\exists", "∃")
+
+  // Greek Letters
+  s = s.replace("\\alpha", "α")
+       .replace("\\beta", "β")
+       .replace("\\gamma", "γ")
+       .replace("\\delta", "δ")
+       .replace("\\epsilon", "ε")
+       .replace("\\zeta", "ζ")
+       .replace("\\eta", "η")
+       .replace("\\theta", "θ")
+       .replace("\\iota", "ι")
+       .replace("\\kappa", "κ")
+       .replace("\\lambda", "λ")
+       .replace("\\mu", "μ")
+       .replace("\\nu", "ν")
+       .replace("\\xi", "ξ")
+       .replace("\\pi", "π")
+       .replace("\\rho", "ρ")
+       .replace("\\sigma", "σ")
+       .replace("\\tau", "τ")
+       .replace("\\phi", "ϕ")
+       .replace("\\chi", "χ")
+       .replace("\\psi", "ψ")
+       .replace("\\omega", "ω")
+       .replace("\\Delta", "Δ")
+       .replace("\\Theta", "Θ")
+       .replace("\\Lambda", "Λ")
+       .replace("\\Sigma", "Σ")
+       .replace("\\Omega", "Ω")
+
+  // Superscripts & Subscripts
+  s = s.replace("^0", "⁰").replace("^1", "¹").replace("^2", "²").replace("^3", "³")
+       .replace("^4", "⁴").replace("^5", "⁵").replace("^6", "⁶").replace("^7", "⁷")
+       .replace("^8", "⁸").replace("^9", "⁹").replace("^+", "⁺").replace("^-", "⁻")
+       .replace("^n", "ⁿ").replace("^x", "ˣ").replace("^y", "ʸ")
+
+  s = s.replace("_0", "₀").replace("_1", "₁").replace("_2", "₂").replace("_3", "₃")
+       .replace("_4", "₄").replace("_5", "₅").replace("_6", "₆").replace("_7", "₇")
+       .replace("_8", "₈").replace("_9", "₉").replace("_i", "ᵢ").replace("_n", "ₙ")
+
+  return s
+}
+
+/**
  * AMOLED Math Formula Card:
  * Renders mathematical expressions and equations in high-contrast cyan monospace with copy support.
  */
@@ -1684,6 +1803,8 @@ fun AmoledMathFormulaCard(
   formula: String
 ) {
   val horizontalScroll = rememberScrollState()
+  val formattedFormula = remember(formula) { formatMathExpression(formula) }
+
   Surface(
     shape = RoundedCornerShape(8.dp),
     color = Color(0xFF09121A),
@@ -1704,7 +1825,7 @@ fun AmoledMathFormulaCard(
           border = null
         ) {
           Text(
-            text = "MATH • FORMULA",
+            text = "MATH • EQUATION",
             fontFamily = JetBrainsMonoFontFamily,
             fontSize = 8.sp,
             fontWeight = FontWeight.Bold,
@@ -1713,7 +1834,7 @@ fun AmoledMathFormulaCard(
           )
         }
         FeedToolCardCopyButton(
-          textToCopy = formula,
+          textToCopy = formattedFormula,
           label = "COPY",
           testTag = "copy_math_formula"
         )
@@ -1721,7 +1842,7 @@ fun AmoledMathFormulaCard(
       Spacer(modifier = Modifier.height(6.dp))
       Box(modifier = Modifier.fillMaxWidth().horizontalScroll(horizontalScroll)) {
         Text(
-          text = formula,
+          text = formattedFormula,
           fontFamily = JetBrainsMonoFontFamily,
           fontSize = 12.5.sp,
           fontWeight = FontWeight.Medium,
