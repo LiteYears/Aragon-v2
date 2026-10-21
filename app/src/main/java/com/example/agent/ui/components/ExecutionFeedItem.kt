@@ -724,51 +724,62 @@ fun ToolCallBoxView(
 
 @Composable
 fun TaskObjectiveView(step: ExecutionStep) {
-  Box(
-    modifier = Modifier.fillMaxWidth(),
-    contentAlignment = Alignment.CenterEnd
+  val bubbleShape = RoundedCornerShape(
+    topStart = 20.dp,
+    topEnd = 20.dp,
+    bottomStart = 20.dp,
+    bottomEnd = 4.dp
+  )
+  val borderBrush = androidx.compose.ui.graphics.Brush.linearGradient(
+    colors = listOf(
+      Color(0xFF2E2E3A),
+      Color(0xFF1A1A22)
+    )
+  )
+
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .padding(top = 6.dp, bottom = 4.dp),
+    horizontalAlignment = Alignment.End
   ) {
     Surface(
-      shape = RoundedCornerShape(18.dp),
-      color = Color(0xFF09090D),
-      border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1A1A22)),
+      shape = bubbleShape,
+      color = Color(0xFF111116),
+      border = BorderStroke(0.8.dp, borderBrush),
       modifier = Modifier
-        .widthIn(max = 560.dp)
+        .widthIn(min = 64.dp, max = 340.dp)
         .testTag("task_objective_bubble")
     ) {
-      Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-          Text(
-            text = "YOU",
-            style = MaterialTheme.typography.labelSmall,
-            fontFamily = JetBrainsMonoFontFamily,
-            fontWeight = FontWeight.Bold,
-            fontSize = 9.sp,
-            color = AmoledTextMuted
-          )
-
-          FeedToolCardCopyButton(
-            textToCopy = step.content,
-            label = "COPY",
-            testTag = "copy_task_objective_${step.stepNumber}"
-          )
-        }
-
-        Spacer(modifier = Modifier.height(4.dp))
-
+      Column(
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.Start
+      ) {
         Text(
           text = step.content,
           style = MaterialTheme.typography.bodyMedium,
           fontFamily = InterFontFamily,
-          color = AmoledTextPrimary,
-          fontSize = 14.sp,
-          lineHeight = 20.sp
+          fontWeight = FontWeight.Normal,
+          color = Color(0xFFF4F4F6),
+          fontSize = 14.5.sp,
+          lineHeight = 21.sp,
+          letterSpacing = 0.1.sp
         )
       }
+    }
+
+    Spacer(modifier = Modifier.height(5.dp))
+
+    Row(
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+      modifier = Modifier.padding(end = 2.dp)
+    ) {
+      FeedToolCardCopyButton(
+        textToCopy = step.content,
+        label = "COPY",
+        testTag = "copy_task_objective_${step.stepNumber}"
+      )
     }
   }
 }
