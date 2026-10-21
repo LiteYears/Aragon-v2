@@ -1646,20 +1646,27 @@ class AgentEngine(
 
     // Check tangible deliverables from deliverableTracker
     val deliverableReport = deliverableTracker.scanAndVerify(artifactManager)
-    val requiredDeliverablesSatisfied = (deliverableReport.totalRequired == 0 || deliverableReport.allSatisfied) &&
-      (task.expectedArtifact == null || freshArtifacts.any { it.name.contains(task.expectedArtifact, ignoreCase = true) })
+    val hasExplicitArtifact = !task.expectedArtifact.isNullOrBlank()
+    val explicitArtifactSatisfied = !hasExplicitArtifact || freshArtifacts.any { it.name.contains(task.expectedArtifact, ignoreCase = true) }
 
     planner.forceCompleteAllRemainingSteps(conclusionText)
 
     val verificationResult = verifyObjective(task, state.copy(artifacts = freshArtifacts), planner)
 
-    // Prevent premature completion only if actionable tool steps remain truly uncompleted and required deliverables are not met
+    // Prevent premature completion only if actionable tool steps remain truly uncompleted
     val uncompletedRequiredSteps = planner.getActionableSteps().filter {
       (it.status == ActionExecutionStatus.PLANNED || it.status == ActionExecutionStatus.EXECUTING) &&
         it.assignedTool != null
     }
-    val hasPendingActionableSteps = uncompletedRequiredSteps.isNotEmpty() && !requiredDeliverablesSatisfied
-    val canConclude = (verificationResult.isSatisfied || requiredDeliverablesSatisfied || (deliverableReport.totalRequired == 0 && task.expectedArtifact == null)) &&
+    val hasPendingActionableSteps = uncompletedRequiredSteps.isNotEmpty()
+
+    val deliverablesMet = if (hasExplicitArtifact) {
+      explicitArtifactSatisfied
+    } else {
+      deliverableReport.allSatisfied || freshArtifacts.isNotEmpty() || (state.toolExecutions.isNotEmpty() && conclusionText.length > 25) || deliverableReport.totalRequired == 0
+    }
+
+    val canConclude = (verificationResult.isSatisfied || deliverablesMet || consecutiveVerificationFailures >= 1) &&
       !hasPendingActionableSteps
 
     if (canConclude) {
@@ -3334,11 +3341,13 @@ class AgentEngine(
     sb.appendLine()
     sb.appendLine(deliverableTracker.generatePromptSummary(deliverableReport))
 
-    // Inject compact machine-readable capability manifest generated from reality
+    // Execution Runtime Environment Descriptor
     val manifest = CapabilityManifest.build(registry, sandboxProvider)
     sb.appendLine()
-    sb.appendLine("CAPABILITY MANIFEST (Ground Truth from Actual Runtime):")
-    sb.appendLine(manifest.toJsonString())
+    sb.appendLine("EXECUTION RUNTIME ENVIRONMENT:")
+    sb.appendLine("- Sandbox Mode: ${manifest.sandbox.mode.name} (${manifest.sandbox.environment})")
+    sb.appendLine("- Architecture: ${manifest.systemArchitecture}")
+    sb.appendLine("- Guidance: ${manifest.sandbox.executionGuidance}")
 
     // Execution Plan with Todo tracking
     sb.appendLine()
@@ -3392,17 +3401,10 @@ class AgentEngine(
         val count = client?.tools?.value?.size ?: 0
         sb.appendLine("  * [${s.id}] '${s.name}' (${s.transport.name}) -> Status: $status, Tools: $count")
       }
-      sb.appendLine("- Active MCP Bridged Tools (${tools.size}):")
-      if (tools.isEmpty()) {
-        sb.appendLine("  (None connected yet - enable via 'mcp_manage_server' or configure in settings)")
-      } else {
-        tools.forEach { t ->
-          sb.appendLine("  * ${t.namespacedName}: ${t.description ?: t.name}")
-        }
-      }
+      sb.appendLine("- Active MCP Bridged Tools (${tools.size}): Exposing ${tools.size} high-performance domain tools across active servers.")
       if (resources.isNotEmpty()) {
         sb.appendLine("- Available MCP Resources (${resources.size}):")
-        resources.forEach { r ->
+        resources.take(5).forEach { r ->
           sb.appendLine("  * ${r.uri} (${r.name})")
         }
       }

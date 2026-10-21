@@ -327,9 +327,19 @@ class McpManager(
     registered.forEach { toolRegistry.unregister(it) }
     registered.clear()
 
-    // Register active tools
+    // Register active tools, skipping shadow tools that redundantly duplicate native filesystem tools
+    val duplicateNativeToolNames = setOf(
+      "filesystem__read_file",
+      "filesystem__write_file",
+      "filesystem__list_directory",
+      "filesystem__edit_file",
+      "filesystem__get_file_info"
+    )
     for (def in client.tools.value) {
       val bridgedTool = McpBridgedTool(client, def)
+      if (bridgedTool.name in duplicateNativeToolNames) {
+        continue
+      }
       toolRegistry.register(bridgedTool)
       registered.add(bridgedTool.name)
     }
