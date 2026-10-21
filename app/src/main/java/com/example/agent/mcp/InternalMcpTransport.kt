@@ -1422,10 +1422,19 @@ class InternalMcpTransport(
     val query = args.optString("query").trim()
     if (query.isBlank()) throw IllegalArgumentException("Missing required parameter 'query'")
     val maxResults = args.optInt("max_results", 5).coerceIn(1, 15)
-    val encoded = URLEncoder.encode(query, "UTF-8")
+    val terms = query.split(Regex("\\s+"))
+      .map { it.replace(Regex("[^a-zA-Z0-9_-]"), "") }
+      .filter { it.length >= 2 }
+      .take(5)
+    val searchExpr = if (terms.isNotEmpty()) {
+      terms.joinToString("+AND+") { "all:${URLEncoder.encode(it, "UTF-8")}" }
+    } else {
+      "all:${URLEncoder.encode(query, "UTF-8")}"
+    }
 
     val req = Request.Builder()
-      .url("http://export.arxiv.org/api/query?search_query=all:$encoded&start=0&max_results=$maxResults")
+      .url("https://export.arxiv.org/api/query?search_query=$searchExpr&start=0&max_results=$maxResults")
+      .header("User-Agent", "Aragon-Agent/2.0")
       .get()
       .build()
 
@@ -1846,10 +1855,12 @@ class InternalMcpTransport(
 
       "list_directory" -> {
         val relPath = args.optString("path", "").trim()
-        val target = if (relPath.isBlank()) workspaceDir else File(workspaceDir, relPath)
+        val target = if (relPath.isBlank() || relPath == "." || relPath == "/") workspaceDir else File(workspaceDir, relPath.removePrefix("/"))
         val files = target.listFiles().orEmpty()
         val arr = JSONArray()
         for (f in files) {
+          val rel = try { f.relativeTo(workspaceDir).path.replace('\\', '/') } catch (_: Exception) { f.name }
+          if (com.example.agent.core.DeliverableTracker.isInternalWorkspacePath(rel, f.name.lowercase())) continue
           arr.put(JSONObject().apply {
             put("name", f.name)
             put("isDirectory", f.isDirectory)

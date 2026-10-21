@@ -243,15 +243,144 @@ object WebHtmlParser {
  */
 object WebSearchEngine {
   private val httpClient = OkHttpClient.Builder()
-    .connectTimeout(15, TimeUnit.SECONDS)
-    .readTimeout(20, TimeUnit.SECONDS)
+    .connectTimeout(12, TimeUnit.SECONDS)
+    .readTimeout(15, TimeUnit.SECONDS)
     .followRedirects(true)
     .build()
 
   fun search(query: String, maxCount: Int = 5): List<Map<String, String>> {
-    val encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8.toString())
+    val cleanQuery = query.replace(Regex("site:\\S+"), "").trim().ifBlank { query.trim() }
+    val encodedQuery = URLEncoder.encode(cleanQuery, StandardCharsets.UTF_8.toString())
+    val combinedResults = mutableListOf<Map<String, String>>()
+    val seenUrls = HashSet<String>()
 
-    // Tier 1: Wikipedia Knowledge API (instant, high accuracy, zero rate limits, full metadata)
+    fun addResult(title: String, url: String, source: String, snippet: String) {
+      if (title.isBlank() || url.isBlank() || !url.startsWith("http")) return
+      if (seenUrls.add(url) && combinedResults.size < maxCount) {
+        combinedResults.add(
+          mapOf(
+            "title" to WebHtmlParser.decodeEntities(title.trim()),
+            "url" to url.trim(),
+            "source" to source.trim(),
+            "snippet" to WebHtmlParser.decodeEntities(snippet.trim()).take(320)
+          )
+        )
+      }
+    }
+
+    // Tier 1: DuckDuckGo HTML Search (general web search)
+    try {
+      val ddgUrl = "https://html.duckduckgo.com/html/?q=${URLEncoder.encode(query, StandardCharsets.UTF_8.toString())}"
+      val ddgReq = Request.Builder()
+        .url(ddgUrl)
+        .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0")
+        .header("Accept", "text/html,application/xhtml+xml")
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .get()
+        .build()
+      val ddgHtml = httpClient.newCall(ddgReq).execute().use { resp ->
+        if (resp.isSuccessful) resp.body?.string().orEmpty() else ""
+      }
+      if (ddgHtml.isNotBlank() && !ddgHtml.contains("anomaly-modal")) {
+        val blockPattern = Pattern.compile(
+          "(?is)<a[^>]+class=[\"'][^\"']*result__a[^\"']*[\"'][^>]+href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>.*?(?:<a[^>]+class=[\"'][^\"']*result__snippet[^\"']*[\"'][^>]*>(.*?)</a>|<div[^>]+class=[\"'][^\"']*result__snippet[^\"']*[\"'][^>]*>(.*?)</div>)"
+        )
+        val matcher = blockPattern.matcher(ddgHtml)
+        while (matcher.find() && combinedResults.size < maxCount) {
+          val rawHref = matcher.group(1).orEmpty()
+          val rawTitle = matcher.group(2).orEmpty().replace(Regex("<[^>]+>"), "").trim()
+          val rawSnippet = (matcher.group(3) ?: matcher.group(4)).orEmpty().replace(Regex("<[^>]+>"), "").trim()
+          val resolvedUrl = if (rawHref.contains("uddg=")) {
+            try {
+              URLDecoder.decode(rawHref.substringAfter("uddg=").substringBefore("&"), "UTF-8")
+            } catch (_: Exception) { rawHref }
+          } else rawHref
+          if (resolvedUrl.startsWith("http") && !resolvedUrl.contains("duckduckgo.com/y.js")) {
+            val host = try { URI(resolvedUrl).host ?: "web" } catch (_: Exception) { "web" }
+            addResult(rawTitle, resolvedUrl, host, rawSnippet)
+          }
+        }
+      }
+      if (combinedResults.size >= maxCount) return combinedResults
+    } catch (_: Exception) {}
+
+    // Tier 2: HackerNews Algolia Search API (fast JSON, strong coverage for tech, AI, tools, E2B, dev tutorials)
+    try {
+      fun queryHn(qEncoded: String) {
+        val hnUrl = "https://hn.algolia.com/api/v1/search?query=$qEncoded&tags=story&hitsPerPage=$maxCount"
+        val hnReq = Request.Builder()
+          .url(hnUrl)
+          .header("User-Agent", "Aragon-Agent/2.0")
+          .get()
+          .build()
+        val hnJson = httpClient.newCall(hnReq).execute().use { resp ->
+          if (resp.isSuccessful) resp.body?.string().orEmpty() else ""
+        }
+        if (hnJson.isNotBlank()) {
+          val hits = JSONObject(hnJson).optJSONArray("hits")
+          if (hits != null) {
+            for (i in 0 until hits.length()) {
+              if (combinedResults.size >= maxCount) break
+              val item = hits.getJSONObject(i)
+              val title = item.optString("title", "")
+              val objectId = item.optString("objectID", "")
+              val url = item.optString("url", "").ifBlank { "https://news.ycombinator.com/item?id=$objectId" }
+              val author = item.optString("author", "")
+              val points = item.optInt("points", 0)
+              val storyText = item.optString("story_text", "").replace(Regex("<[^>]+>"), " ").trim()
+              val snippet = if (storyText.isNotBlank()) storyText else "HackerNews discussion ($points points, by $author) — $title"
+              val host = try { URI(url).host ?: "news.ycombinator.com" } catch (_: Exception) { "news.ycombinator.com" }
+              addResult(title, url, host, snippet)
+            }
+          }
+        }
+      }
+      queryHn(encodedQuery)
+      if (combinedResults.isEmpty()) {
+        val relaxed = cleanQuery.split(Regex("\\s+")).filter { it.length >= 2 }.take(3).joinToString(" ")
+        if (relaxed.isNotBlank() && !relaxed.equals(cleanQuery, ignoreCase = true)) {
+          queryHn(URLEncoder.encode(relaxed, StandardCharsets.UTF_8.toString()))
+        }
+      }
+      if (combinedResults.size >= maxCount) return combinedResults
+    } catch (_: Exception) {}
+
+    // Tier 3: GitHub Repositories Search API (excellent for libraries, SDKs, code tutorials, E2B, Python tools)
+    try {
+      val ghUrl = "https://api.github.com/search/repositories?q=$encodedQuery&sort=stars&order=desc&per_page=$maxCount"
+      val ghReq = Request.Builder()
+        .url(ghUrl)
+        .header("User-Agent", "Aragon-Agent/2.0")
+        .header("Accept", "application/vnd.github+json")
+        .get()
+        .build()
+      val ghJson = httpClient.newCall(ghReq).execute().use { resp ->
+        if (resp.isSuccessful) resp.body?.string().orEmpty() else ""
+      }
+      if (ghJson.isNotBlank()) {
+        val items = JSONObject(ghJson).optJSONArray("items")
+        if (items != null) {
+          for (i in 0 until items.length()) {
+            if (combinedResults.size >= maxCount) break
+            val repo = items.getJSONObject(i)
+            val fullName = repo.optString("full_name", "")
+            val htmlUrl = repo.optString("html_url", "")
+            val desc = repo.optString("description", "")
+            val stars = repo.optInt("stargazers_count", 0)
+            val lang = repo.optString("language", "")
+            addResult(
+              title = "$fullName (${if (lang.isNotBlank()) "$lang, " else ""}★$stars)",
+              url = htmlUrl,
+              source = "github.com",
+              snippet = desc.ifBlank { "GitHub repository $fullName" }
+            )
+          }
+        }
+      }
+      if (combinedResults.size >= maxCount) return combinedResults
+    } catch (_: Exception) {}
+
+    // Tier 4: Wikipedia Knowledge API (instant, high accuracy, zero rate limits, full metadata)
     try {
       val wikiUrl = "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=$encodedQuery&utf8=&format=json"
       val wikiReq = Request.Builder()
@@ -266,69 +395,57 @@ object WebSearchEngine {
         val wikiObj = JSONObject(wikiJsonStr)
         val searchArr = wikiObj.optJSONObject("query")?.optJSONArray("search")
         if (searchArr != null && searchArr.length() > 0) {
-          val wikiResults = mutableListOf<Map<String, String>>()
           for (i in 0 until searchArr.length()) {
-            if (wikiResults.size >= maxCount) break
+            if (combinedResults.size >= maxCount) break
             val item = searchArr.getJSONObject(i)
             val title = item.optString("title", "")
             val snippet = item.optString("snippet", "").replace(Regex("<[^>]+>"), "")
             val articleUrl = "https://en.wikipedia.org/wiki/" + URLEncoder.encode(title.replace(" ", "_"), "UTF-8")
-            wikiResults.add(
-              mapOf(
-                "title" to title,
-                "url" to articleUrl,
-                "source" to "wikipedia.org",
-                "snippet" to WebHtmlParser.decodeEntities(snippet)
-              )
-            )
+            addResult(title, articleUrl, "wikipedia.org", snippet)
           }
-          if (wikiResults.isNotEmpty()) return wikiResults
         }
       }
+      if (combinedResults.size >= maxCount) return combinedResults
     } catch (_: Exception) {}
 
-    // Tier 2: ArXiv Preprints & Technical Research Search
+    // Tier 5: ArXiv Preprints & Technical Research Search (with multi-term AND syntax)
     try {
-      val arxivUrl = "https://export.arxiv.org/api/query?search_query=all:$encodedQuery&max_results=$maxCount"
-      val arxivReq = Request.Builder()
-        .url(arxivUrl)
-        .header("User-Agent", "Aragon-Agent/2.0")
-        .get()
-        .build()
-      val arxivXml = httpClient.newCall(arxivReq).execute().use { resp ->
-        if (resp.isSuccessful) resp.body?.string().orEmpty() else ""
-      }
-      if (arxivXml.isNotBlank() && arxivXml.contains("<entry>")) {
-        val results = mutableListOf<Map<String, String>>()
-        val entryPattern = Pattern.compile("(?is)<entry>(.*?)</entry>")
-        val titlePattern = Pattern.compile("(?is)<title>(.*?)</title>")
-        val summaryPattern = Pattern.compile("(?is)<summary>(.*?)</summary>")
-        val idPattern = Pattern.compile("(?is)<id>(.*?)</id>")
-        val matcher = entryPattern.matcher(arxivXml)
-        while (matcher.find() && results.size < maxCount) {
-          val entryText = matcher.group(1) ?: continue
-          val tMatcher = titlePattern.matcher(entryText)
-          val sMatcher = summaryPattern.matcher(entryText)
-          val idMatcher = idPattern.matcher(entryText)
-          val title = if (tMatcher.find()) tMatcher.group(1)?.trim()?.replace("\n", " ") ?: "" else ""
-          val summary = if (sMatcher.find()) sMatcher.group(1)?.trim()?.replace("\n", " ") ?: "" else ""
-          val link = if (idMatcher.find()) idMatcher.group(1)?.trim() ?: "" else ""
-          if (title.isNotBlank() && link.isNotBlank()) {
-            results.add(
-              mapOf(
-                "title" to title,
-                "url" to link,
-                "source" to "arxiv.org",
-                "snippet" to summary.take(280)
-              )
-            )
+      val arxivTerms = cleanQuery.split(Regex("\\s+"))
+        .map { it.replace(Regex("[^a-zA-Z0-9_-]"), "") }
+        .filter { it.length >= 2 }
+        .take(5)
+      if (arxivTerms.isNotEmpty()) {
+        val arxivSearchExpr = arxivTerms.joinToString("+AND+") { "all:${URLEncoder.encode(it, "UTF-8")}" }
+        val arxivUrl = "https://export.arxiv.org/api/query?search_query=$arxivSearchExpr&max_results=$maxCount"
+        val arxivReq = Request.Builder()
+          .url(arxivUrl)
+          .header("User-Agent", "Aragon-Agent/2.0")
+          .get()
+          .build()
+        val arxivXml = httpClient.newCall(arxivReq).execute().use { resp ->
+          if (resp.isSuccessful) resp.body?.string().orEmpty() else ""
+        }
+        if (arxivXml.isNotBlank() && arxivXml.contains("<entry>")) {
+          val entryPattern = Pattern.compile("(?is)<entry>(.*?)</entry>")
+          val titlePattern = Pattern.compile("(?is)<title>(.*?)</title>")
+          val summaryPattern = Pattern.compile("(?is)<summary>(.*?)</summary>")
+          val idPattern = Pattern.compile("(?is)<id>(.*?)</id>")
+          val matcher = entryPattern.matcher(arxivXml)
+          while (matcher.find() && combinedResults.size < maxCount) {
+            val entryText = matcher.group(1) ?: continue
+            val tMatcher = titlePattern.matcher(entryText)
+            val sMatcher = summaryPattern.matcher(entryText)
+            val idMatcher = idPattern.matcher(entryText)
+            val title = if (tMatcher.find()) tMatcher.group(1)?.trim()?.replace(Regex("\\s+"), " ") ?: "" else ""
+            val summary = if (sMatcher.find()) sMatcher.group(1)?.trim()?.replace(Regex("\\s+"), " ") ?: "" else ""
+            val link = if (idMatcher.find()) idMatcher.group(1)?.trim() ?: "" else ""
+            addResult(title, link, "arxiv.org", summary)
           }
         }
-        if (results.isNotEmpty()) return results
       }
     } catch (_: Exception) {}
 
-    return emptyList()
+    return combinedResults
   }
 }
 

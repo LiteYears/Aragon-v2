@@ -81,26 +81,34 @@ class NimKeyHealthTracker {
     nowMs: Long = System.currentTimeMillis()
   ): Long = synchronized(lock) {
     val state = stateOf(apiKey)
-    state.lastFailureAtMs = nowMs
-    state.consecutiveFailures++
-    state.lastFailureKind = kind
     when (kind) {
       ProviderFailureKind.AUTH -> {
+        state.lastFailureAtMs = nowMs
+        state.consecutiveFailures++
+        state.lastFailureKind = kind
         state.quarantined = true
         state.cooldownUntilMs = Long.MAX_VALUE
       }
       ProviderFailureKind.RATE_LIMITED,
       ProviderFailureKind.QUOTA_EXHAUSTED -> {
+        state.lastFailureAtMs = nowMs
+        state.consecutiveFailures++
+        state.lastFailureKind = kind
         val base = retryAfterMs?.takeIf { it > 0L } ?: backoffMs(state.consecutiveFailures)
         state.cooldownUntilMs = nowMs + base.coerceIn(1_000L, MAX_COOLDOWN_MS)
       }
       ProviderFailureKind.TRANSIENT,
       ProviderFailureKind.NETWORK -> {
+        state.lastFailureAtMs = nowMs
+        state.consecutiveFailures++
+        state.lastFailureKind = kind
         if (state.consecutiveFailures >= 2) {
           state.cooldownUntilMs = nowMs + backoffMs(state.consecutiveFailures).coerceIn(1_000L, 30_000L)
         }
       }
-      else -> Unit
+      else -> {
+        // Model-specific or request payload errors do not penalize credential health
+      }
     }
     state.cooldownUntilMs
   }

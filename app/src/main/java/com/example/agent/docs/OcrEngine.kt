@@ -96,8 +96,11 @@ class NvidiaNimVisionOcrEngine(
 
   override suspend fun recognize(imageFile: File, hintArabic: Boolean): OcrResult = withContext(Dispatchers.IO) {
     val cfg = configSupplier() ?: throw DocumentException("NVIDIA NIM Vision configuration is not available")
-    val key = cfg.apiKey.trim().ifBlank { cfg.apiKeys.firstOrNull()?.trim() ?: "" }
-    if (key.isBlank() || key == "MY_NVIDIA_API_KEY") {
+    val candidateKeys = (cfg.apiKeys + listOf(cfg.apiKey))
+      .map { it.trim() }
+      .filter { it.isNotBlank() && it != "MY_NVIDIA_API_KEY" }
+      .distinct()
+    if (candidateKeys.isEmpty()) {
       throw DocumentException("NVIDIA NIM Vision API key is not configured")
     }
 
@@ -116,48 +119,78 @@ class NvidiaNimVisionOcrEngine(
       "  \"tables\": [{\"header\": [\"Col 1\", \"Col 2\"], \"rows\": [[\"val 1\", \"val 2\"]], \"confidence\": \"HIGH\"}]\n" +
       "}"
 
-    val reqJson = JSONObject().apply {
-      put("model", cfg.modelName)
-      val msgs = JSONArray()
-      val userMsg = JSONObject()
-      userMsg.put("role", "user")
-      val parts = JSONArray()
-      parts.put(JSONObject().apply {
-        put("type", "text")
-        put("text", prompt)
-      })
-      parts.put(JSONObject().apply {
-        put("type", "image_url")
-        put("image_url", JSONObject().apply {
-          put("url", "data:image/jpeg;base64,$base64")
-        })
-      })
-      userMsg.put("content", parts)
-      msgs.put(userMsg)
-      put("messages", msgs)
-      put("temperature", 0.0)
-      put("max_tokens", 4096)
-    }
+    val candidateModels = listOf(
+      cfg.modelName.ifBlank { "meta/llama-3.2-11b-vision-instruct" },
+      "meta/llama-3.2-11b-vision-instruct",
+      "meta/llama-3.2-90b-vision-instruct"
+    ).distinct()
 
     val endpoint = "${cfg.baseUrl.trimEnd('/')}/chat/completions"
-    val url = java.net.URL(endpoint)
-    val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
-      requestMethod = "POST"
-      connectTimeout = 35000
-      readTimeout = 65000
-      doOutput = true
-      setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-      setRequestProperty("Authorization", "Bearer $key")
+    var lastError: Exception? = null
+
+    for (model in candidateModels) {
+      val reqJson = JSONObject().apply {
+        put("model", model)
+        val msgs = JSONArray()
+        val userMsg = JSONObject()
+        userMsg.put("role", "user")
+        val parts = JSONArray()
+        parts.put(JSONObject().apply {
+          put("type", "text")
+          put("text", prompt)
+        })
+        parts.put(JSONObject().apply {
+          put("type", "image_url")
+          put("image_url", JSONObject().apply {
+            put("url", "data:image/jpeg;base64,$base64")
+          })
+        })
+        userMsg.put("content", parts)
+        msgs.put(userMsg)
+        put("messages", msgs)
+        put("temperature", 0.0)
+        put("max_tokens", 4096)
+      }
+
+      for (key in candidateKeys) {
+        try {
+          val url = java.net.URL(endpoint)
+          val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 35000
+            readTimeout = 65000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+            setRequestProperty("Authorization", "Bearer $key")
+          }
+          conn.outputStream.use { it.write(reqJson.toString().toByteArray(Charsets.UTF_8)) }
+          val code = conn.responseCode
+          if (code in 200..299) {
+            val resText = conn.inputStream.bufferedReader().use { it.readText() }
+            val unwrappedContent = try {
+              val root = JSONObject(resText)
+              val choices = root.optJSONArray("choices")
+              if (choices != null && choices.length() > 0) {
+                choices.optJSONObject(0)?.optJSONObject("message")?.optString("content")?.takeIf { it.isNotBlank() } ?: resText
+              } else {
+                resText
+              }
+            } catch (_: Exception) {
+              resText
+            }
+            return@withContext parseModelContent(unwrappedContent, "nvidia-nim-vision ($model)")
+          } else {
+            val err = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: "HTTP $code"
+            lastError = DocumentException("NVIDIA NIM Vision HTTP $code ($model): ${err.take(200)}")
+            // If model is rejected/not found (400/404/422), break inner key loop and try next vision model
+            if (code == 400 || code == 404 || code == 422) break
+          }
+        } catch (e: Exception) {
+          lastError = e
+        }
+      }
     }
-    conn.outputStream.use { it.write(reqJson.toString().toByteArray(Charsets.UTF_8)) }
-    val code = conn.responseCode
-    if (code in 200..299) {
-      val resText = conn.inputStream.bufferedReader().use { it.readText() }
-      return@withContext parseModelContent(resText, "nvidia-nim-vision (${cfg.modelName})")
-    } else {
-      val err = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: "HTTP $code"
-      throw DocumentException("NVIDIA NIM Vision HTTP $code (${cfg.modelName}): ${err.take(200)}")
-    }
+    throw lastError ?: DocumentException("NVIDIA NIM Vision OCR failed")
   }
 }
 

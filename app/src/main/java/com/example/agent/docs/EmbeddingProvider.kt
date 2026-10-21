@@ -70,10 +70,10 @@ class NimEmbeddingProvider(
     get() = EmbeddingProfile("nim", model, 0)
 
   override suspend fun embedPassages(texts: List<String>): List<FloatArray> =
-    embed(texts, inputType = null)
+    embed(texts, inputType = "passage")
 
   override suspend fun embedQuery(text: String): FloatArray =
-    embed(listOf(text), inputType = null).firstOrNull()
+    embed(listOf(text), inputType = "query").firstOrNull()
       ?: throw DocumentException("Embedding provider returned no vector")
 
   private suspend fun embed(texts: List<String>, inputType: String?): List<FloatArray> = withContext(Dispatchers.IO) {
@@ -97,7 +97,7 @@ class NimEmbeddingProvider(
     for (attempt in keys.indices) {
       val key = keys[(keyCursor + attempt) % keys.size]
       try {
-        return request(key, batch, inputType)
+        return requestWithModelFallback(key, batch, inputType)
       } catch (e: EmbeddingHttpException) {
         lastError = e
         if (e.status !in listOf(401, 403, 429, 500, 502, 503)) throw e
@@ -108,10 +108,25 @@ class NimEmbeddingProvider(
     throw DocumentException("Embedding request failed: ${lastError?.message ?: "unknown error"}")
   }
 
-  private fun request(key: String, batch: List<String>, inputType: String?): List<FloatArray> {
+  private fun requestWithModelFallback(key: String, batch: List<String>, inputType: String?): List<FloatArray> {
+    val requiresInputType = model.contains("nv-embed", ignoreCase = true) || model.contains("nemotron", ignoreCase = true)
+    return try {
+      request(key, batch, if (requiresInputType) inputType else null, model)
+    } catch (e: EmbeddingHttpException) {
+      if ((e.status == 400 || e.status == 422) && !requiresInputType && inputType != null) {
+        request(key, batch, inputType, model)
+      } else if (e.status == 404 && model == DEFAULT_MODEL) {
+        request(key, batch, inputType ?: "passage", FALLBACK_MODEL)
+      } else {
+        throw e
+      }
+    }
+  }
+
+  private fun request(key: String, batch: List<String>, inputType: String?, modelToUse: String = model): List<FloatArray> {
     val payload = JSONObject()
     payload.put("input", JSONArray(batch))
-    payload.put("model", model)
+    payload.put("model", modelToUse)
     payload.put("encoding_format", "float")
     payload.put("truncate", "END")
     if (inputType != null) payload.put("input_type", inputType)
@@ -145,6 +160,7 @@ class NimEmbeddingProvider(
 
   companion object {
     const val DEFAULT_MODEL = "baai/bge-m3"
+    const val FALLBACK_MODEL = "nvidia/nv-embedqa-e5-v5"
 
     private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 

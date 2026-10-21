@@ -80,7 +80,10 @@ class TaskPlanner(private val goal: String) {
   fun getNoProgressCount(): Int = noProgressTurnCount
   fun isStagnant(limit: Int = 3): Boolean = noProgressTurnCount >= limit
   fun getReplanReason(): String? = replanReason
-  fun clearReplanReason() { replanReason = null }
+  fun clearReplanReason() {
+    replanReason = null
+    noProgressTurnCount = 0
+  }
 
   fun acceptModelPlan(planText: String?) {
     val proposed = parsePlan(planText)

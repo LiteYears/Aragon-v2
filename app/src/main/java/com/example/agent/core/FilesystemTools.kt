@@ -232,6 +232,13 @@ class ListDirectoryTool(
         required = false,
         defaultValue = 100,
         aliases = listOf("limit", "max_entries")
+      ),
+      ToolParameter(
+        name = "pattern",
+        type = "string",
+        description = "Optional glob or substring pattern to filter file/directory names (e.g. '*.py', '*.md', 'report').",
+        required = false,
+        aliases = listOf("query", "glob", "filter", "name")
       )
     )
   )
@@ -245,7 +252,8 @@ class ListDirectoryTool(
     withContext(Dispatchers.IO) {
       val startTime = System.currentTimeMillis()
       val pathStr = arguments["path"]?.toString()?.ifBlank { "." } ?: "."
-      val recursive = arguments["recursive"] as? Boolean ?: false
+      val patternStr = (arguments["pattern"] ?: arguments["query"] ?: arguments["glob"] ?: arguments["filter"])?.toString()?.trim().orEmpty()
+      val recursive = (arguments["recursive"] as? Boolean) ?: patternStr.isNotEmpty()
       val maxEntries = ((arguments["maxEntries"] as? Number)?.toInt() ?: 100).coerceIn(1, 500)
 
       val provider = sandboxProviderSupplier?.invoke() ?: sandboxProvider
@@ -267,10 +275,28 @@ class ListDirectoryTool(
           )
         }
         val entries = mutableListOf<JSONObject>()
-        val files = if (recursive) targetDir.walkTopDown().filter { it != targetDir }.take(maxEntries).toList()
-                    else (targetDir.listFiles() ?: emptyArray()).take(maxEntries).toList()
-        for (f in files) {
+        val rawFiles = if (recursive) {
+          targetDir.walkTopDown()
+            .onEnter { d ->
+              val dLower = d.name.lowercase()
+              (!dLower.startsWith(".") || dLower == ".env") && dLower !in DeliverableTracker.INTERNAL_WORKSPACE_DIRS
+            }
+            .filter { it != targetDir }
+            .toList()
+        } else {
+          (targetDir.listFiles() ?: emptyArray()).toList()
+        }
+        val globRegex = if (patternStr.isNotBlank()) {
+          val escaped = patternStr.replace(".", "\\.").replace("*", ".*").replace("?", ".")
+          Regex("(?i)^$escaped$")
+        } else null
+        for (f in rawFiles) {
           val rel = PathSecurity.getRelativePath(targetDir, f)
+          val fullRel = PathSecurity.getRelativePath(workspaceDir, f)
+          if (DeliverableTracker.isInternalWorkspacePath(fullRel, f.name.lowercase())) continue
+          if (globRegex != null && !globRegex.matches(f.name) && !f.name.contains(patternStr, ignoreCase = true) && !rel.contains(patternStr, ignoreCase = true)) {
+            continue
+          }
           entries.add(
             JSONObject().apply {
               put("name", rel)
@@ -279,6 +305,7 @@ class ListDirectoryTool(
               put("sizeBytes", if (f.isFile) f.length() else 0L)
             }
           )
+          if (entries.size >= maxEntries) break
         }
         val outJson = JSONObject().apply {
           put("exists", true)
@@ -301,8 +328,9 @@ class ListDirectoryTool(
       }
       val sessionId = sessionIdProvider()
       val cleanRel = PathSecurity.getRelativePath(workspaceDir, resolvedLocal)
+      val safePattern = patternStr.replace("'", "").replace("\"", "")
       val cmd = """
-python3 -c "import os, json, sys
+python3 -c "import os, json, sys, fnmatch
 
 p = '$cleanRel'
 target = '/home/user' if (p == '.' or not p) else (p if os.path.isabs(p) else os.path.join('/home/user', p))
@@ -312,25 +340,53 @@ if not os.path.exists(target):
 
 recursive = ${if (recursive) "True" else "False"}
 max_entries = $maxEntries
+pattern = '$safePattern'
 entries = []
 
-ignored = {'venv', '.venv', 'node_modules', '__pycache__', '.git', 'workspace'}
+ignored_dirs = {'venv', '.venv', 'node_modules', '__pycache__', '.git', 'workspace', '.sessions', '.observations', '.mcp_data', '.artifacts', 'notes', '.cache', '.local', '.config', '.npm', '.ipython', '.agent'}
+ignored_files = {'.bash_logout', '.bashrc', '.profile', '.e2b_ready', 'data.db', 'data.db-journal', 'data.db-wal', 'data.db-shm'}
+
+def is_ignored(name, is_dir):
+    if is_dir:
+        return name in ignored_dirs or (name.startswith('.') and name != '.env')
+    return name in ignored_files or (name.startswith('.') and name != '.env') or (name.startswith('task_') and name.endswith('.json'))
+
+def matches_pattern(name, rel_path):
+    if not pattern:
+        return True
+    if fnmatch.fnmatch(name.lower(), pattern.lower()) or fnmatch.fnmatch(rel_path.lower(), pattern.lower()):
+        return True
+    return pattern.lower() in name.lower() or pattern.lower() in rel_path.lower()
 
 if not recursive:
-    for f in sorted(os.listdir(target))[:max_entries]:
+    for f in sorted(os.listdir(target)):
         full = os.path.join(target, f)
         is_link = os.path.islink(full)
         is_dir = os.path.isdir(full) and not is_link
+        if is_ignored(f, is_dir):
+            continue
+        if not matches_pattern(f, f):
+            continue
         size = os.path.getsize(full) if (os.path.isfile(full) and not is_link) else 0
         entries.append({'name': f, 'isDirectory': is_dir, 'isSymlink': is_link, 'sizeBytes': size})
+        if len(entries) >= max_entries:
+            break
 else:
     for root, dirs, files in os.walk(target, followlinks=False):
-        dirs[:] = [d for d in dirs if d not in ignored and not d.startswith('.') and not os.path.islink(os.path.join(root, d))]
-        for f in files:
-            if f.startswith('.'): continue
+        dirs[:] = sorted([d for d in dirs if not is_ignored(d, True) and not os.path.islink(os.path.join(root, d))])
+        for d in dirs:
+            full_d = os.path.join(root, d)
+            rel_d = os.path.relpath(full_d, target)
+            if matches_pattern(d, rel_d):
+                entries.append({'name': rel_d, 'isDirectory': True, 'isSymlink': False, 'sizeBytes': 0})
+                if len(entries) >= max_entries: break
+        if len(entries) >= max_entries: break
+        for f in sorted(files):
+            if is_ignored(f, False): continue
             full = os.path.join(root, f)
             is_link = os.path.islink(full)
             rel = os.path.relpath(full, target)
+            if not matches_pattern(f, rel): continue
             size = os.path.getsize(full) if (os.path.isfile(full) and not is_link) else 0
             entries.append({'name': rel, 'isDirectory': False, 'isSymlink': is_link, 'sizeBytes': size})
             if len(entries) >= max_entries: break
@@ -561,6 +617,33 @@ class ReadFileTool(
             exitCode = 0,
             artifacts = artifactManager?.getArtifacts() ?: emptyList(),
             outcome = outcome
+          )
+        }
+
+        if (exitCode == 2 && resolved.exists() && resolved.isFile && !DeliverableTracker.isInternalWorkspacePath(cleanPath, resolved.name.lowercase())) {
+          try {
+            provider.pushFileToRemote(sessionId, cleanPath, resolved)
+          } catch (_: Exception) {}
+          val allLines = resolved.readLines(StandardCharsets.UTF_8)
+          val startIdx = (offset - 1).coerceAtLeast(0)
+          val count = limit ?: 500
+          val selectedLines = if (startIdx < allLines.size) {
+            allLines.subList(startIdx, (startIdx + count).coerceAtMost(allLines.size))
+          } else emptyList()
+          val formatted = selectedLines.mapIndexed { idx, line -> "${startIdx + idx + 1}: $line" }.joinToString("\n")
+          val content = if (allLines.isEmpty()) "(file exists but is empty, 0 bytes)" else formatted
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.SUCCEEDED,
+            arguments = arguments,
+            output = content,
+            error = null,
+            duration = duration,
+            stdout = content,
+            exitCode = 0,
+            artifacts = artifactManager?.getArtifacts() ?: emptyList(),
+            outcome = if (allLines.isEmpty()) ToolExecutionOutcome.SUCCESS_EMPTY else ToolExecutionOutcome.SUCCESS_WITH_RESULTS
           )
         }
 
@@ -1794,7 +1877,9 @@ class DiffFilesTool(
  */
 class DeleteFileTool(
   val workspaceDir: File,
-  private val artifactManager: ArtifactManager
+  private val artifactManager: ArtifactManager,
+  var sandboxProvider: SandboxProvider? = null,
+  var sessionIdProvider: () -> String = { "default" }
 ) : Tool {
   override val name: String = "delete_file"
   override val description: String = "Delete a file from the sandbox workspace."
@@ -1879,6 +1964,13 @@ class DeleteFileTool(
         val deleted = file.delete()
         if (deleted) {
           artifactManager.unregisterArtifact(pathStr)
+          val e2b = sandboxProvider as? E2BSandboxProvider
+          val sid = sessionIdProvider()
+          if (e2b != null && e2b.hasActiveRunningSession(sid)) {
+            try {
+              e2b.deletePathInRemote(sid, pathStr)
+            } catch (_: Exception) {}
+          }
           val summary = "Successfully deleted '$pathStr' from workspace."
           ToolResult(
             callId = callId,
@@ -1939,7 +2031,9 @@ class DeleteFileTool(
  */
 class MoveFileTool(
   val workspaceDir: File,
-  private val artifactManager: ArtifactManager
+  private val artifactManager: ArtifactManager,
+  var sandboxProvider: SandboxProvider? = null,
+  var sessionIdProvider: () -> String = { "default" }
 ) : Tool {
   override val name: String = "move_file"
   override val description: String = "Move or rename a file or directory within the sandbox workspace."
@@ -2045,6 +2139,17 @@ class MoveFileTool(
 
         artifactManager.unregisterArtifact(src)
         artifactManager.registerArtifact(dst, createdByCallId = callId)
+
+        val e2b = sandboxProvider as? E2BSandboxProvider
+        val sid = sessionIdProvider()
+        if (e2b != null && e2b.hasActiveRunningSession(sid)) {
+          try {
+            e2b.deletePathInRemote(sid, src)
+            if (dstFile.isFile) {
+              e2b.pushFileToRemote(sid, dst, dstFile)
+            }
+          } catch (_: Exception) {}
+        }
 
         val summary = "Successfully moved '$src' to '$dst' in workspace."
         ToolResult(
@@ -2492,28 +2597,36 @@ class FileExistsTool(
 
       try {
         val file = PathSecurity.resolveSafe(workspaceDir, pathStr)
+        var remoteOnlyExists = false
         if (!file.exists()) {
           val provider = sandboxProvider
           if (provider != null && provider.isRemote) {
             try {
-              provider.pullFileFromRemote(sessionIdProvider(), pathStr, file)
+              val pulled = provider.pullFileFromRemote(sessionIdProvider(), pathStr, file)
+              if (!pulled && !file.exists()) {
+                remoteOnlyExists = provider.fileExistsInRemote(sessionIdProvider(), pathStr)
+              }
             } catch (_: Exception) {}
           }
         }
-        val exists = file.exists()
-        val type = if (exists) (if (file.isDirectory) "directory" else "file") else "none"
+        val exists = file.exists() || remoteOnlyExists
+        val type = when {
+          file.exists() -> if (file.isDirectory) "directory" else "file"
+          remoteOnlyExists -> "remote_path"
+          else -> "none"
+        }
 
         val json = JSONObject().apply {
           put("exists", exists)
           put("type", type)
           put("path", pathStr)
-          if (exists && file.isFile) {
+          if (file.exists() && file.isFile) {
             put("sizeBytes", file.length())
           }
         }.toString()
 
         val outcome = if (exists) ToolExecutionOutcome.SUCCESS_WITH_RESULTS else ToolExecutionOutcome.CONDITION_NOT_FOUND
-        val readableOutput = if (exists) "File exists: $pathStr ($type${if (file.isFile) ", ${file.length()} bytes" else ""})" else "Condition not found: File does not exist at '$pathStr'"
+        val readableOutput = if (exists) "File exists: $pathStr ($type${if (file.exists() && file.isFile) ", ${file.length()} bytes" else ""})" else "Condition not found: File does not exist at '$pathStr'"
 
         ToolResult(
           callId = callId,

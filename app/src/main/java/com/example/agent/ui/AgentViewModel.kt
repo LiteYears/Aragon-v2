@@ -1226,12 +1226,8 @@ class AgentViewModel(
       val deliverables = engine.deliverableTracker.deliverablesMap.values
 
       val items = children.filter { file ->
-        !file.name.startsWith(".git") &&
-        !file.name.startsWith(".e2b_session") &&
-        !file.name.startsWith(".sessions") &&
-        !file.name.startsWith(".observations") &&
-        !file.name.startsWith(".artifacts") &&
-        !file.name.startsWith(".mcp_data") &&
+        val rel = PathSecurity.getRelativePath(workspaceDir, file)
+        !com.example.agent.core.DeliverableTracker.isInternalWorkspacePath(rel, file.name.lowercase(Locale.ROOT)) &&
         !file.name.startsWith(".tmp_")
       }.map { file ->
         val fileRel = PathSecurity.getRelativePath(workspaceDir, file)

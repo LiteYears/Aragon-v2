@@ -155,15 +155,22 @@ class DeliverableTracker(
         } else {
           val validation = ArtifactValidatorRegistry.validateExistingFile(targetFile)
           if (validation.isValid) {
-            val relPath = PathSecurity.toCanonicalRelativePath(workspaceDir, PathSecurity.getRelativePath(workspaceDir, targetFile))
+            if (targetFile.canonicalFile != directFile.canonicalFile && !directFile.exists()) {
+              try {
+                directFile.parentFile?.mkdirs()
+                targetFile.copyTo(directFile, overwrite = false)
+              } catch (_: Exception) {}
+            }
+            val effectiveFile = if (directFile.exists() && directFile.length() > 0) directFile else targetFile
+            val relPath = PathSecurity.toCanonicalRelativePath(workspaceDir, PathSecurity.getRelativePath(workspaceDir, effectiveFile))
             deliverablesMap[path] = item.copy(
               path = relPath,
-              name = targetFile.name,
+              name = effectiveFile.name,
               status = DeliverableStatus.VERIFIED,
               sizeBytes = length,
               lastModified = lastMod,
               validationMessage = validation.detectedFormat ?: "Valid (${formatFileSize(length)})",
-              fileType = determineFileType(targetFile.name)
+              fileType = determineFileType(effectiveFile.name)
             )
             // Ensure registered in ArtifactManager as well
             artifactManager?.registerArtifact(relPath)
@@ -181,10 +188,13 @@ class DeliverableTracker(
 
     // 2. Auto-discover non-temporary deliverable files created in workspace
     workspaceDir.walkTopDown()
+      .onEnter { dir ->
+        val dName = dir.name.lowercase(Locale.ROOT)
+        !dName.startsWith(".") && dName !in INTERNAL_WORKSPACE_DIRS
+      }
       .maxDepth(4)
       .filter { file ->
         val nameLower = file.name.lowercase(Locale.ROOT)
-        val parentLower = file.parentFile?.name.orEmpty().lowercase(Locale.ROOT)
         val rel = PathSecurity.toCanonicalRelativePath(workspaceDir, PathSecurity.getRelativePath(workspaceDir, file))
         val isTemp = nameLower.startsWith(".") ||
           nameLower.startsWith(".tmp_") ||
@@ -201,20 +211,10 @@ class DeliverableTracker(
           nameLower.endsWith(".part") ||
           nameLower.endsWith(".bak") ||
           nameLower.endsWith(".log") ||
-          rel.startsWith("tmp/") ||
-          rel.startsWith("temp/")
+          isInternalWorkspacePath(rel, nameLower)
         file.isFile &&
           file.length() > 0 &&
-          !isTemp &&
-          parentLower != ".git" &&
-          parentLower != ".sessions" &&
-          parentLower != ".observations" &&
-          parentLower != ".artifacts" &&
-          parentLower != ".mcp_data" &&
-          parentLower != "notes" &&
-          parentLower != "bin" &&
-          parentLower != "tmp" &&
-          parentLower != "temp"
+          !isTemp
       }
       .forEach { file ->
         val rel = PathSecurity.toCanonicalRelativePath(workspaceDir, PathSecurity.getRelativePath(workspaceDir, file))
@@ -337,23 +337,55 @@ class DeliverableTracker(
 
   fun findMatchingFile(fileName: String): File? {
     val direct = File(workspaceDir, fileName)
-    if (direct.exists()) return direct
+    if (direct.exists() && direct.length() > 0L) return direct
 
-    // Recursive search in workspace subdirectories
-    val match = workspaceDir.walkTopDown().maxDepth(4).firstOrNull {
-      it.isFile && it.name.equals(fileName, ignoreCase = true)
+    val candidateFiles = workspaceDir.walkTopDown()
+      .onEnter { dir ->
+        val dName = dir.name.lowercase(Locale.ROOT)
+        !dName.startsWith(".") && dName !in INTERNAL_WORKSPACE_DIRS
+      }
+      .maxDepth(4)
+      .filter { f ->
+        if (!f.isFile || f.length() <= 0L) return@filter false
+        val rel = PathSecurity.toCanonicalRelativePath(workspaceDir, PathSecurity.getRelativePath(workspaceDir, f))
+        !isInternalWorkspacePath(rel, f.name.lowercase(Locale.ROOT))
+      }
+      .toList()
+
+    // 1. Recursive exact case-insensitive match in workspace subdirectories
+    val exactMatch = candidateFiles.firstOrNull {
+      it.name.equals(fileName, ignoreCase = true)
     }
-    if (match != null) return match
+    if (exactMatch != null) return exactMatch
 
-    // Extension-based fuzzy match for docx/xlsx if user asked for a document
-    val ext = fileName.substringAfterLast('.', "").lowercase()
+    // 2. Typo-tolerant match (Levenshtein distance <= 2 on base name with matching extension, e.g. Raport_diag.md vs Rapport_diag.md)
+    val ext = fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+    val reqBase = fileName.substringBeforeLast('.').lowercase(Locale.ROOT)
+    if (reqBase.length >= 4 && ext.isNotEmpty()) {
+      val typoMatch = candidateFiles.firstOrNull { f ->
+        f.extension.lowercase(Locale.ROOT) == ext &&
+          levenshteinDistance(reqBase, f.nameWithoutExtension.lowercase(Locale.ROOT)) <= 2
+      }
+      if (typoMatch != null) {
+        try {
+          if (!direct.exists()) {
+            direct.parentFile?.mkdirs()
+            typoMatch.copyTo(direct, overwrite = false)
+            return direct
+          }
+        } catch (_: Exception) {}
+        return typoMatch
+      }
+    }
+
+    // 3. Extension-based fuzzy match for docx/xlsx if user asked for a generic document
     if (ext in listOf("docx", "doc")) {
-      return workspaceDir.walkTopDown().maxDepth(4).firstOrNull {
-        it.isFile && it.extension.lowercase() in listOf("docx", "doc") && it.length() > 500
+      return candidateFiles.firstOrNull {
+        it.extension.lowercase(Locale.ROOT) in listOf("docx", "doc") && it.length() > 500
       }
     } else if (ext in listOf("xlsx", "xls")) {
-      return workspaceDir.walkTopDown().maxDepth(4).firstOrNull {
-        it.isFile && it.extension.lowercase() in listOf("xlsx", "xls") && it.length() > 300
+      return candidateFiles.firstOrNull {
+        it.extension.lowercase(Locale.ROOT) in listOf("xlsx", "xls") && it.length() > 300
       }
     }
     return null
@@ -433,6 +465,64 @@ class DeliverableTracker(
   }
 
   companion object {
+    val INTERNAL_WORKSPACE_DIRS = setOf(
+      "notes", "documents", "tmp", "temp", "cache", "logs", "bin", "lib",
+      "venv", ".venv", "node_modules", "__pycache__", "build",
+      ".git", ".sessions", ".scratchpad", ".observations", ".artifacts", ".mcp_data", ".exec"
+    )
+
+    val INTERNAL_WORKSPACE_FILES = setOf(
+      "data.db", "data.db-wal", "data.db-shm", "data.db-journal",
+      "task_history.jsonl", "checkpoint.json", "research.jsonl",
+      "aragon_exec_script.py", ".sudo_as_admin_successful", ".bashrc", ".bash_logout", ".profile"
+    )
+
+    /**
+     * Authoritatively determines if a relative workspace path or file name belongs to internal
+     * agent state, session checkpoints, scratchpad logs, or system databases rather than user files/deliverables.
+     */
+    fun isInternalWorkspacePath(relPath: String, fileNameLower: String = File(relPath).name.lowercase(Locale.ROOT)): Boolean {
+      if (fileNameLower.isBlank() || fileNameLower.startsWith(".")) return true
+      if (fileNameLower in INTERNAL_WORKSPACE_FILES) return true
+      if (fileNameLower.endsWith(".db-journal") || fileNameLower.endsWith(".db-wal") || fileNameLower.endsWith(".db-shm")) return true
+      if (fileNameLower.startsWith("session_") && fileNameLower.endsWith(".json")) return true
+      if (Regex("^task_[0-9a-f]{8}\\.json$").matches(fileNameLower)) return true
+
+      val normalized = relPath.trim().replace('\\', '/').trimStart('/')
+      val segments = normalized.split('/').filter { it.isNotBlank() }
+      for (i in 0 until (segments.size - 1).coerceAtLeast(0)) {
+        val seg = segments[i].lowercase(Locale.ROOT)
+        if (seg.startsWith(".") || seg in INTERNAL_WORKSPACE_DIRS) {
+          return true
+        }
+      }
+      if (segments.size == 1 && segments[0].lowercase(Locale.ROOT) in INTERNAL_WORKSPACE_DIRS) {
+        return true
+      }
+      return false
+    }
+
+    fun levenshteinDistance(a: String, b: String): Int {
+      if (a == b) return 0
+      if (a.isEmpty()) return b.length
+      if (b.isEmpty()) return a.length
+      val prev = IntArray(b.length + 1) { it }
+      val curr = IntArray(b.length + 1)
+      for (i in 1..a.length) {
+        curr[0] = i
+        for (j in 1..b.length) {
+          val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+          curr[j] = minOf(
+            curr[j - 1] + 1,
+            prev[j] + 1,
+            prev[j - 1] + cost
+          )
+        }
+        System.arraycopy(curr, 0, prev, 0, b.length + 1)
+      }
+      return prev[b.length]
+    }
+
     fun formatFileSize(bytes: Long): String {
       return when {
         bytes < 1024 -> "$bytes B"

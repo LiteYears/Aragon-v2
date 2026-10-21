@@ -144,7 +144,7 @@ data class CapabilityManifest(
     }
     root.put("packageInstallation", pkgSupport)
 
-    return root.toString(2)
+    return root.toString()
   }
 
   companion object {

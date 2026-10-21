@@ -337,7 +337,12 @@ class TerminalTool(
       }.toString()
 
       val artifacts = try {
-        provider.syncArtifacts(currentSession, workspaceDir, currentTaskId)
+        val alreadySyncedByE2B = isSuccess &&
+          provider is E2BSandboxProvider &&
+          workspaceDir.canonicalFile == provider.localWorkspaceDir.canonicalFile
+        if (!alreadySyncedByE2B) {
+          provider.syncArtifacts(currentSession, workspaceDir, currentTaskId)
+        }
         artifactManager.syncWorkspace(currentTaskId)
       } catch (_: Exception) {
         artifactManager.syncWorkspace(currentTaskId)

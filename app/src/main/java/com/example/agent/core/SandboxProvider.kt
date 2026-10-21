@@ -248,7 +248,7 @@ class E2BSandboxProvider(
     val sessionId: String,
     val sandboxId: String,
     val templateId: String,
-    val clientHost: String,
+    var clientHost: String,
     var envdAccessToken: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     var lastActiveAt: Long = System.currentTimeMillis(),
@@ -451,6 +451,62 @@ class E2BSandboxProvider(
   }
 
   /**
+   * Pauses an active E2B sandbox to conserve Free Tier credits while preserving
+   * the entire microVM filesystem (/home/user, virtualenvs, installed packages) and memory state.
+   */
+  fun pauseSandbox(sessionId: String): Boolean {
+    val effectiveKey = apiKey.trim()
+    if (effectiveKey.isBlank() || effectiveKey == "MY_E2B_API_KEY") return false
+    val session = activeE2BSandboxes[sessionId] ?: loadSessionFromDisk(sessionId) ?: return false
+    if (session.lifecycleState == SandboxLifecycleState.PAUSED) return true
+
+    val cleanBaseUrl = apiUrl.trimEnd('/')
+    val pauseUrls = listOf(
+      "$cleanBaseUrl/v2/sandboxes/${session.sandboxId}/pause",
+      "$cleanBaseUrl/sandboxes/${session.sandboxId}/pause"
+    )
+    for (url in pauseUrls) {
+      try {
+        val req = Request.Builder()
+          .url(url)
+          .header("X-API-Key", effectiveKey)
+          .header("Authorization", "Bearer $effectiveKey")
+          .header("Content-Type", "application/json")
+          .post("{}".toRequestBody("application/json".toMediaType()))
+          .build()
+        httpClient.newCall(req).execute().use { resp ->
+          if (resp.isSuccessful || resp.code == 409) {
+            session.lifecycleState = SandboxLifecycleState.PAUSED
+            session.lastActiveAt = System.currentTimeMillis()
+            activeE2BSandboxes[sessionId] = session
+            persistSessionToDisk(session)
+            return true
+          }
+        }
+      } catch (_: Exception) {}
+    }
+    return false
+  }
+
+  /**
+   * Resumes a paused or existing E2B sandbox via the /connect endpoint and refreshes its access token.
+   */
+  fun resumeSandbox(sessionId: String): E2BSessionInfo? {
+    val session = activeE2BSandboxes[sessionId] ?: loadSessionFromDisk(sessionId) ?: return null
+    val (dom, token) = fetchConnectionInfo(session.sandboxId)
+    if (token.isNotBlank()) {
+      session.envdAccessToken = token
+      session.clientHost = "49983-${session.sandboxId}.$dom"
+      session.lastActiveAt = System.currentTimeMillis()
+      session.lifecycleState = SandboxLifecycleState.RUNNING
+      activeE2BSandboxes[sessionId] = session
+      persistSessionToDisk(session)
+      return session
+    }
+    return null
+  }
+
+  /**
    * Spawns or reuses an active E2B Firecracker microVM for this session.
    * Throws explicit IllegalStateException if API key is unconfigured or invalid,
    * completely preventing silent local execution fallback.
@@ -466,24 +522,34 @@ class E2BSandboxProvider(
     }
 
     val domain = if (sandboxDomain.isNotBlank()) sandboxDomain else if (apiUrl.contains("e2b.dev")) "e2b.dev" else "e2b.app"
+    val now = System.currentTimeMillis()
 
-    // 1. Check in-memory active session
+    // 1. Check in-memory active or paused session
     val inMemory = activeE2BSandboxes[sessionId]
-    if (inMemory != null && inMemory.lifecycleState == SandboxLifecycleState.RUNNING) {
-      keepAlive(inMemory.sandboxId)
-      inMemory.lastActiveAt = System.currentTimeMillis()
-      persistSessionToDisk(inMemory)
-      return inMemory
+    if (inMemory != null) {
+      if (inMemory.lifecycleState == SandboxLifecycleState.RUNNING) {
+        // Debounce keepAlive network calls to once every 45 seconds to minimize command latency
+        if (now - inMemory.lastActiveAt > 45_000L) {
+          keepAlive(inMemory.sandboxId)
+        }
+        inMemory.lastActiveAt = now
+        persistSessionToDisk(inMemory)
+        return inMemory
+      } else if (inMemory.lifecycleState == SandboxLifecycleState.PAUSED) {
+        val resumed = resumeSandbox(sessionId)
+        if (resumed != null) return resumed
+      }
     }
 
-    // 2. Check persisted session on disk (process death / app restart recovery)
+    // 2. Check persisted session on disk (process death / app restart / paused session recovery)
     val fromDisk = loadSessionFromDisk(sessionId)
     if (fromDisk != null) {
-      // Validate with control plane that the sandbox is still alive
+      // Validate with control plane (POST /connect automatically resumes paused sandboxes)
       val (dom, token) = fetchConnectionInfo(fromDisk.sandboxId)
       if (token.isNotBlank()) {
         fromDisk.envdAccessToken = token
-        fromDisk.lastActiveAt = System.currentTimeMillis()
+        fromDisk.clientHost = "49983-${fromDisk.sandboxId}.$dom"
+        fromDisk.lastActiveAt = now
         fromDisk.lifecycleState = SandboxLifecycleState.RUNNING
         activeE2BSandboxes[sessionId] = fromDisk
         keepAlive(fromDisk.sandboxId)
@@ -587,6 +653,14 @@ class E2BSandboxProvider(
   }
 
   override suspend fun executeCommand(sessionId: String, request: RunCommandRequest): Execution {
+    return executeCommandInternal(sessionId, request, skipArtifactSync = false)
+  }
+
+  suspend fun executeCommandInternal(
+    sessionId: String,
+    request: RunCommandRequest,
+    skipArtifactSync: Boolean
+  ): Execution {
     val effectiveKey = apiKey.trim()
     val execId = "e2b-exec-${UUID.randomUUID().toString().take(8)}"
     val execution = Execution(id = execId)
@@ -637,6 +711,14 @@ class E2BSandboxProvider(
 
     try {
       val requestedCwd = request.workingDirectory?.takeIf { it.isNotBlank() } ?: "/home/user"
+      val mergedEnvs = LinkedHashMap<String, String>().apply {
+        put("PATH", "/home/user/venv/bin:/home/user/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+        put("HOME", "/home/user")
+        put("PYTHONUNBUFFERED", "1")
+        put("PIP_DISABLE_PIP_VERSION_CHECK", "1")
+        put("DEBIAN_FRONTEND", "noninteractive")
+        request.envs.forEach { (k, v) -> put(k, v) }
+      }
       val processPayload = JSONObject().apply {
         val proc = JSONObject().apply {
           put("cmd", "/bin/bash")
@@ -645,11 +727,9 @@ class E2BSandboxProvider(
             put(request.command)
           })
           put("cwd", requestedCwd)
-          if (request.envs.isNotEmpty()) {
-            val envObj = JSONObject()
-            request.envs.forEach { (k, v) -> envObj.put(k, v) }
-            put("env", envObj)
-          }
+          val envObj = JSONObject()
+          mergedEnvs.forEach { (k, v) -> envObj.put(k, v) }
+          put("env", envObj)
         }
         put("process", proc)
         put("cwd", requestedCwd)
@@ -751,6 +831,12 @@ class E2BSandboxProvider(
                 val freshSession = getOrCreateE2BSession(sessionId, taskId = "auto-refresh")
                 if (freshSession.sandboxId != session.sandboxId) {
                   session = freshSession
+                  // Re-hydrate local workspace files into the fresh sandbox before retrying the command
+                  if (!skipArtifactSync) {
+                    try {
+                      rehydrateWorkspaceToRemote(sessionId)
+                    } catch (_: Exception) {}
+                  }
                   val freshDomain = if (sandboxDomain.isNotBlank()) sandboxDomain else if (apiUrl.contains("e2b.dev")) "e2b.dev" else "e2b.app"
                   val freshToken = freshSession.envdAccessToken
                   val freshUrl = if (freshSession.clientHost.isNotBlank()) {
@@ -779,7 +865,7 @@ class E2BSandboxProvider(
                     val freshBodyStr = String(freshBytes, Charsets.UTF_8)
                     if (freshResp.isSuccessful) {
                       val parsed = parseConnectProcessResponse(freshBytes, freshBodyStr)
-                      stdout = "[Notice: Stale E2B sandbox was expired and automatically replaced with fresh sandbox '${freshSession.sandboxId}'. Previous files and packages must be re-initialized.]\n" + parsed.stdout
+                      stdout = "[Notice: Stale E2B sandbox was expired and automatically replaced with fresh sandbox '${freshSession.sandboxId}'. Workspace files were re-synchronized.]\n" + parsed.stdout
                       stderr = parsed.stderr
                       exitCode = parsed.exitCode
                       isSuccess = parsed.isSuccess
@@ -814,7 +900,7 @@ class E2BSandboxProvider(
       isSuccess = false
     }
 
-    if (!isSyncing.get() && isSuccess) {
+    if (!skipArtifactSync && !isSyncing.get() && isSuccess) {
       try {
         syncArtifacts(sessionId, localWorkspaceDir)
       } catch (_: Exception) {}
@@ -1022,18 +1108,54 @@ class E2BSandboxProvider(
     val lang = request.context.language.lowercase()
     val base64Code = java.util.Base64.getEncoder().encodeToString(request.code.toByteArray(Charsets.UTF_8))
     val scriptCmd = when (lang) {
-      "python", "py", "python3" -> "([ -x /home/user/venv/bin/python3 ] && PY=/home/user/venv/bin/python3 || PY=python3); \$PY -u -c \"import base64; exec(base64.b64decode('$base64Code').decode('utf-8'))\""
+      "python", "py", "python3" ->
+        "if [ -x /home/user/venv/bin/python3 ]; then PY=/home/user/venv/bin/python3; elif command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi; " +
+          "\"\$PY\" -u -c \"import base64, sys, os; os.chdir('/home/user'); sys.path.insert(0, '/home/user'); " +
+          "code = base64.b64decode('$base64Code').decode('utf-8'); " +
+          "g = {'__name__': '__main__', '__file__': '/home/user/aragon_exec_script.py'}; " +
+          "exec(compile(code, '/home/user/aragon_exec_script.py', 'exec'), g)\""
       "javascript", "js", "node" -> "node -e \"eval(Buffer.from('$base64Code', 'base64').toString('utf-8'))\""
       else -> "bash -c \"echo '$base64Code' | base64 -d | bash\""
     }
 
     val cmdReq = RunCommandRequest.builder()
       .command(scriptCmd)
-      .timeout(java.time.Duration.ofSeconds(60))
+      .timeout(java.time.Duration.ofSeconds(90))
       .envs(TerminalTool.REMOTE_COMMAND_ENVS)
       .build()
 
     return executeCommand(sessionId, cmdReq)
+  }
+
+  /**
+   * Re-hydrates local workspace files into a freshly replaced E2B MicroVM after a 404/502 timeout.
+   */
+  suspend fun rehydrateWorkspaceToRemote(sessionId: String) {
+    if (!localWorkspaceDir.exists() || !localWorkspaceDir.isDirectory) return
+    val wsCanonical = localWorkspaceDir.canonicalFile
+    val excludedDirs = setOf(
+      "notes", "documents", "tmp", "temp", "cache", "logs",
+      "venv", ".venv", "node_modules", "__pycache__", "build",
+      ".sessions", ".scratchpad", ".observations", ".exec", ".git", ".mcp_data"
+    )
+    localWorkspaceDir.walkTopDown()
+      .onEnter { dir ->
+        !dir.name.startsWith(".") && dir.name.lowercase() !in excludedDirs
+      }
+      .filter { it.isFile && !it.name.startsWith(".") && it.length() in 1..(5 * 1024 * 1024) }
+      .forEach { file ->
+        val lower = file.name.lowercase()
+        val rel = file.canonicalFile.relativeToOrNull(wsCanonical)?.path?.replace('\\', '/') ?: file.name
+        if (
+          !lower.endsWith(".db") &&
+          !lower.endsWith(".db-wal") &&
+          !lower.endsWith(".db-shm") &&
+          !lower.endsWith(".db-journal") &&
+          !DeliverableTracker.isInternalWorkspacePath(rel, lower)
+        ) {
+          pushFileToRemote(sessionId, rel, file)
+        }
+      }
   }
 
   /**
@@ -1063,10 +1185,19 @@ class E2BSandboxProvider(
       changed = (cleanRelPath != prev)
     }
     if (cleanRelPath.isBlank()) cleanRelPath = file.name
+    if (DeliverableTracker.isInternalWorkspacePath(cleanRelPath, lowerName)) {
+      return false
+    }
+    val pathB64 = java.util.Base64.getEncoder().encodeToString(cleanRelPath.toByteArray(Charsets.UTF_8))
 
     return try {
       val fileBytes = file.readBytes()
-      val chunkSize = 40 * 1024 // 40KB chunk -> ~54KB base64, comfortably below Linux ARG_MAX
+      if (fileBytes.isEmpty()) {
+        val emptyCmd = "python3 -c \"import os, base64; p = base64.b64decode('$pathB64').decode('utf-8'); target = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('/')); d = os.path.dirname(target); d and os.makedirs(d, exist_ok=True); open(target, 'wb').close()\""
+        val req = RunCommandRequest.builder().command(emptyCmd).timeout(java.time.Duration.ofSeconds(20)).build()
+        return executeCommandInternal(sessionId, req, skipArtifactSync = true).exitCode == 0
+      }
+      val chunkSize = 64 * 1024 // 64KB chunk -> ~87KB base64, safely below Linux MAX_ARG_STRLEN (128KB)
       val totalChunks = (fileBytes.size + chunkSize - 1) / chunkSize
       for (i in 0 until totalChunks) {
         val start = i * chunkSize
@@ -1074,12 +1205,12 @@ class E2BSandboxProvider(
         val chunk = fileBytes.copyOfRange(start, end)
         val base64Content = java.util.Base64.getEncoder().encodeToString(chunk)
         val mode = if (i == 0) "wb" else "ab"
-        val pushCmd = "python3 -c \"import os, base64; p = '$cleanRelPath'; target = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('/')); d = os.path.dirname(target); d and os.makedirs(d, exist_ok=True); f = open(target, '$mode'); f.write(base64.b64decode('$base64Content')); f.close()\""
+        val pushCmd = "python3 -c \"import os, base64; p = base64.b64decode('$pathB64').decode('utf-8'); target = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('/')); d = os.path.dirname(target); d and os.makedirs(d, exist_ok=True); f = open(target, '$mode'); f.write(base64.b64decode('$base64Content')); f.close()\""
         val req = RunCommandRequest.builder()
           .command(pushCmd)
           .timeout(java.time.Duration.ofSeconds(30))
           .build()
-        val exec = executeCommand(sessionId, req)
+        val exec = executeCommandInternal(sessionId, req, skipArtifactSync = true)
         if (exec.exitCode != 0) return false
       }
       // Note: We deliberately do NOT create recursive symlinks or duplicate directories into /home/user/workspace/
@@ -1104,13 +1235,14 @@ class E2BSandboxProvider(
       changed = (cleanPath != prev)
     }
     if (cleanPath.isBlank()) return false
+    val pathB64 = java.util.Base64.getEncoder().encodeToString(cleanPath.toByteArray(Charsets.UTF_8))
     return try {
-      val pullCmd = "python3 -c \"import os, base64; p = '$cleanPath'; target = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('/')); print(base64.b64encode(open(target, 'rb').read()).decode('ascii') if (os.path.exists(target) and os.path.isfile(target) and not os.path.islink(target)) else 'FILE_NOT_FOUND')\""
+      val pullCmd = "python3 -c \"import os, base64; p = base64.b64decode('$pathB64').decode('utf-8'); target = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('/')); print(base64.b64encode(open(target, 'rb').read()).decode('ascii') if (os.path.exists(target) and os.path.isfile(target) and not os.path.islink(target)) else 'FILE_NOT_FOUND')\""
       val req = RunCommandRequest.builder()
         .command(pullCmd)
-        .timeout(java.time.Duration.ofSeconds(15))
+        .timeout(java.time.Duration.ofSeconds(20))
         .build()
-      val exec = executeCommand(sessionId, req)
+      val exec = executeCommandInternal(sessionId, req, skipArtifactSync = true)
       val out = exec.stdoutText().trim()
       if (out.isNotEmpty() && !out.contains("FILE_NOT_FOUND")) {
         val bytes = java.util.Base64.getDecoder().decode(out)
@@ -1140,14 +1272,49 @@ class E2BSandboxProvider(
       changed = (cleanPath != prev)
     }
     if (cleanPath.isBlank()) return false
+    val pathB64 = java.util.Base64.getEncoder().encodeToString(cleanPath.toByteArray(Charsets.UTF_8))
     return try {
-      val checkCmd = "python3 -c \"import os, sys; p = '$cleanPath'; target = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('/')); sys.exit(0 if os.path.exists(target) else 1)\""
+      val checkCmd = "python3 -c \"import os, sys, base64; p = base64.b64decode('$pathB64').decode('utf-8'); target = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('/')); sys.exit(0 if os.path.exists(target) else 1)\""
       val req = RunCommandRequest.builder()
         .command(checkCmd)
         .timeout(java.time.Duration.ofSeconds(10))
         .build()
-      val exec = executeCommand(sessionId, req)
+      val exec = executeCommandInternal(sessionId, req, skipArtifactSync = true)
       exec.exitCode == 0
+    } catch (_: Exception) {
+      false
+    }
+  }
+
+  /**
+   * Deletes a file or directory inside the remote E2B MicroVM (/home/user/$remotePath)
+   * so deleted local files are not resurrected during syncArtifacts.
+   */
+  suspend fun deletePathInRemote(sessionId: String, remotePath: String): Boolean {
+    var cleanPath = remotePath.trim().replace('\\', '/')
+    while (cleanPath.startsWith("./")) cleanPath = cleanPath.removePrefix("./").trim()
+    var changed = true
+    while (changed) {
+      val prev = cleanPath
+      when {
+        cleanPath.startsWith("/home/user/") -> cleanPath = cleanPath.removePrefix("/home/user/")
+        cleanPath.startsWith("home/user/") -> cleanPath = cleanPath.removePrefix("home/user/")
+        cleanPath.startsWith("/workspace/") -> cleanPath = cleanPath.removePrefix("/workspace/")
+        cleanPath.startsWith("workspace/") -> cleanPath = cleanPath.removePrefix("workspace/")
+      }
+      changed = (cleanPath != prev)
+    }
+    if (cleanPath.isBlank() || cleanPath == "/") return false
+    val pathB64 = java.util.Base64.getEncoder().encodeToString(cleanPath.toByteArray(Charsets.UTF_8))
+    return try {
+      val delCmd = "python3 -c \"import os, shutil, base64; p = base64.b64decode('$pathB64').decode('utf-8'); target = p if os.path.isabs(p) else os.path.join('/home/user', p.removeprefix('/')); " +
+        "os.path.isdir(target) and not os.path.islink(target) and shutil.rmtree(target, ignore_errors=True); " +
+        "os.path.exists(target) and os.remove(target)\""
+      val req = RunCommandRequest.builder()
+        .command(delCmd)
+        .timeout(java.time.Duration.ofSeconds(10))
+        .build()
+      executeCommandInternal(sessionId, req, skipArtifactSync = true).exitCode == 0
     } catch (_: Exception) {
       false
     }
@@ -1176,9 +1343,9 @@ python3 -c "import os, json, base64
 
 res = {}
 root_base = '/home/user'
-ignored_dirs = {'workspace', 'bin', 'lib', 'tmp', '__pycache__', 'node_modules', 'venv', '.venv', '.git', '.cache', '.config', '.local'}
-ignored_exts = {'.db', '.db-wal', '.db-shm', '.db-journal', '.pyc', '.so', '.a'}
-ignored_files = {'data.db', 'data.db-wal', 'data.db-shm', 'data.db-journal'}
+ignored_dirs = {'workspace', 'notes', 'documents', 'bin', 'lib', 'tmp', 'temp', 'cache', 'logs', '__pycache__', 'node_modules', 'venv', '.venv', '.git', '.cache', '.config', '.local', '.sessions', '.scratchpad', '.observations', '.exec', '.mcp_data'}
+ignored_exts = {'.db', '.db-wal', '.db-shm', '.db-journal', '.pyc', '.so', '.a', '.tmp', '.part'}
+ignored_files = {'data.db', 'data.db-wal', 'data.db-shm', 'data.db-journal', 'task_history.jsonl', 'checkpoint.json', 'research.jsonl', 'aragon_exec_script.py'}
 
 for root, dirs, files in os.walk(root_base, followlinks=False):
     dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.startswith('.') and not os.path.islink(os.path.join(root, d))]
@@ -1217,7 +1384,7 @@ print('___ARAGON_SYNC_START___' + json.dumps(res) + '___ARAGON_SYNC_END___')
             .timeout(java.time.Duration.ofSeconds(20))
             .build()
 
-          val exec = executeCommand(sessionId, findReq)
+          val exec = executeCommandInternal(sessionId, findReq, skipArtifactSync = true)
           val out = exec.stdoutText()
           if (out.contains("___ARAGON_SYNC_START___") && out.contains("___ARAGON_SYNC_END___")) {
             val jsonStr = out.substringAfter("___ARAGON_SYNC_START___").substringBefore("___ARAGON_SYNC_END___")
@@ -1228,7 +1395,14 @@ print('___ARAGON_SYNC_START___' + json.dumps(res) + '___ARAGON_SYNC_END___')
 
             while (keys.hasNext()) {
               val relPath = keys.next()
-              if (relPath.startsWith("data.db") || relPath.endsWith(".db") || relPath.endsWith(".db-wal") || relPath.endsWith(".db-shm") || relPath.endsWith(".db-journal")) {
+              if (
+                relPath.startsWith("data.db") ||
+                relPath.endsWith(".db") ||
+                relPath.endsWith(".db-wal") ||
+                relPath.endsWith(".db-shm") ||
+                relPath.endsWith(".db-journal") ||
+                DeliverableTracker.isInternalWorkspacePath(relPath, File(relPath).name.lowercase())
+              ) {
                 continue
               }
               val b64 = jsonMap.optString(relPath, "")
@@ -1341,7 +1515,7 @@ print('___ARAGON_SYNC_START___' + json.dumps(res) + '___ARAGON_SYNC_END___')
       .timeout(java.time.Duration.ofSeconds(15))
       .build()
 
-    val probeExec = executeCommand(sessionId, probeReq)
+    val probeExec = executeCommandInternal(sessionId, probeReq, skipArtifactSync = true)
     val probeOut = probeExec.stdoutText()
     val probeErr = probeExec.stderrText()
     val probeExit = probeExec.exitCode ?: 0
@@ -1379,25 +1553,25 @@ print('___ARAGON_SYNC_START___' + json.dumps(res) + '___ARAGON_SYNC_END___')
     // Step A: Write marker
     val writeCmd = "printf '%s' '$markerId' > '$markerPath'"
     val writeReq = RunCommandRequest.builder().command(writeCmd).timeout(java.time.Duration.ofSeconds(10)).build()
-    val writeExec = executeCommand(sessionId, writeReq)
+    val writeExec = executeCommandInternal(sessionId, writeReq, skipArtifactSync = true)
     val markerWritten = writeExec.exitCode == 0
 
     // Step B: Read marker back in separate tool call
     val readCmd = "cat '$markerPath'"
     val readReq = RunCommandRequest.builder().command(readCmd).timeout(java.time.Duration.ofSeconds(10)).build()
-    val readExec = executeCommand(sessionId, readReq)
+    val readExec = executeCommandInternal(sessionId, readReq, skipArtifactSync = true)
     val markerReadBack = readExec.exitCode == 0 && readExec.stdoutText().trim() == markerId
 
     // Step C: Verify persistence across separate invocation
     val persistCmd = "test -f '$markerPath' && echo 'PERSISTED_OK'"
     val persistReq = RunCommandRequest.builder().command(persistCmd).timeout(java.time.Duration.ofSeconds(10)).build()
-    val persistExec = executeCommand(sessionId, persistReq)
+    val persistExec = executeCommandInternal(sessionId, persistReq, skipArtifactSync = true)
     val markerPersisted = persistExec.exitCode == 0 && persistExec.stdoutText().contains("PERSISTED_OK")
 
     // Step D: Non-destructive cleanup of diagnostic marker
     try {
       val cleanReq = RunCommandRequest.builder().command("rm -f '$markerPath'").timeout(java.time.Duration.ofSeconds(10)).build()
-      executeCommand(sessionId, cleanReq)
+      executeCommandInternal(sessionId, cleanReq, skipArtifactSync = true)
     } catch (_: Exception) {}
 
     val isAuthenticE2B = probeExit == 0 && markerWritten && markerReadBack && markerPersisted && !session.sandboxId.startsWith("e2b-local-")

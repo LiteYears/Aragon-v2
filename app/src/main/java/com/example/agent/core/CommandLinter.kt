@@ -54,34 +54,8 @@ class CommandLinter {
       )
     }
 
-    // 2. Check for stderr suppression (2>/dev/null)
-    if (errRedirectRegex.containsMatchIn(trimmed)) {
-      if (!isBestEffort) {
-        return CommandLintResult(
-          isAllowed = false,
-          ruleId = "LINT_001",
-          message = "Disallowed stderr redirection '2>/dev/null'. This hides critical failure details (e.g. missing Python modules, library faults). Remove '2>/dev/null' or set 'best_effort: true' in tool arguments if failure is non-fatal.",
-          autoFix = mapOf("shell_rewrite" to trimmed.replace(errRedirectRegex, "2>&1"))
-        )
-      } else {
-        // Rewrite command to redirect stderr to stdout so reasoning layer can inspect it with [SUPPRESSED_STDERR]
-        val safeCommand = trimmed.replace(errRedirectRegex, "2>&1")
-        return CommandLintResult(
-          isAllowed = true,
-          rewrittenCommand = safeCommand,
-          isSuppressedStderr = true
-        )
-      }
-    }
-
-    // 3. Check for '|| true' swallowing error codes
-    if (pipeTrueRegex.containsMatchIn(trimmed) && !isBestEffort) {
-      return CommandLintResult(
-        isAllowed = false,
-        ruleId = "LINT_002",
-        message = "Disallowed error suppression '|| true'. Do not swallow exit codes without justification. Set 'best_effort: true' if failure is acceptable."
-      )
-    }
+    // 2. Track stderr suppression (2>/dev/null) without blocking standard shell discovery idioms (find, which, netstat || ss)
+    val isSuppressed = errRedirectRegex.containsMatchIn(trimmed) || pipeTrueRegex.containsMatchIn(trimmed)
 
     // 4. Writing outside the E2B workspace (/home/user) and /tmp scratch
     val writeMatch = externalWriteRegex.find(trimmed)
@@ -139,10 +113,15 @@ class CommandLinter {
       rewritten = aptMutateTokenRegex.replace(rewritten ?: trimmed) { "sudo ${it.value}" }
     }
     if (rewritten != null && rewritten != trimmed) {
-      return CommandLintResult(isAllowed = true, ruleId = "LINT_AUTOFIX", rewrittenCommand = rewritten)
+      return CommandLintResult(
+        isAllowed = true,
+        ruleId = "LINT_AUTOFIX",
+        rewrittenCommand = rewritten,
+        isSuppressedStderr = isSuppressed
+      )
     }
 
-    return CommandLintResult(isAllowed = true)
+    return CommandLintResult(isAllowed = true, isSuppressedStderr = isSuppressed)
   }
 
   /**

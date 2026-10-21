@@ -141,7 +141,12 @@ class CodeInterpreterTool(
         }.toString()
 
         val artifacts = try {
-          sandboxProvider.syncArtifacts(currentSession, artifactManager.workspaceDir, currentTaskId)
+          val alreadySyncedByE2B = isSuccess &&
+            sandboxProvider is E2BSandboxProvider &&
+            artifactManager.workspaceDir.canonicalFile == (sandboxProvider as E2BSandboxProvider).localWorkspaceDir.canonicalFile
+          if (!alreadySyncedByE2B) {
+            sandboxProvider.syncArtifacts(currentSession, artifactManager.workspaceDir, currentTaskId)
+          }
           artifactManager.syncWorkspace(currentTaskId)
         } catch (_: Exception) {
           artifactManager.syncWorkspace(currentTaskId)
@@ -217,7 +222,7 @@ class SandboxDiagnosticsTool(
   override val category: ToolCategory = ToolCategory.UTILITY
   override val target: ToolTarget = ToolTarget.SANDBOX_PROCESS
   override val permissions: Set<ToolPermission> = setOf(ToolPermission.READ_ONLY)
-  override val defaultTimeoutMs: Long = 15000L
+  override val defaultTimeoutMs: Long = 45000L
 
   override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
     withContext(Dispatchers.IO) {
@@ -1105,16 +1110,16 @@ class E2BCloudTool(
 
   override val name: String = "e2b_sandbox"
   override val description: String =
-    "Execute commands, run code, or manage cloud Firecracker microVM sandboxes via E2B (https://github.com/e2b-dev). Supports actions: 'run_command', 'run_code', 'list_sandboxes', 'status'."
+    "Execute commands, run code, or manage cloud Firecracker microVM sandboxes via E2B (https://github.com/e2b-dev). Supports actions: 'run_command', 'run_code', 'list_sandboxes', 'status', 'pause_sandbox', 'resume_sandbox'."
 
   override val schema: ToolSchema = ToolSchema(
     listOf(
       ToolParameter(
         name = "action",
         type = "string",
-        description = "The E2B operation: 'run_command' (default), 'run_code', 'list_sandboxes', or 'status'.",
+        description = "The E2B operation: 'run_command' (default), 'run_code', 'list_sandboxes', 'status', 'pause_sandbox', or 'resume_sandbox'.",
         required = false,
-        enumValues = listOf("run_command", "run_code", "list_sandboxes", "status"),
+        enumValues = listOf("run_command", "run_code", "list_sandboxes", "status", "pause_sandbox", "resume_sandbox"),
         defaultValue = "run_command",
         aliases = listOf("act", "op", "operation")
       ),
@@ -1210,6 +1215,44 @@ class E2BCloudTool(
             error = null,
             duration = System.currentTimeMillis() - startTime,
             stdout = out,
+            exitCode = 0
+          )
+        }
+
+        "pause_sandbox", "pause" -> {
+          val sid = sessionIdProvider()
+          val paused = e2bProvider.pauseSandbox(sid)
+          val msg = if (paused) {
+            "E2B Sandbox for session '$sid' paused successfully (credits conserved, /home/user filesystem preserved)."
+          } else {
+            "No active running E2B Sandbox could be paused for session '$sid'."
+          }
+          ToolResult(
+            callId = callId,
+            toolName = name,
+            status = if (paused) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
+            arguments = arguments,
+            output = if (paused) msg else null,
+            error = if (paused) null else msg,
+            duration = System.currentTimeMillis() - startTime,
+            stdout = msg,
+            exitCode = if (paused) 0 else 1
+          )
+        }
+
+        "resume_sandbox", "resume" -> {
+          val sid = sessionIdProvider()
+          val resumed = e2bProvider.resumeSandbox(sid) ?: e2bProvider.getOrCreateE2BSession(sid)
+          val msg = "E2B Sandbox '${resumed.sandboxId}' resumed and ready for session '$sid'."
+          ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.SUCCEEDED,
+            arguments = arguments,
+            output = msg,
+            error = null,
+            duration = System.currentTimeMillis() - startTime,
+            stdout = msg,
             exitCode = 0
           )
         }

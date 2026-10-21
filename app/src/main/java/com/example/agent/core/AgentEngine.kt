@@ -168,8 +168,8 @@ class AgentEngine(
     registry.register(EditFileTool(workspaceDir, artifactManager, sandboxProvider = sandboxProvider, sessionIdProvider = { _state.value.sessionId }))
     registry.register(ApplyPatchTool(workspaceDir, artifactManager, sandboxProvider = sandboxProvider, sessionIdProvider = { _state.value.sessionId }))
     registry.register(DiffFilesTool(workspaceDir, artifactManager))
-    registry.register(DeleteFileTool(workspaceDir, artifactManager))
-    registry.register(MoveFileTool(workspaceDir, artifactManager))
+    registry.register(DeleteFileTool(workspaceDir, artifactManager, sandboxProvider = sandboxProvider, sessionIdProvider = { _state.value.sessionId }))
+    registry.register(MoveFileTool(workspaceDir, artifactManager, sandboxProvider = sandboxProvider, sessionIdProvider = { _state.value.sessionId }))
     registry.register(CopyFileTool(workspaceDir, artifactManager))
     registry.register(CreateDirectoryTool(workspaceDir, artifactManager))
     registry.register(DeleteDirectoryTool(workspaceDir, artifactManager))
@@ -229,6 +229,8 @@ class AgentEngine(
     (registry.getTool("list_directory") as? ListDirectoryTool)?.sandboxProvider = active
     (registry.getTool("edit_file") as? EditFileTool)?.sandboxProvider = active
     (registry.getTool("apply_patch") as? ApplyPatchTool)?.sandboxProvider = active
+    (registry.getTool("delete_file") as? DeleteFileTool)?.sandboxProvider = active
+    (registry.getTool("move_file") as? MoveFileTool)?.sandboxProvider = active
     (registry.getTool("file_exists") as? FileExistsTool)?.sandboxProvider = active
     (registry.getTool("file_metadata") as? FileMetadataTool)?.sandboxProvider = active
     (registry.getTool("install_package") as? InstallPackageTool)?.sandboxProvider = active
@@ -511,14 +513,13 @@ class AgentEngine(
     val inputFiles = inScopeDocNames
       .plus(
         workspaceDir.walkTopDown()
+          .onEnter { d ->
+            val dLower = d.name.lowercase()
+            !dLower.startsWith(".") && dLower !in DeliverableTracker.INTERNAL_WORKSPACE_DIRS
+          }
           .filter { f ->
             val rel = f.relativeTo(workspaceDir).path.replace('\\', '/')
-            f.isFile && !f.name.startsWith(".") &&
-              !rel.startsWith("documents/") &&
-              !rel.startsWith(".scratchpad/") &&
-              !rel.startsWith(".observations/") &&
-              !rel.startsWith("tmp/") &&
-              !rel.startsWith("temp/")
+            f.isFile && !DeliverableTracker.isInternalWorkspacePath(rel, f.name.lowercase())
           }
           .map { it.relativeTo(workspaceDir).path.replace('\\', '/') }
           .toList()
@@ -701,6 +702,14 @@ class AgentEngine(
       try {
         val syncedFiles = mutableListOf<String>()
         val inScopeIds = documentService?.scope?.value ?: emptySet()
+        val hasRunningSession = (activeSandbox as? E2BSandboxProvider)?.hasActiveRunningSession(task.sessionId) == true
+
+        // Avoid cold-booting a remote E2B Firecracker MicroVM before Turn 1's LLM call
+        // unless the user attached in-scope documents or a sandbox session is already running.
+        if (inScopeIds.isEmpty() && !hasRunningSession) {
+          return
+        }
+
         if (inScopeIds.isNotEmpty()) {
           val inScopeDocs = documentService?.documents?.value?.filter { it.id in inScopeIds } ?: emptyList()
           for (doc in inScopeDocs) {
@@ -713,7 +722,7 @@ class AgentEngine(
           }
         }
         val isExistingActiveSandbox = expectedSandboxId != null
-        if (!isExistingActiveSandbox) {
+        if (!isExistingActiveSandbox && hasRunningSession) {
           val allWorkspaceFiles = workspaceDir.walkTopDown()
             .filter { f ->
               val rel = f.relativeTo(workspaceDir).path.replace('\\', '/')
@@ -1467,10 +1476,12 @@ class AgentEngine(
     val hasNewArtifact = updatedArtifacts.size > currentState.artifacts.size ||
       updatedArtifacts.any { art -> currentState.artifacts.none { it.path == art.path && it.size == art.size } }
     val isStateChanging = results.any {
-      registry.resolveToolName(it.call.toolName) in STATE_CHANGING_TOOLS && it.result.isSuccess
+      val resolved = registry.resolveToolName(it.call.toolName)
+      (resolved in STATE_CHANGING_TOOLS || resolved.contains("__")) && it.result.isSuccess
     }
     val isInformative = results.any {
-      registry.resolveToolName(it.call.toolName) in INFORMATIVE_TOOLS && it.result.isSuccess
+      val resolved = registry.resolveToolName(it.call.toolName)
+      (resolved in INFORMATIVE_TOOLS || resolved.contains("__") || it.observation.outcome == ToolExecutionOutcome.SUCCESS_WITH_RESULTS) && it.result.isSuccess
     }
     if (hasNewArtifact || isStateChanging || isInformative) {
       planner.recordProgress(true)
@@ -2934,7 +2945,8 @@ class AgentEngine(
     val requiredOutputs = extractRequiredOutputs(task.goal)
     for (out in requiredOutputs) {
       if (checks.none { it.target == out || it.name.contains(out) }) {
-        val f = File(workspaceDir, out)
+        val directF = File(workspaceDir, out)
+        val f = if (directF.exists()) directF else (deliverableTracker.findMatchingFile(File(out).name) ?: directF)
         if (!f.exists() || !f.isFile || !f.canRead() || f.length() == 0L) {
           val lastAttempt = state.executionFeed.lastOrNull { it.content.contains(out) || (it.toolName in listOf("write_file", "edit_file", "build_pdf_document", "recreate_document")) }
           val isBlocked = lastAttempt?.structuredError?.failureClass in listOf(ToolFailureClass.PERMISSION_POLICY, ToolFailureClass.UNAVAILABLE_TOOL) ||
@@ -3351,16 +3363,19 @@ class AgentEngine(
       "write_file", "edit_file", "apply_patch", "delete_file", "move_file", "copy_file",
       "create_directory", "delete_directory", "install_package", "e2b_write_file",
       "transfer_artifact_to_sandbox", "download_artifact_from_sandbox",
-      "document_process", "mcp_manage_server"
+      "document_process", "mcp_manage_server", "build_pdf_document", "recreate_document",
+      "terminal", "code_interpreter", "e2b_sandbox"
     )
 
     /** Tools whose successful execution produces genuinely new information. */
     private val INFORMATIVE_TOOLS = setOf(
-      "web_search", "web_fetch", "web_open", "web_extract", "web_crawl", "deep_research",
-      "read_file", "list_directory", "list_files", "file_exists", "file_metadata",
-      "check_tools", "sandbox_diagnostics", "e2b_read_file", "e2b_list_directory", "diff_files",
+      "web_search", "web_fetch", "web_open", "web_extract", "web_crawl", "deep_research", "academic_search",
+      "read_file", "read_image", "list_directory", "list_files", "search_files", "file_exists", "file_metadata",
+      "check_tools", "sandbox_diagnostics", "get_environment_topology", "environment_capability",
+      "e2b_read_file", "e2b_list_directory", "diff_files",
       "document_search", "document_list",
-      "mcp_list_servers", "mcp_list_resources", "mcp_read_resource", "mcp_list_prompts", "mcp_refresh", "mcp_call_tool"
+      "mcp_list_servers", "mcp_list_resources", "mcp_read_resource", "mcp_list_prompts", "mcp_refresh", "mcp_call_tool",
+      "terminal", "code_interpreter", "e2b_sandbox"
     )
   }
 

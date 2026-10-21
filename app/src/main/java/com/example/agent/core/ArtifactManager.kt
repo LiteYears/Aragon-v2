@@ -136,10 +136,7 @@ class ArtifactManager(
       nameLower.endsWith(".swp") ||
       nameLower.endsWith(".log")
 
-    val pathSegments = cleanRelPath.split('/').map { it.lowercase(java.util.Locale.ROOT) }
-    val isInternalPath = pathSegments.any { seg ->
-      seg.startsWith(".") || seg in setOf("notes", "tmp", "temp", "venv", ".venv", "node_modules", "__pycache__", "bin")
-    }
+    val isInternalPath = DeliverableTracker.isInternalWorkspacePath(cleanRelPath, nameLower)
 
     val category = when {
       cleanRelPath.startsWith(".observations/") || isInternalPath -> ArtifactCategory.INTERNAL_OBSERVATION
@@ -239,13 +236,13 @@ class ArtifactManager(
       return emptyList()
     }
 
-    val internalDirs = setOf(".git", ".sessions", ".mcp_data", ".observations", ".artifacts", "workspace", "venv", ".venv", "node_modules", "bin", "tmp", "temp", "notes", "__pycache__")
+    val internalDirs = DeliverableTracker.INTERNAL_WORKSPACE_DIRS + setOf("workspace")
 
     // Prune registered files that no longer exist or belong to internal folders
     val toRemove = mutableListOf<String>()
     for ((path, artifact) in registeredArtifacts) {
       val f = File(artifact.absolutePath.ifBlank { resolveFile(path).canonicalPath })
-      val hasInternalSeg = path.split('/').any { seg -> seg.startsWith(".") || seg.lowercase(java.util.Locale.ROOT) in internalDirs }
+      val hasInternalSeg = DeliverableTracker.isInternalWorkspacePath(path, f.name.lowercase(java.util.Locale.ROOT))
       if (!f.exists() || !f.isFile || hasInternalSeg) {
         toRemove.add(path)
       }
@@ -269,10 +266,7 @@ class ArtifactManager(
         val name = file.name.lowercase(java.util.Locale.ROOT)
         val parentName = file.parentFile?.name.orEmpty().lowercase(java.util.Locale.ROOT)
         val rel = PathSecurity.toCanonicalRelativePath(workspaceDir, PathSecurity.getRelativePath(workspaceDir, file))
-        val hasInternalSegment = rel.split('/').any { seg ->
-          val s = seg.lowercase(java.util.Locale.ROOT)
-          s.startsWith(".") || s in internalDirs
-        }
+        val hasInternalSegment = DeliverableTracker.isInternalWorkspacePath(rel, name)
         val isLink = PathSecurity.isSymbolicLink(file)
         val isTemp = name.startsWith(".") ||
           name.startsWith(".tmp_") ||

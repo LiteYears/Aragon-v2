@@ -306,13 +306,20 @@ object NvidiaModelRegistry {
       }
 
       // Check existing catalog models to detect deprecation:
-      // If a model was in our catalog previously but is NO LONGER returned by NVIDIA's live list,
-      // it has been deprecated by NVIDIA!
+      // Baseline verified models are retained unless explicitly in KNOWN_DEPRECATED_MODELS,
+      // preventing paginated or partial /v1/models responses from falsely deprecating flagship models.
+      val baselineMap = buildBaselineCatalog().associateBy { it.id }
       for ((id, entry) in existingMap) {
         if (!liveModelIds.contains(id)) {
-          deprecatedModelIds.add(id)
-          deprecatedCount++
-          // Notice: we do NOT add it to liveEntries, keeping it excluded from active list!
+          if (KNOWN_DEPRECATED_MODELS.contains(id)) {
+            deprecatedModelIds.add(id)
+            deprecatedCount++
+          } else if (baselineMap.containsKey(id)) {
+            liveEntries.add(entry.copy(isDeprecated = false))
+          } else {
+            deprecatedModelIds.add(id)
+            deprecatedCount++
+          }
         }
       }
 
@@ -365,6 +372,7 @@ object NvidiaModelRegistry {
       lower.contains("vlm") ||
       lower.contains("multimodal") ||
       lower.contains("paligemma") ||
+      lower.contains("gemini") ||
       lower.contains("image") ||
       lower.contains("deplot") ||
       lower.contains("vila") ||
@@ -374,7 +382,8 @@ object NvidiaModelRegistry {
       lower.contains("llava") ||
       lower.contains("fuyu") ||
       lower.contains("omni") ||
-      lower.contains("gemini")
+      lower.contains("llama-4-maverick") ||
+      lower.contains("llama-4-scout")
   }
 
   private fun detectCategory(id: String, ownedBy: String): String {
@@ -589,6 +598,50 @@ object NvidiaModelRegistry {
       isVision = false,
       isDeprecated = false,
       ownedBy = "deepseek-ai"
+    ),
+    NvidiaModelEntry(
+      id = "deepseek-ai/deepseek-r1",
+      name = "DeepSeek R1",
+      category = "DeepSeek",
+      description = "DeepSeek frontier reasoning model with native chain-of-thought and tool calling",
+      badge = "REASONING",
+      isVerified = true,
+      isVision = false,
+      isDeprecated = false,
+      ownedBy = "deepseek-ai"
+    ),
+    NvidiaModelEntry(
+      id = "meta/llama-3.3-70b-instruct",
+      name = "Llama 3.3 70B Instruct",
+      category = "Meta Llama",
+      description = "Meta's high-reliability 70B instruction and structured tool-calling model",
+      badge = "70B",
+      isVerified = true,
+      isVision = false,
+      isDeprecated = false,
+      ownedBy = "meta"
+    ),
+    NvidiaModelEntry(
+      id = "nvidia/llama-3.3-nemotron-super-49b-v1",
+      name = "Llama 3.3 Nemotron Super 49B",
+      category = "NVIDIA Nemotron",
+      description = "NVIDIA Nemotron Super 49B tuned for agentic reasoning and tool orchestration",
+      badge = "NVIDIA",
+      isVerified = true,
+      isVision = false,
+      isDeprecated = false,
+      ownedBy = "nvidia"
+    ),
+    NvidiaModelEntry(
+      id = "qwen/qwen2.5-coder-32b-instruct",
+      name = "Qwen 2.5 Coder 32B",
+      category = "Coding Specialist",
+      description = "Qwen 32B code generation, synthesis, and multi-language engineering model",
+      badge = "CODE",
+      isVerified = true,
+      isVision = false,
+      isDeprecated = false,
+      ownedBy = "qwen"
     ),
     NvidiaModelEntry(
       id = "deepseek-ai/deepseek-coder-6.7b-instruct",

@@ -27,7 +27,7 @@ data class NvidiaNimConfig(
   val apiKey: String = "",
   val apiKeys: List<String> = if (apiKey.isNotBlank()) listOf(apiKey) else emptyList(),
   val temperature: Double? = 0.2,
-  val maxTokens: Int? = 8192,
+  val maxTokens: Int? = 4096,
   val topP: Double? = null,
   val timeoutSeconds: Long = 45,
   val enableReasoning: Boolean = true
@@ -65,6 +65,10 @@ object NvidiaNimModels {
   const val KIMI_K3 = "moonshotai/kimi-k3" // Retained for backward reference; marked deprecated
   const val KIMI_K2_6 = "moonshotai/kimi-k2.6"
   const val DEEPSEEK_V4_1_FLASH = "deepseek-ai/deepseek-v4.1-flash"
+  const val DEEPSEEK_R1 = "deepseek-ai/deepseek-r1"
+  const val LLAMA_3_3_70B = "meta/llama-3.3-70b-instruct"
+  const val NEMOTRON_SUPER_49B = "nvidia/llama-3.3-nemotron-super-49b-v1"
+  const val QWEN_2_5_CODER_32B = "qwen/qwen2.5-coder-32b-instruct"
 
   /**
    * Evidence-based tool-calling confidence. Used for ordering fallback candidates.
@@ -72,8 +76,9 @@ object NvidiaNimModels {
   enum class ToolCallingConfidence { VERIFIED, LIKELY, UNKNOWN }
 
   fun toolCallingConfidence(modelId: String): ToolCallingConfidence = when (modelId) {
-    GLM_5_3, NEMOTRON_3_5_LIGHTNING, NEMOTRON_3_5_SUPER, STEP_5_PREVIEW, GPT_OSS_20B, NEMOTRON_3_NANO_REASONING -> ToolCallingConfidence.VERIFIED
-    GLM_5_3_FLASH -> ToolCallingConfidence.LIKELY
+    GLM_5_3, NEMOTRON_3_5_LIGHTNING, NEMOTRON_3_5_SUPER, STEP_5_PREVIEW, GPT_OSS_20B,
+    NEMOTRON_3_NANO_REASONING, LLAMA_3_3_70B, NEMOTRON_SUPER_49B, QWEN_2_5_CODER_32B -> ToolCallingConfidence.VERIFIED
+    GLM_5_3_FLASH, DEEPSEEK_V4_1_FLASH, DEEPSEEK_R1, MISTRAL_LARGE_2, KIMI_K2_6 -> ToolCallingConfidence.LIKELY
     else -> ToolCallingConfidence.UNKNOWN
   }
 
@@ -120,6 +125,9 @@ class NvidiaNimProvider(
 
   /** Per-credential health: cooldowns, quarantine and backoff. */
   private val keyHealth = NimKeyHealthTracker()
+
+  /** Caches model IDs that rejected native OpenAI tool definitions to avoid a failing 400 round-trip on every turn. */
+  private val modelsRejectingNativeTools = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
   val config: NvidiaNimConfig get() = currentConfig
 
@@ -284,15 +292,17 @@ class NvidiaNimProvider(
       val keySlotLabel = if (poolSize > 1) "Key #${keyIndex + 1}" else "Primary Key"
       val isFallbackModel = model != activeConfig.model
 
-      val effectiveSystemPrompt = if (isFallbackModel) {
-        """
-        $systemPrompt
-
-        [RECOVERY ROUTING CONTEXT]:
-        Operating via $keySlotLabel with fallback model '$model'.
-        Verify deliverables on disk before concluding.
-        """.trimIndent()
-      } else systemPrompt
+      val useNativeToolsForModel = model !in modelsRejectingNativeTools
+      val effectiveSystemPrompt = buildString {
+        append(systemPrompt)
+        if (isFallbackModel) {
+          append("\n\n[RECOVERY ROUTING CONTEXT]:\nOperating via $keySlotLabel with fallback model '$model'.\nVerify deliverables on disk before concluding.")
+        }
+        if (!useNativeToolsForModel) {
+          append("\n\nAvailable tools:\n")
+          append(formatToolsTextDescription(tools))
+        }
+      }
 
       val result = executeChatCompletion(
         apiKeyToUse = candidateKey,
@@ -302,7 +312,7 @@ class NvidiaNimProvider(
         taskIntent = taskIntent,
         messages = messages,
         tools = tools,
-        useNativeTools = true,
+        useNativeTools = useNativeToolsForModel,
         streamListener = streamListener
       )
 
@@ -392,6 +402,9 @@ class NvidiaNimProvider(
     add(activeConfigured)
     val orderedFallbacks = listOf(
       NvidiaNimModels.NEMOTRON_3_5_LIGHTNING,
+      NvidiaNimModels.LLAMA_3_3_70B,
+      NvidiaNimModels.NEMOTRON_SUPER_49B,
+      NvidiaNimModels.QWEN_2_5_CODER_32B,
       NvidiaNimModels.NEMOTRON_3_5_SUPER,
       NvidiaNimModels.STEP_5_PREVIEW,
       NvidiaNimModels.GPT_OSS_20B,
@@ -434,7 +447,8 @@ class NvidiaNimProvider(
     messages: List<AgentMessage>,
     tools: List<Tool>,
     useNativeTools: Boolean,
-    streamListener: LLMStreamListener? = null
+    streamListener: LLMStreamListener? = null,
+    maxTokensOverride: Int? = null
   ): LLMDecision {
     val activeConfig = currentConfig
     streamListener?.onReset()
@@ -447,7 +461,8 @@ class NvidiaNimProvider(
       requestJson.put("model", modelToUse)
 
       // 1. Construct messages conforming to OpenAI / NVIDIA tool calling specifications
-      val messagesArray = buildMessagesJson(systemPrompt, messages)
+      val modelSupportsVision = NvidiaModelRegistry.isVisionModel(modelToUse)
+      val messagesArray = buildMessagesJson(systemPrompt, messages, modelSupportsVision)
       requestJson.put("messages", messagesArray)
 
       // 2. Expose canonical registered tools
@@ -464,7 +479,8 @@ class NvidiaNimProvider(
         requestJson.put("stream", true)
       }
       activeConfig.temperature?.let { requestJson.put("temperature", it) }
-      activeConfig.maxTokens?.let { requestJson.put("max_tokens", it) }
+      val effectiveMaxTokens = maxTokensOverride ?: activeConfig.maxTokens
+      effectiveMaxTokens?.let { requestJson.put("max_tokens", it) }
       activeConfig.topP?.let { requestJson.put("top_p", it) }
 
       // 4. Build HTTP POST Request with candidate key from pool
@@ -498,9 +514,20 @@ class NvidiaNimProvider(
         val responseBodyString = response.body?.string() ?: ""
         response.close()
         val errorDetail = extractErrorDetail(responseBodyString, response.code, apiKeyToUse)
+        val lowerErr = errorDetail.lowercase()
 
-        // If tools are rejected by this model (HTTP 400 with 'tools' or 'extra input'), retry without native tools
-        if (useNativeTools && response.code == 400 && (errorDetail.contains("tool") || errorDetail.contains("extra input") || errorDetail.contains("parameters"))) {
+        // If tools are rejected by this model (HTTP 400/422 with tool/schema/template error), cache and retry without native tools
+        if (useNativeTools && (response.code == 400 || response.code == 422) && (
+            lowerErr.contains("tool") ||
+              lowerErr.contains("function") ||
+              lowerErr.contains("extra") ||
+              lowerErr.contains("parameters") ||
+              lowerErr.contains("schema") ||
+              lowerErr.contains("chat_template") ||
+              lowerErr.contains("guided")
+          )
+        ) {
+          modelsRejectingNativeTools.add(modelToUse)
           return executeChatCompletion(
             apiKeyToUse = apiKeyToUse,
             keyLabel = keyLabel,
@@ -510,7 +537,29 @@ class NvidiaNimProvider(
             messages = messages,
             tools = tools,
             useNativeTools = false,
-            streamListener = streamListener
+            streamListener = streamListener,
+            maxTokensOverride = maxTokensOverride
+          )
+        }
+
+        // If max_tokens exceeds remaining context window on this model, automatically retry with a bounded 2048 token cap
+        if (maxTokensOverride == null && (response.code == 400 || response.code == 422) && (
+            lowerErr.contains("max_tokens") ||
+              lowerErr.contains("context length") ||
+              lowerErr.contains("maximum context")
+          )
+        ) {
+          return executeChatCompletion(
+            apiKeyToUse = apiKeyToUse,
+            keyLabel = keyLabel,
+            modelToUse = modelToUse,
+            systemPrompt = systemPrompt,
+            taskIntent = taskIntent,
+            messages = messages,
+            tools = tools,
+            useNativeTools = useNativeTools,
+            streamListener = streamListener,
+            maxTokensOverride = 2048
           )
         }
 
@@ -588,6 +637,11 @@ class NvidiaNimProvider(
                             val argsBuilder = existing?.third ?: StringBuilder()
                             argsBuilder.append(fnArgs)
                             toolCallBuffers[idx] = Triple(id, fnName, argsBuilder)
+                            // If the model streams tool calls directly without prior reasoning/content text,
+                            // notify streamListener as soon as the tool name is known so UI shows immediate responsiveness.
+                            if (existing == null && fnName.isNotBlank() && accumulatedReasoning.isEmpty() && accumulatedContent.isEmpty()) {
+                              streamListener?.onToken("Preparing tool action: $fnName...\n")
+                            }
                           }
                         }
                       }
@@ -651,6 +705,20 @@ class NvidiaNimProvider(
           return LLMDecision.Complete(
             conclusion = finalConclusion,
             thought = if (reasoningText.isNotBlank()) reasoningText else "Agent concluded task."
+          )
+        } else if (streamListener != null) {
+          // Stream closed without emitting content or tool calls; retry once without SSE streaming
+          return executeChatCompletion(
+            apiKeyToUse = apiKeyToUse,
+            keyLabel = keyLabel,
+            modelToUse = modelToUse,
+            systemPrompt = systemPrompt,
+            taskIntent = taskIntent,
+            messages = messages,
+            tools = tools,
+            useNativeTools = useNativeTools,
+            streamListener = null,
+            maxTokensOverride = maxTokensOverride
           )
         }
       }
@@ -822,6 +890,28 @@ class NvidiaNimProvider(
       if (results.isNotEmpty()) return results
     }
 
+    // 2c. Llama 3.1/3.3 <function=tool_name>{...}</function> format
+    if (contentText.contains("<function=")) {
+      val fnPattern = Pattern.compile("<function=([a-zA-Z0-9_.-]+)>\\s*(\\{.*?\\})\\s*</function>", Pattern.DOTALL)
+      val matcher = fnPattern.matcher(contentText)
+      while (matcher.find()) {
+        val fnName = matcher.group(1)?.trim() ?: continue
+        val argsStr = matcher.group(2)?.trim() ?: continue
+        val canonical = ToolRegistry.resolveCanonicalName(fnName)
+        if (toolNames.isEmpty() || toolNames.contains(fnName) || toolNames.contains(canonical)) {
+          val argsMap = parseArguments(argsStr)
+          results.add(
+            ToolCall(
+              callId = "call_${UUID.randomUUID()}",
+              toolName = fnName,
+              arguments = argsMap
+            )
+          )
+        }
+      }
+      if (results.isNotEmpty()) return results
+    }
+
     // 3. Embedded JSON markdown block ```json ... ```
     if (contentText.contains("```")) {
       val codeBlockPattern = Pattern.compile("```(?:json)?\\s*(\\{.*?\\})\\s*```", Pattern.DOTALL)
@@ -849,11 +939,7 @@ class NvidiaNimProvider(
       while (matcher.find()) {
         val actionName = matcher.group(1)?.trim() ?: continue
         val actionInput = matcher.group(2)?.trim() ?: continue
-        val argsMap = try {
-          jsonObjectToMap(JSONObject(actionInput))
-        } catch (_: Exception) {
-          emptyMap()
-        }
+        val argsMap = parseArguments(actionInput)
         results.add(
           ToolCall(
             callId = "call_${UUID.randomUUID()}",
@@ -897,7 +983,7 @@ class NvidiaNimProvider(
     return when (argsRaw) {
       is JSONObject -> jsonObjectToMap(argsRaw)
       is String -> {
-        var trimmed = argsRaw.trim()
+        val trimmed = argsRaw.trim()
           .removePrefix("```json")
           .removePrefix("```")
           .removeSuffix("```")
@@ -907,8 +993,8 @@ class NvidiaNimProvider(
             jsonObjectToMap(JSONObject(trimmed))
           } catch (_: Exception) {
             try {
-              // Resilient recovery for trailing commas before closing brace/bracket
-              val repaired = trimmed.replace(Regex(",\\s*([}\\]])"), "$1")
+              // Resilient recovery for trailing commas or unescaped control chars inside JSON strings
+              val repaired = sanitizeJsonStringLiterals(trimmed).replace(Regex(",\\s*([}\\]])"), "$1")
               jsonObjectToMap(JSONObject(repaired))
             } catch (_: Exception) {
               emptyMap()
@@ -921,6 +1007,39 @@ class NvidiaNimProvider(
       null, JSONObject.NULL -> emptyMap()
       else -> emptyMap()
     }
+  }
+
+  private fun sanitizeJsonStringLiterals(raw: String): String {
+    val sb = StringBuilder(raw.length)
+    var inQuotes = false
+    var escaped = false
+    for (ch in raw) {
+      if (escaped) {
+        sb.append(ch)
+        escaped = false
+        continue
+      }
+      if (ch == '\\') {
+        sb.append(ch)
+        escaped = true
+        continue
+      }
+      if (ch == '"') {
+        inQuotes = !inQuotes
+        sb.append(ch)
+        continue
+      }
+      if (inQuotes && (ch == '\n' || ch == '\r' || ch == '\t')) {
+        when (ch) {
+          '\n' -> sb.append("\\n")
+          '\r' -> sb.append("\\r")
+          '\t' -> sb.append("\\t")
+        }
+      } else {
+        sb.append(ch)
+      }
+    }
+    return sb.toString()
   }
 
   private fun JSONObject.optCleanString(key: String): String {
@@ -1012,19 +1131,17 @@ class NvidiaNimProvider(
       for (param in tool.schema.parameters) {
         val pObj = JSONObject()
         pObj.put("type", param.type.lowercase())
-        pObj.put("description", param.description)
+        val descWithMeta = buildString {
+          append(param.description)
+          if (param.defaultValue != null) {
+            append(" (default: ${param.defaultValue})")
+          }
+        }
+        pObj.put("description", descWithMeta)
         if (!param.enumValues.isNullOrEmpty()) {
           val enumArr = JSONArray()
           param.enumValues.forEach { enumArr.put(it) }
           pObj.put("enum", enumArr)
-        }
-        if (param.defaultValue != null) {
-          pObj.put("default", param.defaultValue)
-        }
-        if (param.aliases.isNotEmpty()) {
-          val aliasArr = JSONArray()
-          param.aliases.forEach { aliasArr.put(it) }
-          pObj.put("aliases", aliasArr)
         }
         propertiesObj.put(param.name, pObj)
         if (param.required) {
@@ -1048,7 +1165,8 @@ class NvidiaNimProvider(
    */
   private fun buildMessagesJson(
     systemPrompt: String,
-    messages: List<AgentMessage>
+    messages: List<AgentMessage>,
+    modelSupportsVision: Boolean = false
   ): JSONArray {
     val messagesArray = JSONArray()
 
@@ -1067,16 +1185,18 @@ class NvidiaNimProvider(
     // Consecutive assistant tool-call records are folded into one assistant message,
     // because OpenAI-compatible APIs expect the whole requested batch together before
     // any corresponding role=tool observations.
+    var activeToolCallIds = mutableSetOf<String>()
     var messageIndex = 0
     while (messageIndex < boundedMessages.size) {
       val msg = boundedMessages[messageIndex]
       when (msg.role) {
         MessageRole.USER -> {
+          activeToolCallIds.clear()
           val userObj = JSONObject()
           userObj.put("role", "user")
           if (msg.attachments.isEmpty()) {
             userObj.put("content", msg.content)
-          } else {
+          } else if (modelSupportsVision) {
             val contentArr = JSONArray()
             contentArr.put(JSONObject().put("type", "text").put("text", msg.content))
             for (att in msg.attachments) {
@@ -1102,11 +1222,30 @@ class NvidiaNimProvider(
               }
             }
             userObj.put("content", contentArr)
+          } else {
+            // Text-only NIM models reject array content with image_url; serialize attachments as text context
+            val textSb = StringBuilder(msg.content)
+            for (att in msg.attachments) {
+              if (att.mimeType.startsWith("image/")) {
+                textSb.append("\n\n[Attached Image in Workspace: ${att.name} (${att.mimeType}) — use 'read_image', 'recreate_document', or 'document_process' to inspect its visual/OCR contents]")
+              } else {
+                val textContent = try {
+                  att.file?.readText() ?: att.base64Data?.let {
+                    String(android.util.Base64.decode(it, android.util.Base64.DEFAULT), Charsets.UTF_8)
+                  }
+                } catch (_: Exception) { null }
+                if (textContent != null) {
+                  textSb.append("\n\n[Attached File: ${att.name} (${att.mimeType})]\n$textContent")
+                }
+              }
+            }
+            userObj.put("content", textSb.toString())
           }
           messagesArray.put(userObj)
         }
 
         MessageRole.SYSTEM -> {
+          activeToolCallIds.clear()
           val sysObj = JSONObject()
           sysObj.put("role", "system")
           sysObj.put("content", msg.content)
@@ -1121,6 +1260,7 @@ class NvidiaNimProvider(
             // For native tool calls in conversation history, keep content null so reasoning models
             // (GLM, DeepSeek, Nemotron) do not learn to echo internal reasoning blocks inside content.
             assistantObj.put("content", JSONObject.NULL)
+            activeToolCallIds = mutableSetOf()
 
             val toolCallsArr = JSONArray()
             var batchIndex = messageIndex
@@ -1140,33 +1280,43 @@ class NvidiaNimProvider(
               funcObj.put("arguments", argsJson.toString())
               callObj.put("function", funcObj)
               toolCallsArr.put(callObj)
+              activeToolCallIds.add(batchMessage.toolCallId)
               batchIndex++
             }
             assistantObj.put("tool_calls", toolCallsArr)
             messageIndex = batchIndex - 1
           } else {
+            activeToolCallIds.clear()
             assistantObj.put("content", msg.content)
           }
           messagesArray.put(assistantObj)
         }
 
         MessageRole.TOOL -> {
-          // Native tool response linked to exact tool_call_id
-          val toolObj = JSONObject()
-          toolObj.put("role", "tool")
-          toolObj.put("tool_call_id", msg.toolCallId ?: "")
-          if (!msg.toolName.isNullOrBlank()) {
-            toolObj.put("name", msg.toolName)
-          }
-
           // Bound observation payload length to preserve token budget
           val boundedContent = if (msg.content.length > 8000) {
             msg.content.take(8000) + "\n...[truncated remainder of large observation]..."
           } else {
             msg.content
           }
-          toolObj.put("content", boundedContent)
-          messagesArray.put(toolObj)
+          val callId = msg.toolCallId ?: ""
+          if (callId.isNotBlank() && activeToolCallIds.contains(callId)) {
+            val toolObj = JSONObject()
+            toolObj.put("role", "tool")
+            toolObj.put("tool_call_id", callId)
+            if (!msg.toolName.isNullOrBlank()) {
+              toolObj.put("name", msg.toolName)
+            }
+            toolObj.put("content", boundedContent)
+            messagesArray.put(toolObj)
+          } else {
+            // Orphaned tool message without matching preceding assistant tool_calls batch:
+            // serialize as user observation so strict vLLM/TRT-LLM templates never reject with HTTP 400
+            val fallbackUserObj = JSONObject()
+            fallbackUserObj.put("role", "user")
+            fallbackUserObj.put("content", "[Tool Observation (${msg.toolName ?: "tool"})]:\n$boundedContent")
+            messagesArray.put(fallbackUserObj)
+          }
         }
       }
       messageIndex++
@@ -1265,12 +1415,20 @@ class NvidiaNimProvider(
    */
   suspend fun fetchLiveModels(): Result<List<String>> = withContext(Dispatchers.IO) {
     val activeConfig = currentConfig
-    val keyToUse = keyPool.firstOrNull() ?: activeConfig.apiKey
-    val syncRes = NvidiaModelRegistry.sync(activeConfig.baseUrl, keyToUse, null)
-    if (syncRes.isSuccess) {
+    val now = System.currentTimeMillis()
+    val candidates = keyPool.filter { keyHealth.isEligible(it, now) }.ifEmpty { keyPool }
+    for (candidateKey in candidates) {
+      val syncRes = NvidiaModelRegistry.sync(activeConfig.baseUrl, candidateKey, null)
+      if (syncRes.isSuccess) {
+        keyHealth.recordSuccess(candidateKey)
+        return@withContext Result.success(NvidiaModelRegistry.getActiveModels().map { it.id })
+      }
+    }
+    val fallbackSync = NvidiaModelRegistry.sync(activeConfig.baseUrl, activeConfig.apiKey, null)
+    if (fallbackSync.isSuccess) {
       Result.success(NvidiaModelRegistry.getActiveModels().map { it.id })
     } else {
-      Result.failure(syncRes.exceptionOrNull() ?: IOException("Failed to synchronize models from NVIDIA NIM"))
+      Result.failure(fallbackSync.exceptionOrNull() ?: IOException("Failed to synchronize models from NVIDIA NIM"))
     }
   }
 }
