@@ -161,16 +161,16 @@ fun McpServersDialog(
         .fillMaxWidth(0.96f)
         .fillMaxHeight(0.92f),
       shape = RoundedCornerShape(22.dp),
-      color = Color.White,
-      shadowElevation = 16.dp,
-      border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+      color = Color(0xFF0C0C12),
+      shadowElevation = 20.dp,
+      border = BorderStroke(1.dp, Color(0xFF1E1E2C))
     ) {
       Column(modifier = Modifier.fillMaxSize()) {
         // Dialog Header
         Surface(
           modifier = Modifier.fillMaxWidth(),
-          color = Color(0xFFF8FAFC),
-          border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+          color = Color(0xFF12121A),
+          border = BorderStroke(1.dp, Color(0xFF1E1E2C))
         ) {
           Row(
             modifier = Modifier
@@ -198,7 +198,7 @@ fun McpServersDialog(
                   fontFamily = InterFontFamily,
                   fontSize = 12.5.sp,
                   letterSpacing = 0.5.sp,
-                  color = Color(0xFF0F172A),
+                  color = Color.White,
                   maxLines = 1,
                   overflow = TextOverflow.Ellipsis
                 )

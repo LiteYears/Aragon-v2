@@ -1,7 +1,16 @@
 package com.example.agent.ui.components
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -18,6 +27,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,8 +37,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,44 +59,21 @@ import com.example.agent.core.AgentStatus
 import com.example.agent.core.ApprovalPolicy
 import com.example.agent.ui.UiTab
 import com.example.ui.theme.AmoledActionPrimary
-import com.example.ui.theme.AmoledActionPrimaryOn
-import com.example.ui.theme.AmoledBackground
-import com.example.ui.theme.AmoledBorder
-import com.example.ui.theme.AmoledBorderSubtle
-import com.example.ui.theme.AmoledIconGreyLight
-import com.example.ui.theme.AmoledSurface
 import com.example.ui.theme.AmoledTextMuted
 import com.example.ui.theme.AmoledTextPrimary
-import com.example.ui.theme.AmoledTextSecondary
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.JetBrainsMonoFontFamily
-
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.activity.compose.BackHandler
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Pure Typography Navigation Hub for Aragon.
+ * Pure AMOLED Right-Hand Sticky Navigation Drawer for Aragon.
  *
- * Strict AMOLED design without decorative icons or emojis:
- * - High-contrast monochromatic palette with selective action borders.
+ * Sticks to the right side of the screen with smooth slide-in from the right,
+ * unified with the execution feed AMOLED design language:
+ * - Pure dark background with subtle slate borders.
  * - Monospace indexes and clean badges.
  * - Organized into Destinations, Engine Controls, and System Actions.
- * - Smooth spring entry and graceful exit animations.
  */
 @Composable
 fun AragonNavigationMenu(
@@ -116,7 +107,7 @@ fun AragonNavigationMenu(
   fun dismissWithAnimation(onComplete: (() -> Unit)? = null) {
     coroutineScope.launch {
       isVisible = false
-      delay(150)
+      delay(160)
       onComplete?.invoke()
       onDismiss()
     }
@@ -130,61 +121,54 @@ fun AragonNavigationMenu(
       dismissWithAnimation()
     }
 
+    // Modal background overlay: dismisses on backdrop tap
     Box(
       modifier = Modifier
         .fillMaxSize()
+        .background(Color.Black.copy(alpha = 0.65f))
         .clickable(
           interactionSource = remember { MutableInteractionSource() },
           indication = null
         ) { dismissWithAnimation() },
-      contentAlignment = Alignment.Center
+      contentAlignment = Alignment.CenterEnd
     ) {
       AnimatedVisibility(
         visible = isVisible,
         enter = fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing)) +
-          scaleIn(
-            initialScale = 0.93f,
+          slideInHorizontally(
+            initialOffsetX = { it },
             animationSpec = spring(
               dampingRatio = Spring.DampingRatioLowBouncy,
               stiffness = Spring.StiffnessMediumLow
             )
-          ) +
-          slideInVertically(
-            initialOffsetY = { 40 },
-            animationSpec = spring(
-              dampingRatio = Spring.DampingRatioNoBouncy,
-              stiffness = Spring.StiffnessMediumLow
-            )
           ),
         exit = fadeOut(animationSpec = tween(140, easing = FastOutSlowInEasing)) +
-          scaleOut(
-            targetScale = 0.95f,
-            animationSpec = tween(140)
-          ) +
-          slideOutVertically(
-            targetOffsetY = { 30 },
+          slideOutHorizontally(
+            targetOffsetX = { it },
             animationSpec = tween(140)
           )
       ) {
+        // Sticky Right Drawer Surface
         Surface(
           modifier = Modifier
-            .fillMaxWidth(0.94f)
-            .fillMaxHeight(0.88f)
+            .fillMaxHeight()
+            .fillMaxWidth(0.86f)
+            .widthIn(max = 380.dp)
             .clickable(
               interactionSource = remember { MutableInteractionSource() },
               indication = null
-            ) { /* Consume taps inside menu surface so dialog background doesn't dismiss */ },
-          shape = RoundedCornerShape(24.dp),
-          color = Color.White,
-          shadowElevation = 16.dp,
-          border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+            ) { /* Consume taps inside drawer */ },
+          shape = RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp, topEnd = 0.dp, bottomEnd = 0.dp),
+          color = Color(0xFF09090D),
+          shadowElevation = 24.dp,
+          border = BorderStroke(1.dp, Color(0xFF1E1E2C))
         ) {
           Column(
             modifier = Modifier
               .fillMaxSize()
-              .padding(horizontal = 18.dp, vertical = 16.dp)
+              .padding(horizontal = 18.dp, vertical = 20.dp)
           ) {
-            // Top Header Row (Pure Typography - Zero Icons)
+            // Top Header Row (AMOLED Pure Typography)
             Row(
               modifier = Modifier.fillMaxWidth(),
               verticalAlignment = Alignment.CenterVertically,
@@ -194,19 +178,19 @@ fun AragonNavigationMenu(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                   Box(
                     modifier = Modifier
-                      .size(6.dp)
+                      .size(7.dp)
                       .clip(CircleShape)
-                      .background(Color(0xFF0F172A))
+                      .background(Color(0xFF38BDF8))
                   )
-                  Spacer(modifier = Modifier.width(6.dp))
+                  Spacer(modifier = Modifier.width(7.dp))
                   Text(
                     text = "ARAGON WORKSPACE",
                     style = MaterialTheme.typography.titleMedium,
                     fontFamily = InterFontFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.5.sp,
-                    letterSpacing = 1.6.sp,
-                    color = Color(0xFF0F172A)
+                    letterSpacing = 1.4.sp,
+                    color = Color.White
                   )
                 }
                 Spacer(modifier = Modifier.height(2.dp))
@@ -220,7 +204,7 @@ fun AragonNavigationMenu(
                 )
               }
 
-              // Pure text CLOSE button (no icon)
+              // AMOLED CLOSE Button
               AragonHeaderButton(
                 text = "CLOSE",
                 onClick = { dismissWithAnimation() },
@@ -229,7 +213,7 @@ fun AragonNavigationMenu(
               )
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Main Navigation & Workspaces Content
             Column(
@@ -244,10 +228,10 @@ fun AragonNavigationMenu(
                 Text(
                   text = "WORKSPACES & DESTINATIONS",
                   fontFamily = JetBrainsMonoFontFamily,
-                  fontSize = 9.5.sp,
+                  fontSize = 9.sp,
                   fontWeight = FontWeight.Bold,
                   letterSpacing = 1.2.sp,
-                  color = AmoledTextMuted
+                  color = Color(0xFF64748B)
                 )
 
                 // 01. Execution Feed
@@ -321,10 +305,10 @@ fun AragonNavigationMenu(
                 Text(
                   text = "INTELLIGENCE ENGINE CONTROLS",
                   fontFamily = JetBrainsMonoFontFamily,
-                  fontSize = 9.5.sp,
+                  fontSize = 9.sp,
                   fontWeight = FontWeight.Bold,
                   letterSpacing = 1.2.sp,
-                  color = AmoledTextMuted
+                  color = Color(0xFF64748B)
                 )
 
                 Row(
@@ -387,10 +371,10 @@ fun AragonNavigationMenu(
                 Text(
                   text = "WORKSPACE ACTIONS",
                   fontFamily = JetBrainsMonoFontFamily,
-                  fontSize = 9.5.sp,
+                  fontSize = 9.sp,
                   fontWeight = FontWeight.Bold,
                   letterSpacing = 1.2.sp,
-                  color = AmoledTextMuted
+                  color = Color(0xFF64748B)
                 )
 
                 Row(
@@ -428,10 +412,8 @@ fun AragonNavigationMenu(
   }
 }
 
-
 /**
- * Pure-typography navigation row card.
- * Zero icons or emojis, using monospace index markers and high-contrast typography.
+ * Pure AMOLED navigation card matching execution feed theme.
  */
 @Composable
 private fun TypographyNavigationCard(
@@ -445,27 +427,27 @@ private fun TypographyNavigationCard(
 ) {
   val interactionSource = remember { MutableInteractionSource() }
   val targetBg by animateColorAsState(
-    targetValue = if (isSelected) Color(0xFF0F172A) else Color(0xFFF8FAFC),
+    targetValue = if (isSelected) Color(0xFF161622) else Color(0xFF0F0F16),
     animationSpec = tween(120),
     label = "nav_card_bg"
   )
   val targetBorder by animateColorAsState(
-    targetValue = if (isSelected) Color(0xFF0F172A) else Color(0xFFE2E8F0),
+    targetValue = if (isSelected) Color(0xFF38BDF8) else Color(0xFF1F1F2E),
     animationSpec = tween(120),
     label = "nav_card_border"
   )
 
   Surface(
-    shape = RoundedCornerShape(14.dp),
+    shape = RoundedCornerShape(12.dp),
     color = targetBg,
     border = BorderStroke(1.dp, targetBorder),
-    shadowElevation = if (isSelected) 3.dp else 1.dp,
+    shadowElevation = 0.dp,
     modifier = Modifier
       .fillMaxWidth()
       .tactilePress(interactionSource)
       .clickable(
         interactionSource = interactionSource,
-        indication = ripple(color = Color(0xFF0F172A).copy(alpha = 0.2f)),
+        indication = ripple(color = Color.White.copy(alpha = 0.15f)),
         role = Role.Button,
         onClick = onClick
       )
@@ -474,7 +456,7 @@ private fun TypographyNavigationCard(
     Row(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(horizontal = 14.dp, vertical = 12.dp),
+        .padding(horizontal = 12.dp, vertical = 11.dp),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -484,18 +466,18 @@ private fun TypographyNavigationCard(
       ) {
         // Monospace Index Tag: [01]
         Surface(
-          shape = RoundedCornerShape(8.dp),
-          color = if (isSelected) Color(0xFF1E293B) else Color(0xFFE2E8F0),
+          shape = RoundedCornerShape(6.dp),
+          color = if (isSelected) Color(0xFF1E293B) else Color(0xFF181824),
           border = null,
-          modifier = Modifier.padding(end = 12.dp)
+          modifier = Modifier.padding(end = 10.dp)
         ) {
           Text(
             text = index,
             fontFamily = JetBrainsMonoFontFamily,
-            fontSize = 10.sp,
+            fontSize = 9.5.sp,
             fontWeight = FontWeight.Bold,
-            color = if (isSelected) Color.White else Color(0xFF334155),
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+            color = if (isSelected) Color(0xFF38BDF8) else Color(0xFF94A3B8),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
           )
         }
 
@@ -505,9 +487,9 @@ private fun TypographyNavigationCard(
             style = MaterialTheme.typography.titleSmall,
             fontFamily = InterFontFamily,
             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
-            fontSize = 12.sp,
+            fontSize = 11.5.sp,
             letterSpacing = 0.3.sp,
-            color = if (isSelected) Color.White else Color(0xFF0F172A),
+            color = if (isSelected) Color.White else Color(0xFFF1F5F9),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
           )
@@ -515,7 +497,7 @@ private fun TypographyNavigationCard(
             text = subtitle,
             style = MaterialTheme.typography.bodySmall,
             fontFamily = InterFontFamily,
-            fontSize = 10.sp,
+            fontSize = 9.5.sp,
             color = if (isSelected) Color(0xFF94A3B8) else Color(0xFF64748B),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
@@ -526,8 +508,8 @@ private fun TypographyNavigationCard(
       if (badge != null) {
         Spacer(modifier = Modifier.width(6.dp))
         Surface(
-          shape = RoundedCornerShape(8.dp),
-          color = if (isSelected) Color.White else Color(0xFF0F172A),
+          shape = RoundedCornerShape(6.dp),
+          color = if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B),
           border = null
         ) {
           Text(
@@ -535,7 +517,7 @@ private fun TypographyNavigationCard(
             fontFamily = JetBrainsMonoFontFamily,
             fontSize = 7.5.sp,
             fontWeight = FontWeight.Bold,
-            color = if (isSelected) Color(0xFF0F172A) else Color.White,
+            color = Color.White,
             modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
           )
         }
@@ -545,7 +527,7 @@ private fun TypographyNavigationCard(
 }
 
 /**
- * Pure-typography quick tool card in matching white theme.
+ * AMOLED quick tool card matching execution feed theme.
  */
 @Composable
 private fun TypographyToolCard(
@@ -559,15 +541,15 @@ private fun TypographyToolCard(
   val interactionSource = remember { MutableInteractionSource() }
 
   Surface(
-    shape = RoundedCornerShape(14.dp),
-    color = Color(0xFFF8FAFC),
-    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-    shadowElevation = 1.dp,
+    shape = RoundedCornerShape(12.dp),
+    color = Color(0xFF0F0F16),
+    border = BorderStroke(1.dp, Color(0xFF1F1F2E)),
+    shadowElevation = 0.dp,
     modifier = modifier
       .tactilePress(interactionSource)
       .clickable(
         interactionSource = interactionSource,
-        indication = ripple(color = Color(0xFF0F172A).copy(alpha = 0.15f)),
+        indication = ripple(color = Color.White.copy(alpha = 0.15f)),
         role = Role.Button,
         onClick = onClick
       )
@@ -576,7 +558,7 @@ private fun TypographyToolCard(
     Column(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(horizontal = 12.dp, vertical = 10.dp)
+        .padding(horizontal = 11.dp, vertical = 9.dp)
     ) {
       Row(
         modifier = Modifier.fillMaxWidth(),
@@ -586,28 +568,28 @@ private fun TypographyToolCard(
         Text(
           text = label,
           fontFamily = JetBrainsMonoFontFamily,
-          fontSize = 9.sp,
+          fontSize = 8.5.sp,
           fontWeight = FontWeight.Bold,
           letterSpacing = 0.8.sp,
-          color = Color(0xFF64748B)
+          color = Color(0xFF94A3B8)
         )
         Text(
           text = tag,
           fontFamily = JetBrainsMonoFontFamily,
           fontSize = 7.5.sp,
           fontWeight = FontWeight.Bold,
-          color = Color(0xFF0284C7)
+          color = Color(0xFF38BDF8)
         )
       }
 
-      Spacer(modifier = Modifier.height(4.dp))
+      Spacer(modifier = Modifier.height(3.dp))
 
       Text(
         text = value,
         fontFamily = InterFontFamily,
-        fontSize = 11.5.sp,
+        fontSize = 11.sp,
         fontWeight = FontWeight.SemiBold,
-        color = Color(0xFF0F172A),
+        color = Color.White,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis
       )

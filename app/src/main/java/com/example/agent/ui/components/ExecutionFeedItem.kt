@@ -1,6 +1,7 @@
 package com.example.agent.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloat
@@ -10,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -38,7 +41,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.text.ClickableText
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -69,6 +76,139 @@ import kotlinx.coroutines.delay
 import java.util.Locale
 
 /**
+ * Action button ("VIEW" / "HIDE") styled to match the dark obsidian color, border, and typography of the Tool Card.
+ */
+@Composable
+fun FeedToolCardButton(
+  text: String,
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier,
+  isActive: Boolean = false,
+  testTag: String = "feed_tool_button"
+) {
+  val interactionSource = remember { MutableInteractionSource() }
+  val targetBg = if (isActive) Color(0xFF242432) else Color(0xFF14141C)
+  val targetBorder = if (isActive) Color(0xFF424258) else Color(0xFF282836)
+  val targetText = if (isActive) Color.White else Color(0xFFCBD5E1)
+
+  val bgAnimated by animateColorAsState(targetValue = targetBg, animationSpec = tween(120), label = "tool_btn_bg")
+  val borderAnimated by animateColorAsState(targetValue = targetBorder, animationSpec = tween(120), label = "tool_btn_border")
+  val textAnimated by animateColorAsState(targetValue = targetText, animationSpec = tween(120), label = "tool_btn_text")
+
+  Surface(
+    shape = RoundedCornerShape(6.dp),
+    color = bgAnimated,
+    border = BorderStroke(0.8.dp, borderAnimated),
+    modifier = modifier
+      .tactilePress(interactionSource)
+      .clickable(
+        interactionSource = interactionSource,
+        indication = ripple(color = Color.White.copy(alpha = 0.15f)),
+        role = Role.Button,
+        onClick = onClick
+      )
+      .testTag(testTag)
+  ) {
+    Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier
+        .height(22.dp)
+        .padding(horizontal = 8.dp)
+    ) {
+      Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        fontFamily = JetBrainsMonoFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 9.sp,
+        letterSpacing = 0.5.sp,
+        color = textAnimated,
+        maxLines = 1
+      )
+    }
+  }
+}
+
+/**
+ * Copy button ("COPY" / "COPIED") styled to match the dark obsidian color, border, and typography of the Tool Card.
+ */
+@Composable
+fun FeedToolCardCopyButton(
+  textToCopy: String,
+  modifier: Modifier = Modifier,
+  label: String = "COPY",
+  testTag: String = "feed_tool_copy_button"
+) {
+  val clipboardManager = LocalClipboardManager.current
+  var hasCopied by remember { mutableStateOf(false) }
+
+  LaunchedEffect(hasCopied) {
+    if (hasCopied) {
+      delay(1500)
+      hasCopied = false
+    }
+  }
+
+  val displayLabel = if (hasCopied) "COPIED" else label
+  val interactionSource = remember { MutableInteractionSource() }
+
+  val targetBg = if (hasCopied) Color(0xFF0F291E) else Color(0xFF14141C)
+  val targetBorder = if (hasCopied) Color(0xFF10B981) else Color(0xFF282836)
+  val targetText = if (hasCopied) Color(0xFF34D399) else Color(0xFFCBD5E1)
+
+  val bgAnimated by animateColorAsState(targetValue = targetBg, animationSpec = tween(120), label = "copy_btn_bg")
+  val borderAnimated by animateColorAsState(targetValue = targetBorder, animationSpec = tween(120), label = "copy_btn_border")
+  val textAnimated by animateColorAsState(targetValue = targetText, animationSpec = tween(120), label = "copy_btn_text")
+
+  Surface(
+    shape = RoundedCornerShape(6.dp),
+    color = bgAnimated,
+    border = BorderStroke(0.8.dp, borderAnimated),
+    modifier = modifier
+      .tactilePress(interactionSource)
+      .clickable(
+        interactionSource = interactionSource,
+        indication = ripple(color = Color.White.copy(alpha = 0.15f)),
+        role = Role.Button,
+        onClickLabel = "Copy text"
+      ) {
+        try {
+          if (textToCopy.isNotBlank()) {
+            val safeContent = if (textToCopy.length > 250_000) {
+              textToCopy.take(250_000) + "\n\n... [TRUNCATED FOR CLIPBOARD SIZE LIMIT] ..."
+            } else {
+              textToCopy
+            }
+            clipboardManager.setText(AnnotatedString(safeContent))
+            hasCopied = true
+          }
+        } catch (e: Throwable) {
+          android.util.Log.e("FeedToolCardCopyButton", "Failed to copy text", e)
+        }
+      }
+      .testTag(testTag)
+  ) {
+    Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier
+        .height(22.dp)
+        .padding(horizontal = 8.dp)
+    ) {
+      Text(
+        text = displayLabel,
+        style = MaterialTheme.typography.labelSmall,
+        fontFamily = JetBrainsMonoFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 9.sp,
+        letterSpacing = 0.5.sp,
+        color = textAnimated,
+        maxLines = 1
+      )
+    }
+  }
+}
+
+/**
  * Execution Feed Item:
  * - Badges ([OK], [OBS], [ERR], [RUN], etc.) are positioned on the RIGHT side.
  * - Tool calls & search results boxes are HIDDEN by default, expanding only when [VIEW] is clicked.
@@ -81,6 +221,11 @@ fun ExecutionFeedItem(
   isLast: Boolean,
   modifier: Modifier = Modifier
 ) {
+  // Hide the observation card, keep only the tool card
+  if (step.type == StepType.OBSERVATION) {
+    return
+  }
+
   val isModelResponse = step.type == StepType.THINKING ||
     step.type == StepType.PLAN ||
     step.type == StepType.CONCLUSION
@@ -248,7 +393,7 @@ fun ModelResponseView(
           )
         }
 
-        AragonFeedCopyButton(
+        FeedToolCardCopyButton(
           textToCopy = step.content,
           label = "COPY",
           testTag = "copy_model_response_${step.stepNumber}"
@@ -319,22 +464,23 @@ fun ToolCallBoxView(
   // Minimalist AMOLED styling: quiet obsidian background with razor-thin hairline borders
   val borderColor = when (toolState) {
     "ACTIVE" -> AmoledActionPrimary.copy(alpha = activeBorderAlpha)
-    "PENDING" -> Color(0xFF262632)
-    "FAILED" -> AmoledStatusError.copy(alpha = 0.55f)
-    "FINISHED" -> Color(0xFF1F1F28)
-    else -> Color(0xFF1A1A22)
+    "PENDING" -> Color(0xFF282836)
+    "FAILED" -> AmoledStatusError.copy(alpha = 0.65f)
+    "FINISHED" -> Color(0xFF262634)
+    else -> Color(0xFF20202C)
   }
 
   val boxBgColor = when (toolState) {
-    "ACTIVE" -> Color(0xFF0D0D12)
-    "FAILED" -> Color(0xFF110A0A)
-    else -> Color(0xFF09090D)
+    "ACTIVE" -> Color(0xFF13141E)
+    "FAILED" -> Color(0xFF181014)
+    "FINISHED" -> Color(0xFF111118)
+    else -> Color(0xFF0F0F16)
   }
 
   Surface(
-    shape = RoundedCornerShape(8.dp),
+    shape = RoundedCornerShape(10.dp),
     color = boxBgColor,
-    border = androidx.compose.foundation.BorderStroke(0.75.dp, borderColor),
+    border = androidx.compose.foundation.BorderStroke(0.85.dp, borderColor),
     modifier = Modifier
       .fillMaxWidth()
       .animateContentSize(
@@ -348,7 +494,7 @@ fun ToolCallBoxView(
     Column(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(horizontal = 10.dp, vertical = 8.dp)
+        .padding(horizontal = 11.dp, vertical = 9.dp)
     ) {
       // Header row: Tool name & metrics on LEFT, Status Badge & [VIEW] on RIGHT
       Row(
@@ -499,15 +645,15 @@ fun ToolCallBoxView(
             )
           }
 
-          // VIEW / HIDE toggle button with consistent 22dp height and tactile feedback
-          AragonFeedButton(
+          // VIEW / HIDE toggle button styled identically to tool card
+          FeedToolCardButton(
             text = if (isExpanded) "HIDE" else "VIEW",
             isActive = isExpanded,
             onClick = { isExpanded = !isExpanded },
             testTag = "toggle_tool_box_${step.stepNumber}"
           )
 
-          AragonFeedCopyButton(
+          FeedToolCardCopyButton(
             textToCopy = buildString {
               append(step.toolName ?: step.title)
               if (step.content.isNotBlank()) append("\n").append(step.content)
@@ -605,10 +751,9 @@ fun TaskObjectiveView(step: ExecutionStep) {
             color = AmoledTextMuted
           )
 
-          AragonFeedCopyButton(
+          FeedToolCardCopyButton(
             textToCopy = step.content,
             label = "COPY",
-            tint = AmoledIconGreyDark,
             testTag = "copy_task_objective_${step.stepNumber}"
           )
         }
@@ -715,7 +860,7 @@ fun ObservationStepView(step: ExecutionStep) {
 
           if (isLongContent) {
             // Compact VIEW / HIDE toggle button matching ToolCallBoxView
-            AragonFeedButton(
+            FeedToolCardButton(
               text = if (isExpanded) "HIDE" else "VIEW",
               isActive = isExpanded,
               onClick = { isExpanded = !isExpanded },
@@ -723,7 +868,7 @@ fun ObservationStepView(step: ExecutionStep) {
             )
           }
 
-          AragonFeedCopyButton(
+          FeedToolCardCopyButton(
             textToCopy = step.content,
             label = "COPY",
             testTag = "copy_obs_${step.stepNumber}"
@@ -804,6 +949,8 @@ fun formatToolDisplayName(toolName: String?): String {
 sealed class MarkdownBlock {
   data class Heading(val text: String, val level: Int, val parsedText: AnnotatedString = parseInlineMarkdown(text)) : MarkdownBlock()
   data class CodeBlock(val language: String, val code: String) : MarkdownBlock()
+  data class MathBlock(val formula: String) : MarkdownBlock()
+  data class Table(val headers: List<String>, val rows: List<List<String>>) : MarkdownBlock()
   data class BulletItem(val text: String, val parsedText: AnnotatedString = parseInlineMarkdown(text)) : MarkdownBlock()
   data class NumberedItem(val number: String, val text: String, val parsedText: AnnotatedString = parseInlineMarkdown(text)) : MarkdownBlock()
   data class Blockquote(val text: String, val parsedText: AnnotatedString = parseInlineMarkdown(text)) : MarkdownBlock()
@@ -836,14 +983,71 @@ fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
       continue
     }
 
-    // 2. Horizontal Dividers
+    // 2. Display Math Block: $$ ... $$
+    if (trimmed.startsWith("$$")) {
+      val mathLines = mutableListOf<String>()
+      val remainder = trimmed.removePrefix("$$").trim()
+      if (remainder.endsWith("$$") && remainder.length > 2) {
+        // Single-line display math
+        blocks.add(MarkdownBlock.MathBlock(formula = remainder.removeSuffix("$$").trim()))
+        i++
+        continue
+      }
+      if (remainder.isNotEmpty()) mathLines.add(remainder)
+      i++
+      while (i < lines.size && !lines[i].trim().endsWith("$$")) {
+        mathLines.add(lines[i].trim())
+        i++
+      }
+      if (i < lines.size) {
+        val lastLine = lines[i].trim().removeSuffix("$$").trim()
+        if (lastLine.isNotEmpty()) mathLines.add(lastLine)
+        i++
+      }
+      blocks.add(MarkdownBlock.MathBlock(formula = mathLines.joinToString("\n")))
+      continue
+    }
+
+    // 3. Markdown Table: consecutive lines starting with '|'
+    if (trimmed.startsWith("|") && trimmed.count { it == '|' } >= 2) {
+      val tableLines = mutableListOf<String>()
+      while (i < lines.size && lines[i].trim().startsWith("|") && lines[i].trim().count { it == '|' } >= 2) {
+        tableLines.add(lines[i].trim())
+        i++
+      }
+      if (tableLines.isNotEmpty()) {
+        fun parseTableRow(row: String): List<String> {
+          val parts = row.split('|')
+          // Dropping the leading and trailing empty entries if bounded by pipes
+          val start = if (parts.firstOrNull()?.isBlank() == true) 1 else 0
+          val end = if (parts.lastOrNull()?.isBlank() == true) parts.size - 1 else parts.size
+          return if (start < end) parts.subList(start, end).map { it.trim() } else emptyList()
+        }
+
+        // Filter out separator rows like |---|:---:|---|
+        val isSeparator: (String) -> Boolean = { row ->
+          val cleaned = row.replace("|", "").replace("-", "").replace(":", "").replace(" ", "")
+          cleaned.isEmpty()
+        }
+
+        val nonSeparators = tableLines.filterNot { isSeparator(it) }
+        if (nonSeparators.isNotEmpty()) {
+          val headers = parseTableRow(nonSeparators.first())
+          val dataRows = nonSeparators.drop(1).map { parseTableRow(it) }
+          blocks.add(MarkdownBlock.Table(headers = headers, rows = dataRows))
+          continue
+        }
+      }
+    }
+
+    // 4. Horizontal Dividers
     if (trimmed == "---" || trimmed == "***" || trimmed == "___") {
       blocks.add(MarkdownBlock.Divider)
       i++
       continue
     }
 
-    // 3. Headings
+    // 5. Headings
     if (trimmed.startsWith("# ")) {
       blocks.add(MarkdownBlock.Heading(text = trimmed.removePrefix("# ").trim(), level = 1))
       i++
@@ -862,7 +1066,7 @@ fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
       continue
     }
 
-    // 4. Blockquotes
+    // 6. Blockquotes
     if (trimmed.startsWith("> ") || trimmed.startsWith(">")) {
       val bqText = trimmed.removePrefix("> ").removePrefix(">").trim()
       blocks.add(MarkdownBlock.Blockquote(text = bqText))
@@ -870,14 +1074,14 @@ fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
       continue
     }
 
-    // 5. Bullet list item
+    // 7. Bullet list item
     if (trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("+ ")) {
       blocks.add(MarkdownBlock.BulletItem(text = trimmed.substring(2).trim()))
       i++
       continue
     }
 
-    // 6. Numbered list item
+    // 8. Numbered list item
     val numMatch = NUMBERED_LIST_ITEM_REGEX.find(trimmed)
     if (numMatch != null) {
       val num = numMatch.groupValues[1]
@@ -887,19 +1091,21 @@ fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
       continue
     }
 
-    // 7. Blank line
+    // 9. Blank line
     if (trimmed.isBlank()) {
       i++
       continue
     }
 
-    // 8. Regular paragraph
+    // 10. Regular paragraph
     val paraLines = mutableListOf<String>()
     while (i < lines.size) {
       val curLine = lines[i]
       val curTrimmed = curLine.trim()
       if (curTrimmed.isBlank() ||
         curTrimmed.startsWith("```") ||
+        curTrimmed.startsWith("$$") ||
+        (curTrimmed.startsWith("|") && curTrimmed.count { it == '|' } >= 2) ||
         curTrimmed == "---" ||
         curTrimmed == "***" ||
         curTrimmed == "___" ||
@@ -945,7 +1151,74 @@ fun parseInlineMarkdown(text: String): AnnotatedString {
   val result = buildAnnotatedString {
     var i = 0
     while (i < text.length) {
-      // Bold + Italic: ***text***
+      // 1. Markdown link: [anchor](url)
+      if (text[i] == '[') {
+        val closeBracket = text.indexOf(']', i + 1)
+        if (closeBracket != -1 && closeBracket + 1 < text.length && text[closeBracket + 1] == '(') {
+          val closeParen = text.indexOf(')', closeBracket + 2)
+          if (closeParen != -1) {
+            val anchorText = text.substring(i + 1, closeBracket)
+            val url = text.substring(closeBracket + 2, closeParen).trim()
+            pushStringAnnotation(tag = "URL", annotation = url)
+            withStyle(
+              SpanStyle(
+                color = Color(0xFF60A5FA),
+                textDecoration = TextDecoration.Underline,
+                fontWeight = FontWeight.SemiBold
+              )
+            ) {
+              append(anchorText)
+            }
+            pop()
+            i = closeParen + 1
+            continue
+          }
+        }
+      }
+
+      // 2. Raw URL: https:// or http://
+      if (text.startsWith("https://", i) || text.startsWith("http://", i)) {
+        val spaceIndex = text.indexOfAny(charArrayOf(' ', '\t', '\n', ')', ']', '>'), i)
+        val end = if (spaceIndex != -1) spaceIndex else text.length
+        val url = text.substring(i, end)
+        pushStringAnnotation(tag = "URL", annotation = url)
+        withStyle(
+          SpanStyle(
+            color = Color(0xFF60A5FA),
+            textDecoration = TextDecoration.Underline
+          )
+        ) {
+          append(url)
+        }
+        pop()
+        i = end
+        continue
+      }
+
+      // 3. Inline math: $formula$ (single dollar sign, non-empty, no space at boundary)
+      if (text[i] == '$' && (i == 0 || text[i - 1] != '\\') && (i + 1 < text.length && text[i + 1] != '$')) {
+        val end = text.indexOf('$', i + 1)
+        if (end != -1 && end > i + 1 && text[end - 1] != '\\') {
+          val formula = text.substring(i + 1, end).trim()
+          if (formula.isNotEmpty()) {
+            withStyle(
+              SpanStyle(
+                fontFamily = JetBrainsMonoFontFamily,
+                color = Color(0xFF38BDF8),
+                background = Color(0xFF0F172A),
+                fontStyle = FontStyle.Italic,
+                fontSize = 11.5.sp
+              )
+            ) {
+              append(formula)
+            }
+            i = end + 1
+            continue
+          }
+        }
+      }
+
+      // 4. Bold + Italic: ***text***
       if (text.startsWith("***", i)) {
         val end = text.indexOf("***", i + 3)
         if (end != -1) {
@@ -957,7 +1230,7 @@ fun parseInlineMarkdown(text: String): AnnotatedString {
         }
       }
 
-      // Strikethrough: ~~text~~
+      // 5. Strikethrough: ~~text~~
       if (text.startsWith("~~", i)) {
         val end = text.indexOf("~~", i + 2)
         if (end != -1) {
@@ -969,7 +1242,7 @@ fun parseInlineMarkdown(text: String): AnnotatedString {
         }
       }
 
-      // Bold: **text** or __text__
+      // 6. Bold: **text** or __text__
       val isDoubleStar = text.startsWith("**", i)
       val isDoubleUnder = text.startsWith("__", i)
       if (isDoubleStar || isDoubleUnder) {
@@ -984,7 +1257,7 @@ fun parseInlineMarkdown(text: String): AnnotatedString {
         }
       }
 
-      // Inline code: `code`
+      // 7. Inline code: `code`
       if (text[i] == '`') {
         val end = text.indexOf('`', i + 1)
         if (end != -1) {
@@ -1003,7 +1276,7 @@ fun parseInlineMarkdown(text: String): AnnotatedString {
         }
       }
 
-      // Italic: *text* or _text_ (word boundary check)
+      // 8. Italic: *text* or _text_ (word boundary check)
       if ((text[i] == '*' || text[i] == '_') && (i == 0 || text[i - 1].isWhitespace()) && i + 1 < text.length && !text[i + 1].isWhitespace()) {
         val targetChar = text[i]
         val end = text.indexOf(targetChar, i + 1)
@@ -1194,10 +1467,9 @@ fun StreamingTextContent(
                     .padding(horizontal = 5.dp, vertical = 2.dp)
                 )
 
-                AragonFeedCopyButton(
+                FeedToolCardCopyButton(
                   textToCopy = block.code,
                   label = "COPY",
-                  tint = AmoledIconGrey,
                   testTag = "copy_code_block"
                 )
               }
@@ -1220,7 +1492,16 @@ fun StreamingTextContent(
           }
         }
 
+        is MarkdownBlock.Table -> {
+          AmoledMarkdownTable(headers = block.headers, rows = block.rows)
+        }
+
+        is MarkdownBlock.MathBlock -> {
+          AmoledMathFormulaCard(formula = block.formula)
+        }
+
         is MarkdownBlock.BulletItem -> {
+          val uriHandler = LocalUriHandler.current
           Row(
             modifier = Modifier.fillMaxWidth().padding(start = 4.dp),
             verticalAlignment = Alignment.Top
@@ -1232,18 +1513,25 @@ fun StreamingTextContent(
               fontWeight = FontWeight.Bold,
               modifier = Modifier.padding(end = 6.dp)
             )
-            Text(
+            ClickableText(
               text = block.parsedText,
-              style = MaterialTheme.typography.bodyMedium,
-              fontFamily = InterFontFamily,
-              color = AmoledTextPrimary,
-              fontSize = 12.sp,
-              lineHeight = 18.sp
+              style = MaterialTheme.typography.bodyMedium.copy(
+                fontFamily = InterFontFamily,
+                color = AmoledTextPrimary,
+                fontSize = 12.sp,
+                lineHeight = 18.sp
+              ),
+              onClick = { offset ->
+                block.parsedText.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { annotation ->
+                  try { uriHandler.openUri(annotation.item) } catch (_: Exception) {}
+                }
+              }
             )
           }
         }
 
         is MarkdownBlock.NumberedItem -> {
+          val uriHandler = LocalUriHandler.current
           Row(
             modifier = Modifier.fillMaxWidth().padding(start = 4.dp),
             verticalAlignment = Alignment.Top
@@ -1256,24 +1544,38 @@ fun StreamingTextContent(
               fontWeight = FontWeight.Bold,
               modifier = Modifier.padding(end = 6.dp, top = 2.dp)
             )
-            Text(
+            ClickableText(
               text = block.parsedText,
-              style = MaterialTheme.typography.bodyMedium,
-              fontFamily = InterFontFamily,
-              color = AmoledTextPrimary,
-              fontSize = 12.sp,
-              lineHeight = 18.sp
+              style = MaterialTheme.typography.bodyMedium.copy(
+                fontFamily = InterFontFamily,
+                color = AmoledTextPrimary,
+                fontSize = 12.sp,
+                lineHeight = 18.sp
+              ),
+              onClick = { offset ->
+                block.parsedText.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { annotation ->
+                  try { uriHandler.openUri(annotation.item) } catch (_: Exception) {}
+                }
+              }
             )
           }
         }
 
         is MarkdownBlock.Paragraph -> {
-          Text(
-            text = if (isLastBlock && isStreaming) parseInlineMarkdown(block.text + " █") else block.parsedText,
-            style = MaterialTheme.typography.bodyMedium,
-            fontFamily = InterFontFamily,
-            color = AmoledTextPrimary,
-            lineHeight = 20.sp
+          val uriHandler = LocalUriHandler.current
+          val pText = if (isLastBlock && isStreaming) parseInlineMarkdown(block.text + " █") else block.parsedText
+          ClickableText(
+            text = pText,
+            style = MaterialTheme.typography.bodyMedium.copy(
+              fontFamily = InterFontFamily,
+              color = AmoledTextPrimary,
+              lineHeight = 20.sp
+            ),
+            onClick = { offset ->
+              pText.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { annotation ->
+                try { uriHandler.openUri(annotation.item) } catch (_: Exception) {}
+              }
+            }
           )
         }
       }
@@ -1285,6 +1587,148 @@ fun StreamingTextContent(
         style = MaterialTheme.typography.bodyMedium,
         color = AmoledActionPrimary
       )
+    }
+  }
+}
+
+/**
+ * AMOLED Markdown Table Composable:
+ * Renders structured markdown tables with AMOLED styling, bold header rows,
+ * subtle cell borders, alternating row backgrounds, and horizontal scrolling.
+ */
+@Composable
+fun AmoledMarkdownTable(
+  headers: List<String>,
+  rows: List<List<String>>
+) {
+  val horizontalScroll = rememberScrollState()
+  Surface(
+    shape = RoundedCornerShape(8.dp),
+    color = Color(0xFF0C0C12),
+    border = BorderStroke(1.dp, Color(0xFF242436)),
+    modifier = Modifier
+      .fillMaxWidth()
+      .padding(vertical = 4.dp)
+  ) {
+    Box(modifier = Modifier.horizontalScroll(horizontalScroll)) {
+      Column(modifier = Modifier.padding(4.dp)) {
+        // Headers row
+        if (headers.isNotEmpty()) {
+          Row(
+            modifier = Modifier
+              .background(Color(0xFF161622), RoundedCornerShape(6.dp))
+              .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            headers.forEach { header ->
+              Box(
+                modifier = Modifier
+                  .widthIn(min = 90.dp, max = 200.dp)
+                  .padding(horizontal = 6.dp)
+              ) {
+                Text(
+                  text = header,
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontSize = 10.5.sp,
+                  fontWeight = FontWeight.Bold,
+                  color = Color.White
+                )
+              }
+            }
+          }
+          Spacer(modifier = Modifier.height(2.dp))
+        }
+
+        // Data rows
+        rows.forEachIndexed { rowIdx, row ->
+          val isEven = rowIdx % 2 == 0
+          Row(
+            modifier = Modifier
+              .background(
+                if (isEven) Color(0xFF0F0F16) else Color(0xFF13131D),
+                RoundedCornerShape(4.dp)
+              )
+              .padding(horizontal = 8.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            row.forEach { cell ->
+              Box(
+                modifier = Modifier
+                  .widthIn(min = 90.dp, max = 200.dp)
+                  .padding(horizontal = 6.dp)
+              ) {
+                Text(
+                  text = cell,
+                  fontFamily = InterFontFamily,
+                  fontSize = 11.sp,
+                  color = Color(0xFFE2E8F0)
+                )
+              }
+            }
+          }
+          if (rowIdx < rows.size - 1) {
+            Spacer(modifier = Modifier.height(1.dp))
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * AMOLED Math Formula Card:
+ * Renders mathematical expressions and equations in high-contrast cyan monospace with copy support.
+ */
+@Composable
+fun AmoledMathFormulaCard(
+  formula: String
+) {
+  val horizontalScroll = rememberScrollState()
+  Surface(
+    shape = RoundedCornerShape(8.dp),
+    color = Color(0xFF09121A),
+    border = BorderStroke(1.dp, Color(0xFF1E3A4E)),
+    modifier = Modifier
+      .fillMaxWidth()
+      .padding(vertical = 4.dp)
+  ) {
+    Column(modifier = Modifier.padding(10.dp)) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Surface(
+          shape = RoundedCornerShape(4.dp),
+          color = Color(0xFF132838),
+          border = null
+        ) {
+          Text(
+            text = "MATH • FORMULA",
+            fontFamily = JetBrainsMonoFontFamily,
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF38BDF8),
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+          )
+        }
+        FeedToolCardCopyButton(
+          textToCopy = formula,
+          label = "COPY",
+          testTag = "copy_math_formula"
+        )
+      }
+      Spacer(modifier = Modifier.height(6.dp))
+      Box(modifier = Modifier.fillMaxWidth().horizontalScroll(horizontalScroll)) {
+        Text(
+          text = formula,
+          fontFamily = JetBrainsMonoFontFamily,
+          fontSize = 12.5.sp,
+          fontWeight = FontWeight.Medium,
+          color = Color(0xFF7DD3FC),
+          lineHeight = 18.sp
+        )
+      }
     }
   }
 }
@@ -1327,10 +1771,9 @@ fun TerminalOutputBox(
         fontSize = 8.sp
       )
 
-      AragonFeedCopyButton(
+      FeedToolCardCopyButton(
         textToCopy = text,
         label = "COPY",
-        tint = AmoledIconGrey,
         testTag = "copy_${label.lowercase().replace(' ', '_')}"
       )
     }

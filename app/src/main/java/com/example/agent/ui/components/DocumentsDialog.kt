@@ -79,9 +79,9 @@ fun DocumentsDialog(
   ) {
     Surface(
       shape = RoundedCornerShape(22.dp),
-      color = Color.White,
-      shadowElevation = 16.dp,
-      border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+      color = Color(0xFF0C0C12),
+      shadowElevation = 20.dp,
+      border = BorderStroke(1.dp, Color(0xFF1E1E2C)),
       modifier = Modifier
         .fillMaxWidth()
         .padding(horizontal = 16.dp)
@@ -104,7 +104,7 @@ fun DocumentsDialog(
             fontFamily = InterFontFamily,
             fontWeight = FontWeight.Bold,
             fontSize = 14.sp,
-            color = Color(0xFF0F172A)
+            color = Color.White
           )
           AragonHeaderButton(
             text = "CLOSE",

@@ -857,6 +857,8 @@ fun CompactTelemetryButton(
         fontFamily = JetBrainsMonoFontFamily,
         fontSize = 9.sp,
         fontWeight = FontWeight.Bold,
+        color = Color(0xFFD4D4D8)
+      )
     }
   }
 }
