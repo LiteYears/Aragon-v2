@@ -58,8 +58,13 @@ object UniversalImageHelper {
     var bitmap = try {
       BitmapFactory.decodeFile(imageFile.absolutePath, decodeOpts)
     } catch (_: OutOfMemoryError) {
-      decodeOpts.inSampleSize = sampleSize * 2
-      BitmapFactory.decodeFile(imageFile.absolutePath, decodeOpts)
+      try {
+        decodeOpts.inSampleSize = sampleSize * 2
+        decodeOpts.inPreferredConfig = Bitmap.Config.RGB_565
+        BitmapFactory.decodeFile(imageFile.absolutePath, decodeOpts)
+      } catch (_: OutOfMemoryError) {
+        null
+      }
     } ?: return decodeViaStream(imageFile, maxDimension, orientation)
 
     // 3. Apply EXIF rotation if needed
@@ -185,14 +190,26 @@ object UniversalImageHelper {
   private fun decodeViaStream(file: File, maxDimension: Int, orientation: Int): Bitmap? {
     return try {
       file.inputStream().use { stream ->
-        val raw = BitmapFactory.decodeStream(stream) ?: return null
+        var bmp = BitmapFactory.decodeStream(stream) ?: return null
         if (orientation != 0) {
-          val rotated = rotateBitmap(raw, orientation)
-          if (rotated != raw) raw.recycle()
-          rotated
-        } else {
-          raw
+          val rotated = rotateBitmap(bmp, orientation)
+          if (rotated != bmp) {
+            bmp.recycle()
+            bmp = rotated
+          }
         }
+        val curLongest = maxOf(bmp.width, bmp.height)
+        if (curLongest > maxDimension) {
+          val ratio = maxDimension.toFloat() / curLongest.toFloat()
+          val newW = (bmp.width * ratio).toInt().coerceAtLeast(1)
+          val newH = (bmp.height * ratio).toInt().coerceAtLeast(1)
+          val scaled = Bitmap.createScaledBitmap(bmp, newW, newH, true)
+          if (scaled != bmp) {
+            bmp.recycle()
+            bmp = scaled
+          }
+        }
+        bmp
       }
     } catch (_: Throwable) {
       null

@@ -420,6 +420,86 @@ class WorkflowReliabilityAndRecoveryTest {
     assertTrue("Preflight decision should be Proceed after package install", preFlightAfter is PreFlightDecision.Proceed)
   }
 
+  @Test
+  fun testCodeInterpreterClearsDeterministicFailuresForCreatedFiles() {
+    val readCall = ToolCall("call_read_1", "read_file", mapOf("path" to "output.docx"))
+    val readFailResult = ToolResult(
+      callId = "call_read_1",
+      toolName = "read_file",
+      status = ToolStatus.FAILED,
+      arguments = readCall.arguments,
+      output = null,
+      error = "File not found: output.docx",
+      errorType = ToolErrorCode.FILE_NOT_FOUND,
+      duration = 10L,
+      exitCode = 1
+    )
+    val readFailObs = com.example.agent.core.Observation(
+      callId = "call_read_1",
+      toolName = "read_file",
+      status = ToolStatus.FAILED,
+      isSuccess = false,
+      inputsSummary = "path: output.docx",
+      result = "",
+      error = "File not found: output.docx",
+      summary = "File not found: output.docx",
+      outcome = ToolExecutionOutcome.EXECUTION_FAILED
+    )
+
+    recoveryManager.evaluateExecution(readCall, readFailResult, readFailObs, null)
+    assertTrue(
+      "Missing file read should be blocked before file creation",
+      recoveryManager.checkPreFlight(readCall) is PreFlightDecision.BlockDeterministicFailure
+    )
+
+    // Now code_interpreter creates output.docx
+    val codeCall = ToolCall("call_py_create", "code_interpreter", mapOf("code" to "open('output.docx','w').write('ok')"))
+    val codeSuccessResult = ToolResult(
+      callId = "call_py_create",
+      toolName = "code_interpreter",
+      status = ToolStatus.SUCCEEDED,
+      arguments = codeCall.arguments,
+      output = "Created output.docx",
+      error = null,
+      duration = 500L,
+      exitCode = 0,
+      stdout = "Created output.docx"
+    )
+    val codeSuccessObs = com.example.agent.core.Observation(
+      callId = "call_py_create",
+      toolName = "code_interpreter",
+      status = ToolStatus.SUCCEEDED,
+      isSuccess = true,
+      inputsSummary = "python script",
+      result = "Created output.docx",
+      error = null,
+      summary = "Created output.docx",
+      outcome = ToolExecutionOutcome.SUCCESS_WITH_RESULTS
+    )
+    recoveryManager.evaluateExecution(codeCall, codeSuccessResult, codeSuccessObs, null)
+
+    assertTrue(
+      "After code_interpreter succeeds, prior deterministic failure on output.docx must be cleared",
+      recoveryManager.checkPreFlight(readCall) is PreFlightDecision.Proceed
+    )
+  }
+
+  @Test
+  fun testDeliverableTrackerIgnoresMcpServersJson() {
+    val mcpFile = File(workspaceDir, "mcp_servers.json")
+    mcpFile.writeText("{\"mcpServers\": {}}")
+    assertTrue(
+      "mcp_servers.json must be treated as an internal workspace path",
+      com.example.agent.core.DeliverableTracker.isInternalWorkspacePath("mcp_servers.json")
+    )
+    val tracker = com.example.agent.core.DeliverableTracker(workspaceDir)
+    val report = tracker.scanAndVerify()
+    assertTrue(
+      "mcp_servers.json must not be auto-discovered as a user deliverable",
+      report.deliverables.none { it.name == "mcp_servers.json" }
+    )
+  }
+
   // Helper using reflection to access private verifyObjective
   private fun invokeVerifyObjective(
     engine: AgentEngine,

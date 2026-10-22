@@ -154,7 +154,9 @@ class AgentViewModel(
     embeddingProviderSupplier = { buildEmbeddingProvider() },
     embeddingAvailabilitySupplier = { describeEmbeddingAvailability() },
     geminiApiKeySupplier = { _geminiApiKey.value.trim() },
-    activeVisionSupplier = { getActiveVisionConfig() }
+    activeVisionSupplier = { getActiveVisionConfig() },
+    nvidiaApiKeysSupplier = { _nvidiaApiKeys.value },
+    nvidiaBaseUrlSupplier = { _nvidiaBaseUrl.value.trim().ifBlank { NvidiaNimConfig.DEFAULT_BASE_URL } }
   )
 
   private fun buildEmbeddingProvider(): EmbeddingProvider? = EmbeddingProviders.create(

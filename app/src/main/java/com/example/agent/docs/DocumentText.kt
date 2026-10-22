@@ -172,7 +172,7 @@ object DocumentText {
   fun buildFtsQuery(raw: String): String? {
     val tokens = raw.split(Regex("[^\\p{L}\\p{N}]+"))
       .map { it.trim() }
-      .filter { it.length >= 2 }
+      .filter { it.isNotEmpty() && (it.length >= 2 || it[0].isDigit() || it[0].isLetter()) }
       .map { "\"" + it.replace("\"", "") + "\"" }
     if (tokens.isEmpty()) return null
     return tokens.joinToString(" AND ")
@@ -181,7 +181,7 @@ object DocumentText {
   fun buildFtsQueryOr(raw: String): String? {
     val tokens = raw.split(Regex("[^\\p{L}\\p{N}]+"))
       .map { it.trim() }
-      .filter { it.length >= 2 }
+      .filter { it.isNotEmpty() && (it.length >= 2 || it[0].isDigit() || it[0].isLetter()) }
       .map { "\"" + it.replace("\"", "") + "\"" }
     if (tokens.isEmpty()) return null
     return tokens.joinToString(" OR ")

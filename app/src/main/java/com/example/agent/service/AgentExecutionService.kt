@@ -32,7 +32,7 @@ import kotlinx.coroutines.launch
 class AgentExecutionService : Service() {
 
   private var wakeLock: PowerManager.WakeLock? = null
-  private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
+  private val serviceScope = CoroutineScope(Dispatchers.Main + kotlinx.coroutines.SupervisorJob())
   private var monitorJob: Job? = null
 
   override fun onBind(intent: Intent?): IBinder? = null
@@ -244,8 +244,10 @@ class AgentExecutionService : Service() {
         val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
         wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Aragon::ExecutionWakeLock")?.apply {
           setReferenceCounted(false)
-          acquire(15 * 60 * 1000L) // 15 minutes safety ceiling
         }
+      }
+      if (wakeLock?.isHeld == false) {
+        wakeLock?.acquire(15 * 60 * 1000L) // 15 minutes safety ceiling
       }
     } catch (_: Throwable) {}
   }

@@ -41,7 +41,7 @@ class McpManager(
   private val workspaceDir: File,
   private val toolRegistry: ToolRegistry
 ) {
-  private val scope = CoroutineScope(Dispatchers.IO)
+  private val scope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
   private val clients = ConcurrentHashMap<String, McpClient>()
   private val registeredToolNamesByServer = ConcurrentHashMap<String, MutableSet<String>>()
 
@@ -295,13 +295,7 @@ class McpManager(
       config = config,
       workspaceDir = workspaceDir,
       onLogMessage = { logMsg ->
-        val currentLogs = _logs.value.toMutableList()
-        currentLogs.add(0, logMsg)
-        if (currentLogs.size > 200) {
-          _logs.value = currentLogs.take(200)
-        } else {
-          _logs.value = currentLogs
-        }
+        _logs.value = (listOf(logMsg) + _logs.value).take(200)
       },
       onToolsChanged = { updatedClient ->
         syncServerToolsToRegistry(updatedClient)

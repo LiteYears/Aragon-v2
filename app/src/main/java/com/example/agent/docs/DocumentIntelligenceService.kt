@@ -34,7 +34,9 @@ class DocumentIntelligenceService(
   private val embeddingProviderSupplier: () -> EmbeddingProvider?,
   private val embeddingAvailabilitySupplier: () -> String,
   private val geminiApiKeySupplier: (() -> String)? = null,
-  private val activeVisionSupplier: (() -> ActiveVisionModelConfig?)? = null
+  private val activeVisionSupplier: (() -> ActiveVisionModelConfig?)? = null,
+  private val nvidiaApiKeysSupplier: (() -> List<String>)? = null,
+  private val nvidiaBaseUrlSupplier: (() -> String)? = null
 ) {
 
   private val prefs = appContext.getSharedPreferences("aragon_agent_prefs", Context.MODE_PRIVATE)
@@ -49,7 +51,9 @@ class DocumentIntelligenceService(
     sessionIdSupplier = sessionIdSupplier,
     autoCloudSupplier = { autoCloudOcrEnabled() },
     geminiApiKeySupplier = geminiApiKeySupplier,
-    activeVisionSupplier = activeVisionSupplier
+    activeVisionSupplier = activeVisionSupplier,
+    nvidiaApiKeysSupplier = nvidiaApiKeysSupplier,
+    nvidiaBaseUrlSupplier = nvidiaBaseUrlSupplier
   )
 
   private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -742,6 +746,19 @@ class DocumentIntelligenceService(
     setPhase(entity.id, if (ocrRouter.cloudAvailable() && autoCloudOcrEnabled()) "OCR (on-device + cloud)" else "OCR (on-device)")
     val result = ocrRouter.recognize(ocrInput)
     val ocrBlocks = blocksFromOcr(result, page = null).toMutableList()
+    if (!result.visualDescription.isNullOrBlank()) {
+      ocrBlocks.add(
+        0,
+        DocumentBlock(
+          kind = BlockKind.HEADING,
+          headingLevel = 2,
+          text = "Visual Description: ${result.visualDescription}",
+          page = 1,
+          direction = TextDirection.LTR,
+          sourceEngine = result.engine
+        )
+      )
+    }
     if (ocrBlocks.isEmpty()) {
       ocrBlocks.add(
         DocumentBlock(

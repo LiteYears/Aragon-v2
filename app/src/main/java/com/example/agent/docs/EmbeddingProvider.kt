@@ -62,7 +62,7 @@ class NimEmbeddingProvider(
 ) : EmbeddingProvider {
 
   private val endpoint: String = baseUrl.trim().trimEnd('/').ifBlank { "https://integrate.api.nvidia.com/v1" } + "/embeddings"
-  private var keyCursor = 0
+  private val keyCursor = java.util.concurrent.atomic.AtomicInteger(0)
 
   override val label: String = "NVIDIA NIM ($model)"
 
@@ -94,8 +94,9 @@ class NimEmbeddingProvider(
 
   private suspend fun requestWithRotation(keys: List<String>, batch: List<String>, inputType: String?): List<FloatArray> {
     var lastError: Exception? = null
+    val baseIdx = keyCursor.getAndIncrement().let { if (it < 0) -it else it }
     for (attempt in keys.indices) {
-      val key = keys[(keyCursor + attempt) % keys.size]
+      val key = keys[(baseIdx + attempt) % keys.size]
       try {
         return requestWithModelFallback(key, batch, inputType)
       } catch (e: EmbeddingHttpException) {
@@ -104,7 +105,6 @@ class NimEmbeddingProvider(
         delay(350L * (attempt + 1))
       }
     }
-    keyCursor = (keyCursor + 1) % keys.size
     throw DocumentException("Embedding request failed: ${lastError?.message ?: "unknown error"}")
   }
 
@@ -164,7 +164,7 @@ class NimEmbeddingProvider(
 
     private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
-    val defaultClient: OkHttpClient = OkHttpClient.Builder()
+    val defaultClient: OkHttpClient = com.example.agent.core.AgentHttp.client.newBuilder()
       .connectTimeout(30, TimeUnit.SECONDS)
       .readTimeout(90, TimeUnit.SECONDS)
       .writeTimeout(60, TimeUnit.SECONDS)

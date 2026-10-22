@@ -118,7 +118,7 @@ class TerminalTool(
   override val category: ToolCategory = ToolCategory.PROCESS
   override val target: ToolTarget = ToolTarget.SANDBOX_PROCESS
   override val permissions: Set<ToolPermission> = setOf(ToolPermission.PROCESS_EXECUTION)
-  override val defaultTimeoutMs: Long = 30000L
+  override val defaultTimeoutMs: Long = 90000L
   override val supportsCancellation: Boolean = true
 
   override fun isAvailable(): Boolean = true

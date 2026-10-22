@@ -184,7 +184,7 @@ class RecreateDocumentTool(
         sourceDescription = "image/screenshot '${sourceFile.name}'"
         val router = ocrRouter ?: throw IllegalStateException("OCR engine is not configured to read images.")
         val ocrResult = router.recognize(sourceFile, forceCloud = false)
-        extractedText = ocrResult.fullText
+        extractedText = ocrResult.fullText.ifBlank { ocrResult.visualDescription ?: "" }
 
         // Extract tables from OCR if present
         for (t in ocrResult.tables) {
@@ -192,7 +192,9 @@ class RecreateDocumentTool(
         }
 
         // Categorize lines into title, headings, metadata, lists, callouts, and paragraphs
-        val lines = ocrResult.lines.map { it.text.trim() }.filter { it.isNotBlank() }
+        val lines = (if (ocrResult.lines.isNotEmpty()) ocrResult.lines.map { it.text.trim() }
+                     else ocrResult.visualDescription?.lines()?.map { it.trim() } ?: emptyList())
+          .filter { it.isNotBlank() }
         if (lines.isNotEmpty()) {
           val currentList = mutableListOf<String>()
           val paragraphBuilder = StringBuilder()

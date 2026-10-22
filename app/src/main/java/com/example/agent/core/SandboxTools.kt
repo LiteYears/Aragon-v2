@@ -67,7 +67,7 @@ class CodeInterpreterTool(
   override val category: ToolCategory = ToolCategory.PROCESS
   override val target: ToolTarget = ToolTarget.SANDBOX_PROCESS
   override val permissions: Set<ToolPermission> = setOf(ToolPermission.PROCESS_EXECUTION, ToolPermission.WORKSPACE_WRITE)
-  override val defaultTimeoutMs: Long = 45000L
+  override val defaultTimeoutMs: Long = 120000L
 
   override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
     withContext(Dispatchers.IO) {

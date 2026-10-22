@@ -397,6 +397,7 @@ class ReadImageTool(
 
   override val category: ToolCategory = ToolCategory.FILESYSTEM
   override val owningBackend: ExecutionEnvironmentType = ExecutionEnvironmentType.ANDROID_NATIVE
+  override val defaultTimeoutMs: Long = 120000L
 
   override val schema: ToolSchema = ToolSchema(
     listOf(
@@ -526,11 +527,27 @@ class ReadImageTool(
     return try {
       val res = ocrRouter.recognize(targetFile, forceCloud)
       val sb = StringBuilder()
-      sb.append("=== IMAGE TRANSCRIPTION (${res.engine}) ===\n")
+      sb.append("=== IMAGE ANALYSIS & TRANSCRIPTION (${res.engine}) ===\n")
+      sb.append("File: ${targetFile.name} (${targetFile.length()} bytes)\n")
+      if (!res.visualDescription.isNullOrBlank()) {
+        sb.append("Visual Overview: ").append(res.visualDescription).append("\n")
+      }
+      if (!res.documentType.isNullOrBlank()) {
+        sb.append("Document Type: ").append(res.documentType).append("\n")
+      }
+      if (res.metadata.isNotEmpty()) {
+        sb.append("Image Details: ").append(res.metadata.entries.joinToString(", ") { "${it.key}=${it.value}" }).append("\n")
+      }
+      sb.append("\n--- Extracted Text ---\n")
       if (res.fullText.isNotBlank()) {
         sb.append(res.fullText).append("\n\n")
       } else {
-        sb.append("[No text detected in image]\nHint: For handwriting, photos, or receipts, inspect with Python (PIL / pytesseract) via code_interpreter or terminal.\n\n")
+        sb.append("[No verbatim text detected in image]\n")
+        if (!res.visualDescription.isNullOrBlank()) {
+          sb.append("See Visual Overview above for layout and visual structure.\n\n")
+        } else {
+          sb.append("Hint: For handwriting, photos, or receipts, inspect with Python (PIL / pytesseract) via code_interpreter or terminal.\n\n")
+        }
       }
       if (res.tables.isNotEmpty()) {
         sb.append("--- Extracted Tables (${res.tables.size}) ---\n")
@@ -550,7 +567,6 @@ class ReadImageTool(
         sb.append("Warnings: ").append(res.warnings.joinToString("; ")).append("\n")
       }
       val outText = sb.toString().trim()
-      val toolOutcome = if (res.fullText.isBlank() && res.tables.isEmpty()) ToolExecutionOutcome.CONDITION_NOT_FOUND else ToolExecutionOutcome.SUCCESS_WITH_RESULTS
       ToolResult(
         callId = callId,
         toolName = name,
@@ -561,8 +577,13 @@ class ReadImageTool(
         duration = System.currentTimeMillis() - startTime,
         stdout = outText,
         exitCode = 0,
-        outcome = toolOutcome,
-        responseMetadata = mapOf("engine" to res.engine, "tablesCount" to res.tables.size)
+        outcome = ToolExecutionOutcome.SUCCESS_WITH_RESULTS,
+        responseMetadata = mapOf(
+          "engine" to res.engine,
+          "tablesCount" to res.tables.size,
+          "textLength" to res.fullText.length,
+          "hasVisualDescription" to (!res.visualDescription.isNullOrBlank())
+        )
       )
     } catch (e: Exception) {
       if (e is CancellationException) throw e

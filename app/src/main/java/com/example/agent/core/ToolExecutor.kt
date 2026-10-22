@@ -151,8 +151,15 @@ class ToolExecutor(
     val normalizedArgs = normalizeArguments(normalizedCall.arguments)
 
     // Step 7: Execution within Timeout & Cancellation Scope
+    val requestedTimeoutSec = (normalizedArgs["timeoutSeconds"] ?: normalizedArgs["timeout_seconds"] ?: normalizedArgs["timeout"])
+      ?.toString()?.trim()?.toLongOrNull()
+    val effectiveTimeoutMs = if (requestedTimeoutSec != null && requestedTimeoutSec > 0L) {
+      maxOf(tool.defaultTimeoutMs, (requestedTimeoutSec * 1000L + 10_000L).coerceAtMost(300_000L))
+    } else {
+      tool.defaultTimeoutMs
+    }
     val result = try {
-      withTimeout(tool.defaultTimeoutMs) {
+      withTimeout(effectiveTimeoutMs) {
         val execRes = tool.execute(normalizedCall.callId, normalizedArgs, resolvedContext)
         val classifiedOutcome = ObservationPayloadPolicy.classifyOutcome(
           toolName = tool.name,
@@ -174,7 +181,7 @@ class ToolExecutor(
         status = ToolStatus.FAILED,
         arguments = normalizedArgs,
         output = null,
-        error = "Tool execution timed out after ${tool.defaultTimeoutMs}ms.",
+        error = "Tool execution timed out after ${effectiveTimeoutMs}ms.",
         errorType = ToolErrorCode.TIMEOUT,
         duration = System.currentTimeMillis() - startTime,
         exitCode = -1,

@@ -224,7 +224,7 @@ class E2BSandboxProvider(
   val sandboxDomain: String = "e2b.app",
   val localWorkspaceDir: File,
   val timeoutSeconds: Int = 300,
-  val httpClient: OkHttpClient = OkHttpClient.Builder()
+  val httpClient: OkHttpClient = AgentHttp.client.newBuilder()
     .connectTimeout(30, TimeUnit.SECONDS)
     .readTimeout(120, TimeUnit.SECONDS)
     .build()

@@ -105,7 +105,7 @@ class NvidiaNimProvider(
   initialConfig: NvidiaNimConfig = NvidiaNimConfig()
 ) : LLMProvider {
 
-  private val sharedHttpClient = OkHttpClient.Builder()
+  private val sharedHttpClient = AgentHttp.client.newBuilder()
     .connectTimeout(30, TimeUnit.SECONDS)
     .readTimeout(60, TimeUnit.SECONDS)
     .writeTimeout(60, TimeUnit.SECONDS)
@@ -462,7 +462,7 @@ class NvidiaNimProvider(
 
       // 1. Construct messages conforming to OpenAI / NVIDIA tool calling specifications
       val modelSupportsVision = NvidiaModelRegistry.isVisionModel(modelToUse)
-      val messagesArray = buildMessagesJson(systemPrompt, messages, modelSupportsVision)
+      val messagesArray = buildMessagesJson(systemPrompt, messages, modelSupportsVision, useNativeTools)
       requestJson.put("messages", messagesArray)
 
       // 2. Expose canonical registered tools
@@ -579,8 +579,8 @@ class NvidiaNimProvider(
         )
       }
 
-      val contentType = response.header("Content-Type") ?: ""
-      val isEventStream = (contentType.contains("text/event-stream") || streamListener != null) && response.body != null
+      val contentType = (response.header("Content-Type") ?: "").lowercase()
+      val isEventStream = (contentType.contains("text/event-stream") || (streamListener != null && !contentType.contains("application/json"))) && response.body != null
 
       if (isEventStream) {
         val accumulatedContent = StringBuilder()
@@ -651,6 +651,8 @@ class NvidiaNimProvider(
               }
             }
           }
+        } catch (ce: CancellationException) {
+          throw ce
         } catch (_: Exception) {}
 
         val rawContentText = accumulatedContent.toString().trim()
@@ -1166,7 +1168,8 @@ class NvidiaNimProvider(
   private fun buildMessagesJson(
     systemPrompt: String,
     messages: List<AgentMessage>,
-    modelSupportsVision: Boolean = false
+    modelSupportsVision: Boolean = false,
+    useNativeTools: Boolean = true
   ): JSONArray {
     val messagesArray = JSONArray()
 
@@ -1256,7 +1259,7 @@ class NvidiaNimProvider(
           val assistantObj = JSONObject()
           assistantObj.put("role", "assistant")
 
-          if (msg.toolCallId != null && msg.toolName != null) {
+          if (useNativeTools && msg.toolCallId != null && msg.toolName != null) {
             // For native tool calls in conversation history, keep content null so reasoning models
             // (GLM, DeepSeek, Nemotron) do not learn to echo internal reasoning blocks inside content.
             assistantObj.put("content", JSONObject.NULL)
@@ -1285,6 +1288,14 @@ class NvidiaNimProvider(
             }
             assistantObj.put("tool_calls", toolCallsArr)
             messageIndex = batchIndex - 1
+          } else if (!useNativeTools && msg.toolCallId != null && msg.toolName != null) {
+            activeToolCallIds.clear()
+            val argsJson = mapToJsonObject(msg.toolArgs ?: emptyMap())
+            val actionText = buildString {
+              if (msg.content.isNotBlank()) appendLine(msg.content)
+              append("```json\n{\"name\": \"${msg.toolName}\", \"parameters\": $argsJson}\n```")
+            }
+            assistantObj.put("content", actionText)
           } else {
             activeToolCallIds.clear()
             assistantObj.put("content", msg.content)
@@ -1300,7 +1311,7 @@ class NvidiaNimProvider(
             msg.content
           }
           val callId = msg.toolCallId ?: ""
-          if (callId.isNotBlank() && activeToolCallIds.contains(callId)) {
+          if (useNativeTools && callId.isNotBlank() && activeToolCallIds.contains(callId)) {
             val toolObj = JSONObject()
             toolObj.put("role", "tool")
             toolObj.put("tool_call_id", callId)

@@ -473,7 +473,7 @@ class DeliverableTracker(
 
     val INTERNAL_WORKSPACE_FILES = setOf(
       "data.db", "data.db-wal", "data.db-shm", "data.db-journal",
-      "task_history.jsonl", "checkpoint.json", "research.jsonl",
+      "task_history.jsonl", "checkpoint.json", "research.jsonl", "mcp_servers.json",
       "aragon_exec_script.py", ".sudo_as_admin_successful", ".bashrc", ".bash_logout", ".profile"
     )
 

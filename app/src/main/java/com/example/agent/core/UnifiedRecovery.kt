@@ -421,7 +421,7 @@ class UnifiedLoopDetector(val maxHistorySize: Int = 20) {
 
   fun restoreHistoryJson(arr: JSONArray?) {
     if (arr == null) return
-    history.clear()
+    reset()
     for (i in 0 until arr.length()) {
       val obj = arr.optJSONObject(i) ?: continue
       val sig = ActionSignature(
@@ -444,9 +444,8 @@ class UnifiedLoopDetector(val maxHistorySize: Int = 20) {
         failureCategory = cat,
         timestamp = obj.optLong("timestamp", System.currentTimeMillis())
       )
-      history.add(event)
+      recordEvent(event)
     }
-    lastSignature = history.lastOrNull()?.signature
   }
 }
 
@@ -906,8 +905,11 @@ class UnifiedRecoveryManager(
 
     val toolNameLower = toolCall.toolName.lowercase(Locale.US)
     val mutatesEnv = toolNameLower in listOf(
-      "terminal", "install_package", "write_file", "edit_file", "apply_patch", "move_file", "delete_file"
-    )
+      "terminal", "install_package", "write_file", "edit_file", "apply_patch", "move_file", "delete_file",
+      "copy_file", "create_directory", "code_interpreter", "execute_code", "run_code", "python",
+      "recreate_document", "document_process", "build_pdf_document", "docx_builder", "xlsx_builder",
+      "environment_capability"
+    ) || toolNameLower.contains("__")
 
     if (conclusion.madeProgress && conclusion.isSatisfied) {
       retryCountsBySignature.remove(sig.callHash)

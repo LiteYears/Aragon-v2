@@ -71,6 +71,27 @@ class DocumentRetriever(
       }
     }
 
+    // Fallback 2: Substring / keyword match directly across scoped document chunks
+    if (ftsRanking.size < k) {
+      val normalizedQuery = DocumentText.normalizeForSearch(cleanQuery)
+      val queryWords = normalizedQuery.split(" ").filter { it.isNotBlank() }
+      if (queryWords.isNotEmpty()) {
+        for (docId in scopeDocs.keys) {
+          if (ftsRanking.size >= legLimit) break
+          val docChunks = try { repository.chunksForDoc(docId) } catch (_: Exception) { emptyList() }
+          for (chunk in docChunks) {
+            if (ftsRanking.contains(chunk.id)) continue
+            val chunkSearch = chunk.searchText.lowercase()
+            val matches = queryWords.count { word -> chunkSearch.contains(word) }
+            if (matches > 0) {
+              ftsRanking.add(chunk.id)
+              if (ftsRanking.size >= legLimit) break
+            }
+          }
+        }
+      }
+    }
+
     var vectorUsed = false
     val vectorRanking = mutableListOf<Long>()
     val provider = embeddingProviderSupplier()

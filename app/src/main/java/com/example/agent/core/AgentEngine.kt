@@ -1388,7 +1388,11 @@ class AgentEngine(
       ).toMutableList()
 
       // Authoritative evaluation through Unified Recovery Manager
-      val evalConclusion = recoveryManager.evaluateExecution(call, toolResult, observation, null)
+      val evalContext = toolResult.executionContext ?: ToolExecutionContext(
+        sessionId = task.sessionId,
+        workspaceDir = workspaceDir
+      )
+      val evalConclusion = recoveryManager.evaluateExecution(call, toolResult, observation, evalContext)
 
       // Emit distinct evaluation/recovery step to keep evaluator conclusions separate from raw tool observations
       if (!evalConclusion.isSatisfied || evalConclusion.failureCategory != null || item.isSkippedLoop) {

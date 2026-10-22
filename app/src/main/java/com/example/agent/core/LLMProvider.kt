@@ -317,7 +317,7 @@ interface LLMProvider {
  * Uses native functionDeclarations and functionCall for structured tool calling.
  */
 class GeminiLLMProvider(
-  private var apiKey: String = "",
+  @Volatile private var apiKey: String = "",
   private val modelName: String = "gemini-3.5-flash"
 ) : LLMProvider {
 
@@ -462,7 +462,16 @@ class GeminiLLMProvider(
         if (!resp.isSuccessful) {
           val rawBody = resp.body?.string().orEmpty()
           val safeBody = if (apiKey.isNotBlank()) rawBody.replace(apiKey, "[REDACTED]") else rawBody
-          return@withContext LLMDecision.ProviderError("Gemini API HTTP ${resp.code}: $safeBody")
+          val failureKind = when (resp.code) {
+            400, 422 -> ProviderFailureKind.INVALID_REQUEST
+            401 -> ProviderFailureKind.AUTH
+            403 -> ProviderFailureKind.PERMISSION
+            404 -> ProviderFailureKind.MODEL_UNAVAILABLE
+            429 -> if (safeBody.contains("quota", ignoreCase = true)) ProviderFailureKind.QUOTA_EXHAUSTED else ProviderFailureKind.RATE_LIMITED
+            in 500..599 -> ProviderFailureKind.TRANSIENT
+            else -> ProviderFailureKind.OTHER
+          }
+          return@withContext LLMDecision.ProviderError("Gemini API HTTP ${resp.code}: $safeBody", kind = failureKind)
         }
         resp.body?.string().orEmpty()
       }
@@ -532,10 +541,12 @@ class GeminiLLMProvider(
       } else {
         LLMDecision.ProviderError("Gemini returned an empty candidate response without text or tool calls.", kind = ProviderFailureKind.EMPTY_RESPONSE)
       }
+    } catch (ce: kotlinx.coroutines.CancellationException) {
+      throw ce
     } catch (e: Exception) {
       val errMsg = e.message ?: "Unknown error"
       val safeMsg = if (apiKey.isNotBlank()) errMsg.replace(apiKey, "[REDACTED]") else errMsg
-      LLMDecision.ProviderError("Gemini request exception: $safeMsg")
+      LLMDecision.ProviderError("Gemini request exception: $safeMsg", kind = ProviderFailureKind.NETWORK)
     }
   }
 }
