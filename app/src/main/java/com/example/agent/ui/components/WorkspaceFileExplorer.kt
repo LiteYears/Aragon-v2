@@ -537,17 +537,19 @@ fun WorkspaceFileExplorer(
   itemToDelete?.let { item ->
     AlertDialog(
       onDismissRequest = { itemToDelete = null },
-      containerColor = Color.White,
-      titleContentColor = Color(0xFF0F172A),
-      textContentColor = Color(0xFF475569),
+      containerColor = Color(0xFF050508),
+      titleContentColor = Color.White,
+      textContentColor = Color(0xFF94A3B8),
       shape = RoundedCornerShape(20.dp),
+      modifier = Modifier.border(1.dp, Color(0xFF191C26), RoundedCornerShape(20.dp)),
       title = {
         Text(
-          text = if (item.isDirectory) "Delete Directory?" else "Delete File?",
+          text = if (item.isDirectory) "DELETE DIRECTORY?" else "DELETE FILE?",
           fontFamily = InterFontFamily,
-          fontWeight = FontWeight.Bold,
+          fontWeight = FontWeight.ExtraBold,
+          letterSpacing = 0.8.sp,
           fontSize = 14.sp,
-          color = Color(0xFF0F172A)
+          color = Color.White
         )
       },
       text = {
@@ -559,7 +561,7 @@ fun WorkspaceFileExplorer(
           },
           fontFamily = InterFontFamily,
           fontSize = 12.sp,
-          color = Color(0xFF475569)
+          color = Color(0xFF94A3B8)
         )
       },
       confirmButton = {
@@ -666,9 +668,9 @@ fun WorkspaceMinimalCommandHeader(
     modifier = Modifier
       .fillMaxWidth()
       .padding(horizontal = 12.dp, vertical = 4.dp),
-    shape = RoundedCornerShape(8.dp),
-    color = AmoledSurfaceElevated,
-    border = BorderStroke(1.dp, AmoledBorderSubtle)
+    shape = RoundedCornerShape(14.dp),
+    color = Color(0xFF07070B),
+    border = BorderStroke(1.dp, Color(0xFF191C26))
   ) {
     Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
       // Row 1: Breadcrumb path & Stats
@@ -814,18 +816,18 @@ fun WorkspaceMinimalCommandHeader(
             expanded = showSortDropdown,
             onDismissRequest = { showSortDropdown = false },
             modifier = Modifier
-              .background(Color.White)
-              .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
+              .background(Color(0xFF07070B))
+              .border(1.dp, Color(0xFF191C26), RoundedCornerShape(12.dp))
           ) {
             ExplorerSortBy.values().forEach { option ->
               DropdownMenuItem(
                 text = {
                   Text(
                     text = option.label,
-                    fontFamily = InterFontFamily,
-                    fontSize = 11.5.sp,
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontSize = 11.sp,
                     fontWeight = if (option == sortBy) FontWeight.Bold else FontWeight.Normal,
-                    color = if (option == sortBy) Color(0xFF0F172A) else Color(0xFF475569)
+                    color = if (option == sortBy) Color(0xFF38BDF8) else Color(0xFFE2E8F0)
                   )
                 },
                 onClick = {
@@ -1095,12 +1097,12 @@ fun DirectoryItemRow(
             expanded = showDirMenu,
             onDismissRequest = { showDirMenu = false },
             modifier = Modifier
-              .background(Color.White)
-              .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
+              .background(Color(0xFF07070B))
+              .border(1.dp, Color(0xFF191C26), RoundedCornerShape(12.dp))
           ) {
             DropdownMenuItem(
               text = {
-                Text("Rename Directory", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFF0F172A))
+                Text("Rename Directory", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFFF1F5F9))
               },
               onClick = {
                 showDirMenu = false
@@ -1109,7 +1111,7 @@ fun DirectoryItemRow(
             )
             DropdownMenuItem(
               text = {
-                Text("Delete Directory", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFFDC2626))
+                Text("Delete Directory", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFFEF4444))
               },
               onClick = {
                 showDirMenu = false
@@ -1274,25 +1276,25 @@ fun FileItemRow(
             expanded = showFileMenu,
             onDismissRequest = { showFileMenu = false },
             modifier = Modifier
-              .background(Color.White)
-              .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
+              .background(Color(0xFF07070B))
+              .border(1.dp, Color(0xFF191C26), RoundedCornerShape(12.dp))
           ) {
             DropdownMenuItem(
-              text = { Text("View Content", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFF0F172A)) },
+              text = { Text("View Content", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFFF1F5F9)) },
               onClick = {
                 showFileMenu = false
                 onClick()
               }
             )
             DropdownMenuItem(
-              text = { Text("File Info & Metadata", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFF0F172A)) },
+              text = { Text("File Info & Metadata", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFFF1F5F9)) },
               onClick = {
                 showFileMenu = false
                 onInspect()
               }
             )
             DropdownMenuItem(
-              text = { Text("Rename File", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFF0F172A)) },
+              text = { Text("Rename File", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFFF1F5F9)) },
               onClick = {
                 showFileMenu = false
                 onRename()
@@ -1300,7 +1302,7 @@ fun FileItemRow(
             )
             if (onDuplicate != null) {
               DropdownMenuItem(
-                text = { Text("Duplicate File", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFF0F172A)) },
+                text = { Text("Duplicate File", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFFF1F5F9)) },
                 onClick = {
                   showFileMenu = false
                   onDuplicate()
@@ -1308,14 +1310,14 @@ fun FileItemRow(
               )
             }
             DropdownMenuItem(
-              text = { Text("Share File", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFF0F172A)) },
+              text = { Text("Share File", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFFF1F5F9)) },
               onClick = {
                 showFileMenu = false
                 onShare()
               }
             )
             DropdownMenuItem(
-              text = { Text("Delete File", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFFDC2626)) },
+              text = { Text("Delete File", fontFamily = InterFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFFEF4444)) },
               onClick = {
                 showFileMenu = false
                 onDelete()
@@ -1545,17 +1547,19 @@ fun CreateFileDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    containerColor = Color.White,
-    titleContentColor = Color(0xFF0F172A),
-    textContentColor = Color(0xFF475569),
+    containerColor = Color(0xFF050508),
+    titleContentColor = Color.White,
+    textContentColor = Color(0xFF94A3B8),
     shape = RoundedCornerShape(20.dp),
+    modifier = Modifier.border(1.dp, Color(0xFF191C26), RoundedCornerShape(20.dp)),
     title = {
       Text(
-        text = "Create Workspace File",
+        text = "CREATE WORKSPACE FILE",
         fontFamily = InterFontFamily,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.ExtraBold,
+        letterSpacing = 0.8.sp,
         fontSize = 14.sp,
-        color = Color(0xFF0F172A)
+        color = Color.White
       )
     },
     text = {
@@ -1567,16 +1571,16 @@ fun CreateFileDialog(
           text = "Directory: $currentDirectory",
           fontFamily = JetBrainsMonoFontFamily,
           fontSize = 10.sp,
-          color = Color(0xFF64748B)
+          color = Color(0xFF38BDF8)
         )
 
         // Template pills
         Text(
           text = "Quick Templates:",
-          fontFamily = InterFontFamily,
-          fontSize = 10.sp,
-          fontWeight = FontWeight.SemiBold,
-          color = Color(0xFF475569)
+          fontFamily = JetBrainsMonoFontFamily,
+          fontSize = 9.5.sp,
+          fontWeight = FontWeight.Bold,
+          color = Color(0xFF94A3B8)
         )
         Row(
           modifier = Modifier
@@ -1588,8 +1592,8 @@ fun CreateFileDialog(
             val (tplName, tplContent) = pair
             Surface(
               shape = RoundedCornerShape(8.dp),
-              color = Color(0xFFF1F5F9),
-              border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+              color = Color(0xFF0C0E14),
+              border = BorderStroke(1.dp, Color(0xFF191C26)),
               modifier = Modifier.clickable {
                 if (tplName.isNotBlank()) fileName = tplName
                 if (tplContent.isNotBlank()) initialContent = tplContent
@@ -1597,11 +1601,11 @@ fun CreateFileDialog(
             ) {
               Text(
                 text = label,
-                fontFamily = InterFontFamily,
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color(0xFF0F172A),
-                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                fontFamily = JetBrainsMonoFontFamily,
+                fontSize = 8.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFFE2E8F0),
+                modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
               )
             }
           }
@@ -1613,16 +1617,16 @@ fun CreateFileDialog(
             fileName = it
             errorMessage = null
           },
-          label = { Text("File Name (e.g. report.docx, data.csv)", fontSize = 11.sp) },
+          label = { Text("File Name (e.g. report.docx, data.csv)", fontSize = 11.sp, color = Color(0xFF94A3B8)) },
           singleLine = true,
           modifier = Modifier
             .fillMaxWidth()
             .testTag("new_file_name_input"),
-          textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = InterFontFamily, color = Color(0xFF0F172A), fontSize = 12.sp),
+          textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily, color = Color.White, fontSize = 12.sp),
           colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = Color(0xFF0F172A),
-            unfocusedBorderColor = Color(0xFFCBD5E1),
-            cursorColor = Color(0xFF0F172A)
+            focusedBorderColor = Color(0xFF38BDF8),
+            unfocusedBorderColor = Color(0xFF191C26),
+            cursorColor = Color(0xFF38BDF8)
           )
         )
 
@@ -1630,22 +1634,22 @@ fun CreateFileDialog(
           OutlinedTextField(
             value = initialContent,
             onValueChange = { initialContent = it },
-            label = { Text("Initial Text Content (Optional)", fontSize = 11.sp) },
+            label = { Text("Initial Text Content (Optional)", fontSize = 11.sp, color = Color(0xFF94A3B8)) },
             modifier = Modifier
               .fillMaxWidth()
               .height(110.dp)
               .testTag("new_file_content_input"),
-            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp, color = Color(0xFF0F172A)),
+            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily, fontSize = 11.sp, color = Color(0xFFE2E8F0)),
             colors = OutlinedTextFieldDefaults.colors(
-              focusedBorderColor = Color(0xFF0F172A),
-              unfocusedBorderColor = Color(0xFFCBD5E1),
-              cursorColor = Color(0xFF0F172A)
+              focusedBorderColor = Color(0xFF38BDF8),
+              unfocusedBorderColor = Color(0xFF191C26),
+              cursorColor = Color(0xFF38BDF8)
             )
           )
         }
 
         errorMessage?.let { err ->
-          Text(text = err, color = Color(0xFFDC2626), fontSize = 11.sp, fontFamily = InterFontFamily)
+          Text(text = err, color = Color(0xFFEF4444), fontSize = 11.sp, fontFamily = InterFontFamily)
         }
       }
     },
@@ -1691,17 +1695,19 @@ fun CreateFolderDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    containerColor = Color.White,
-    titleContentColor = Color(0xFF0F172A),
-    textContentColor = Color(0xFF475569),
+    containerColor = Color(0xFF050508),
+    titleContentColor = Color.White,
+    textContentColor = Color(0xFF94A3B8),
     shape = RoundedCornerShape(20.dp),
+    modifier = Modifier.border(1.dp, Color(0xFF191C26), RoundedCornerShape(20.dp)),
     title = {
       Text(
-        text = "Create New Directory",
+        text = "CREATE NEW DIRECTORY",
         fontFamily = InterFontFamily,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.ExtraBold,
+        letterSpacing = 0.8.sp,
         fontSize = 14.sp,
-        color = Color(0xFF0F172A)
+        color = Color.White
       )
     },
     text = {
@@ -1713,7 +1719,7 @@ fun CreateFolderDialog(
           text = "Parent: $currentDirectory",
           fontFamily = JetBrainsMonoFontFamily,
           fontSize = 10.sp,
-          color = Color(0xFF64748B)
+          color = Color(0xFF38BDF8)
         )
 
         OutlinedTextField(
@@ -1722,21 +1728,21 @@ fun CreateFolderDialog(
             folderName = it
             errorMessage = null
           },
-          label = { Text("Directory Name (e.g. data, reports, src)", fontSize = 11.sp) },
+          label = { Text("Directory Name (e.g. data, reports, src)", fontSize = 11.sp, color = Color(0xFF94A3B8)) },
           singleLine = true,
           modifier = Modifier
             .fillMaxWidth()
             .testTag("new_folder_name_input"),
-          textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = InterFontFamily, color = Color(0xFF0F172A), fontSize = 12.sp),
+          textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily, color = Color.White, fontSize = 12.sp),
           colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = Color(0xFF0F172A),
-            unfocusedBorderColor = Color(0xFFCBD5E1),
-            cursorColor = Color(0xFF0F172A)
+            focusedBorderColor = Color(0xFF38BDF8),
+            unfocusedBorderColor = Color(0xFF191C26),
+            cursorColor = Color(0xFF38BDF8)
           )
         )
 
         errorMessage?.let { err ->
-          Text(text = err, color = Color(0xFFDC2626), fontSize = 11.sp, fontFamily = InterFontFamily)
+          Text(text = err, color = Color(0xFFEF4444), fontSize = 11.sp, fontFamily = InterFontFamily)
         }
       }
     },
@@ -1781,17 +1787,19 @@ fun RenameItemDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    containerColor = Color.White,
-    titleContentColor = Color(0xFF0F172A),
-    textContentColor = Color(0xFF475569),
+    containerColor = Color(0xFF050508),
+    titleContentColor = Color.White,
+    textContentColor = Color(0xFF94A3B8),
     shape = RoundedCornerShape(20.dp),
+    modifier = Modifier.border(1.dp, Color(0xFF191C26), RoundedCornerShape(20.dp)),
     title = {
       Text(
-        text = if (item.isDirectory) "Rename Directory" else "Rename File",
+        text = if (item.isDirectory) "RENAME DIRECTORY" else "RENAME FILE",
         fontFamily = InterFontFamily,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.ExtraBold,
+        letterSpacing = 0.8.sp,
         fontSize = 14.sp,
-        color = Color(0xFF0F172A)
+        color = Color.White
       )
     },
     text = {
@@ -1803,7 +1811,7 @@ fun RenameItemDialog(
           text = "Original: ${item.name}",
           fontFamily = JetBrainsMonoFontFamily,
           fontSize = 10.sp,
-          color = Color(0xFF64748B)
+          color = Color(0xFF38BDF8)
         )
 
         OutlinedTextField(
@@ -1812,21 +1820,21 @@ fun RenameItemDialog(
             newName = it
             errorMessage = null
           },
-          label = { Text("New Name", fontSize = 11.sp) },
+          label = { Text("New Name", fontSize = 11.sp, color = Color(0xFF94A3B8)) },
           singleLine = true,
           modifier = Modifier
             .fillMaxWidth()
             .testTag("rename_input"),
-          textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = InterFontFamily, color = Color(0xFF0F172A), fontSize = 12.sp),
+          textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily, color = Color.White, fontSize = 12.sp),
           colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = Color(0xFF0F172A),
-            unfocusedBorderColor = Color(0xFFCBD5E1),
-            cursorColor = Color(0xFF0F172A)
+            focusedBorderColor = Color(0xFF38BDF8),
+            unfocusedBorderColor = Color(0xFF191C26),
+            cursorColor = Color(0xFF38BDF8)
           )
         )
 
         errorMessage?.let { err ->
-          Text(text = err, color = Color(0xFFDC2626), fontSize = 11.sp, fontFamily = InterFontFamily)
+          Text(text = err, color = Color(0xFFEF4444), fontSize = 11.sp, fontFamily = InterFontFamily)
         }
       }
     },
@@ -1873,17 +1881,19 @@ fun ItemMetadataDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    containerColor = Color.White,
-    titleContentColor = Color(0xFF0F172A),
-    textContentColor = Color(0xFF475569),
+    containerColor = Color(0xFF050508),
+    titleContentColor = Color.White,
+    textContentColor = Color(0xFF94A3B8),
     shape = RoundedCornerShape(20.dp),
+    modifier = Modifier.border(1.dp, Color(0xFF191C26), RoundedCornerShape(20.dp)),
     title = {
       Text(
-        text = "File Metadata Inspector",
+        text = "FILE METADATA INSPECTOR",
         fontFamily = InterFontFamily,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.ExtraBold,
+        letterSpacing = 0.8.sp,
         fontSize = 14.sp,
-        color = Color(0xFF0F172A)
+        color = Color.White
       )
     },
     text = {
@@ -1929,21 +1939,30 @@ fun ItemMetadataDialog(
 
 @Composable
 private fun MetadataRow(label: String, value: String) {
-  Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-    Text(
-      text = label.uppercase(),
-      fontFamily = JetBrainsMonoFontFamily,
-      fontSize = 9.sp,
-      fontWeight = FontWeight.Bold,
-      color = Color(0xFF64748B)
-    )
-    Text(
-      text = value,
-      fontFamily = JetBrainsMonoFontFamily,
-      fontSize = 11.sp,
-      color = Color(0xFF0F172A),
-      maxLines = 2,
-      overflow = TextOverflow.Ellipsis
-    )
+  Surface(
+    shape = RoundedCornerShape(8.dp),
+    color = Color(0xFF07070B),
+    border = BorderStroke(1.dp, Color(0xFF191C26)),
+    modifier = Modifier
+      .fillMaxWidth()
+      .padding(vertical = 2.dp)
+  ) {
+    Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+      Text(
+        text = label.uppercase(),
+        fontFamily = JetBrainsMonoFontFamily,
+        fontSize = 8.5.sp,
+        fontWeight = FontWeight.Bold,
+        color = Color(0xFF38BDF8)
+      )
+      Text(
+        text = value,
+        fontFamily = JetBrainsMonoFontFamily,
+        fontSize = 11.sp,
+        color = Color(0xFFE2E8F0),
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis
+      )
+    }
   }
 }

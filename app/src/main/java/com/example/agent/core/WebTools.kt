@@ -108,6 +108,16 @@ object WebHtmlParser {
     html = html.replace(Regex("(?i)<br\\s*/?>"), "\n")
     html = html.replace(Regex("(?i)<p[^>]*>(.*?)</p>"), "\n\n$1\n\n")
 
+    // Convert HTML tables into clean Markdown tables before stripping tags
+    val extractedTables = extractTables(html)
+    if (extractedTables.isNotEmpty()) {
+      var tableIdx = 0
+      html = html.replace(Regex("(?is)<table[^>]*>.*?</table>")) {
+        val mdTable = extractedTables.getOrNull(tableIdx++) ?: ""
+        "\n\n$mdTable\n\n"
+      }
+    }
+
     // Format text
     html = html.replace(Regex("(?i)<(strong|b)[^>]*>(.*?)</\\1>"), "**$2**")
     html = html.replace(Regex("(?i)<(em|i)[^>]*>(.*?)</\\1>"), "*$2*")
@@ -239,7 +249,7 @@ object WebHtmlParser {
 }
 
 /**
- * Shared live web search engine.
+ * Shared live web search engine with fast in-memory caching.
  */
 object WebSearchEngine {
   private val httpClient = OkHttpClient.Builder()
@@ -248,8 +258,17 @@ object WebSearchEngine {
     .followRedirects(true)
     .build()
 
+  private val searchCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<Map<String, String>>>>()
+
   fun search(query: String, maxCount: Int = 5): List<Map<String, String>> {
     val cleanQuery = query.replace(Regex("site:\\S+"), "").trim().ifBlank { query.trim() }
+    val cacheKey = "${cleanQuery.lowercase()}:$maxCount"
+    val now = System.currentTimeMillis()
+    searchCache[cacheKey]?.let { (ts, cached) ->
+      if (now - ts < 300_000L && cached.isNotEmpty()) {
+        return cached
+      }
+    }
     val encodedQuery = URLEncoder.encode(cleanQuery, StandardCharsets.UTF_8.toString())
     val combinedResults = mutableListOf<Map<String, String>>()
     val seenUrls = HashSet<String>()
@@ -266,6 +285,14 @@ object WebSearchEngine {
           )
         )
       }
+    }
+
+    fun cacheAndReturn(): List<Map<String, String>> {
+      if (combinedResults.isNotEmpty()) {
+        if (searchCache.size > 64) searchCache.clear()
+        searchCache[cacheKey] = System.currentTimeMillis() to combinedResults.toList()
+      }
+      return combinedResults
     }
 
     // Tier 1: DuckDuckGo HTML Search (general web search)
@@ -301,7 +328,7 @@ object WebSearchEngine {
           }
         }
       }
-      if (combinedResults.size >= maxCount) return combinedResults
+      if (combinedResults.size >= maxCount) return cacheAndReturn()
     } catch (_: Exception) {}
 
     // Tier 2: HackerNews Algolia Search API (fast JSON, strong coverage for tech, AI, tools, E2B, dev tutorials)
@@ -342,7 +369,7 @@ object WebSearchEngine {
           queryHn(URLEncoder.encode(relaxed, StandardCharsets.UTF_8.toString()))
         }
       }
-      if (combinedResults.size >= maxCount) return combinedResults
+      if (combinedResults.size >= maxCount) return cacheAndReturn()
     } catch (_: Exception) {}
 
     // Tier 3: GitHub Repositories Search API (excellent for libraries, SDKs, code tutorials, E2B, Python tools)
@@ -377,7 +404,7 @@ object WebSearchEngine {
           }
         }
       }
-      if (combinedResults.size >= maxCount) return combinedResults
+      if (combinedResults.size >= maxCount) return cacheAndReturn()
     } catch (_: Exception) {}
 
     // Tier 4: Wikipedia Knowledge API (instant, high accuracy, zero rate limits, full metadata)
@@ -405,7 +432,7 @@ object WebSearchEngine {
           }
         }
       }
-      if (combinedResults.size >= maxCount) return combinedResults
+      if (combinedResults.size >= maxCount) return cacheAndReturn()
     } catch (_: Exception) {}
 
     // Tier 5: ArXiv Preprints & Technical Research Search (with multi-term AND syntax)
@@ -445,7 +472,7 @@ object WebSearchEngine {
       }
     } catch (_: Exception) {}
 
-    return combinedResults
+    return cacheAndReturn()
   }
 }
 

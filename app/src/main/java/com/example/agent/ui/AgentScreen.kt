@@ -27,6 +27,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.ScrollableDefaults
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import com.example.agent.ui.components.tactilePress
 import androidx.compose.foundation.BorderStroke
@@ -452,7 +453,12 @@ fun AgentScreen(
     derivedStateOf { listState.isScrollInProgress }
   }
 
-  val filterCounts = remember(state.executionFeed) {
+  val feedStepCount = state.executionFeed.size
+  val lastStepType = state.executionFeed.lastOrNull()?.type
+  val lastStepExitCode = state.executionFeed.lastOrNull()?.exitCode
+  val lastStepHasOutput = !state.executionFeed.lastOrNull()?.stdout.isNullOrBlank() || !state.executionFeed.lastOrNull()?.stderr.isNullOrBlank()
+
+  val filterCounts = remember(feedStepCount, lastStepType, lastStepExitCode, lastStepHasOutput) {
     var tools = 0
     var reasoning = 0
     var outputs = 0
@@ -517,7 +523,7 @@ fun AgentScreen(
     }
   }
 
-  val runTelemetry = remember(state.executionFeed, state.status) {
+  val runTelemetry = remember(feedStepCount, state.status, state.trackedDeliverables.size) {
     viewModel.computeRunTelemetry()
   }
 
@@ -574,10 +580,17 @@ fun AgentScreen(
     bottomBar = {
       val isInputActive = isInputFocused || inputText.isNotBlank()
       val containerBorderColor by animateColorAsState(
-        targetValue = if (isInputActive) AmoledActionPrimary.copy(alpha = 0.85f) else Color(0xFF2C2C34),
+        targetValue = if (isInputActive) Color(0xFF38BDF8).copy(alpha = 0.85f) else Color(0xFF191C26),
         animationSpec = tween(180),
         label = "prompt_border"
       )
+      val activeModelShort = remember(providerType, nvidiaModel) {
+        when (providerType) {
+          ProviderType.NVIDIA_NIM -> nvidiaModel.substringAfterLast('/')
+          ProviderType.SANDBOX_ENGINE -> "Autonomous"
+          ProviderType.GEMINI_LIVE_API -> "Gemini 2.5"
+        }
+      }
 
       Box(
         modifier = Modifier
@@ -589,10 +602,10 @@ fun AgentScreen(
         Column(
           modifier = Modifier
             .fillMaxWidth()
-            .widthIn(max = 600.dp)
-            .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 38.dp)
+            .widthIn(max = 640.dp)
+            .padding(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 28.dp)
         ) {
-          // Follow-up presets upon completion
+          // 1. Contextual Suggestion Strip above the prompt dock
           val suggestedPresets = if (state.status == AgentStatus.COMPLETED) {
             viewModel.followUpPresets
           } else {
@@ -604,9 +617,24 @@ fun AgentScreen(
               modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(chipScrollState)
-                .padding(bottom = 6.dp),
-              horizontalArrangement = Arrangement.spacedBy(6.dp)
+                .padding(bottom = 8.dp),
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+              verticalAlignment = Alignment.CenterVertically
             ) {
+              Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = Color(0xFF10B981).copy(alpha = 0.14f),
+                border = BorderStroke(0.8.dp, Color(0xFF10B981).copy(alpha = 0.45f))
+              ) {
+                Text(
+                  text = "NEXT ACTIONS",
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontSize = 8.sp,
+                  fontWeight = FontWeight.ExtraBold,
+                  color = Color(0xFF10B981),
+                  modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                )
+              }
               suggestedPresets.forEach { preset ->
                 AragonActionButton(
                   text = preset.title,
@@ -620,14 +648,73 @@ fun AgentScreen(
                 )
               }
             }
+          } else if (state.executionFeed.isEmpty() && !state.canCancel) {
+            // Quick-launch tactical starter pills right above the input dock when idle
+            val quickStarters = remember {
+              listOf(
+                Triple("🌐 Deep Web Brief", "Research the latest breakthroughs in autonomous AI agents and compile a cited Markdown report saved to `ai_agents_brief.md`.", Color(0xFF38BDF8)),
+                Triple("🐍 Python + Chart", "Write and run a Python script in the sandbox to simulate 12-month revenue metrics, save a high-res plot to `forecast.png`, and summarize in `summary.md`.", Color(0xFF10B981)),
+                Triple("📄 Executive PDF", "Generate a formatted technical architecture whitepaper saved as `architecture_brief.pdf` and `architecture_brief.docx`.", Color(0xFFA855F7)),
+                Triple("📊 Excel Model", "Create a multi-sheet financial projection spreadsheet in `financial_model.xlsx` using Python openpyxl.", Color(0xFFF59E0B)),
+                Triple("🗂 Audit Workspace", "Inspect all files and documents in the workspace and synthesize a structured `workspace_audit.md`.", Color(0xFFEC4899))
+              )
+            }
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(bottom = 8.dp),
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              quickStarters.forEachIndexed { idx, (label, promptText, accent) ->
+                Surface(
+                  shape = RoundedCornerShape(10.dp),
+                  color = Color(0xFF07070B),
+                  border = BorderStroke(1.dp, Color(0xFF191C26)),
+                  modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable {
+                      inputText = promptText
+                    }
+                    .testTag("starter_suggestion_pill_$idx")
+                ) {
+                  Row(
+                    modifier = Modifier
+                      .background(
+                        Brush.horizontalGradient(
+                          colors = listOf(accent.copy(alpha = 0.12f), Color(0xFF07070B))
+                        )
+                      )
+                      .padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                  ) {
+                    Box(
+                      modifier = Modifier
+                        .size(5.dp)
+                        .clip(CircleShape)
+                        .background(accent)
+                    )
+                    Text(
+                      text = label,
+                      fontFamily = JetBrainsMonoFontFamily,
+                      fontSize = 9.5.sp,
+                      fontWeight = FontWeight.Bold,
+                      color = Color(0xFFE2E8F0)
+                    )
+                  }
+                }
+              }
+            }
           }
 
-          // Flat modern AMOLED user prompt input field container
+          // 2. Luxury Pure AMOLED True Black User Prompt Command Dock
           Surface(
-            shape = RoundedCornerShape(18.dp),
-            color = Color(0xFF0C0C12),
-            border = BorderStroke(1.dp, if (isInputActive) Color(0xFF38BDF8).copy(alpha = 0.8f) else Color(0xFF1E1E28)),
-            shadowElevation = 0.dp,
+            shape = RoundedCornerShape(20.dp),
+            color = Color(0xFF050508),
+            border = BorderStroke(if (isInputActive) 1.2.dp else 1.dp, containerBorderColor),
+            shadowElevation = if (isInputActive) 16.dp else 6.dp,
             modifier = Modifier
               .fillMaxWidth()
               .animateContentSize(
@@ -641,9 +728,18 @@ fun AgentScreen(
             Column(
               modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 6.dp, horizontal = 6.dp)
+                .background(
+                  Brush.radialGradient(
+                    colors = listOf(
+                      if (isInputActive) Color(0xFF0F2442).copy(alpha = 0.42f) else Color(0xFF0A1424).copy(alpha = 0.22f),
+                      Color(0xFF050508)
+                    ),
+                    center = Offset(260f, 20f),
+                    radius = 560f
+                  )
+                )
+                .padding(vertical = 8.dp, horizontal = 8.dp)
             ) {
-
               // Attached Documents Strip (if any)
               val attachedDocuments = remember(documents, documentScope) {
                 documents.filter { it.id in documentScope }
@@ -653,16 +749,16 @@ fun AgentScreen(
                 Row(
                   modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 2.dp)
+                    .padding(horizontal = 8.dp, vertical = 3.dp)
                     .horizontalScroll(docChipScrollState),
                   horizontalArrangement = Arrangement.spacedBy(6.dp),
                   verticalAlignment = Alignment.CenterVertically
                 ) {
                   documentMessages.forEach { message ->
                     Surface(
-                      shape = RoundedCornerShape(6.dp),
-                      color = Color(0xFF161622),
-                      border = BorderStroke(0.8.dp, Color(0xFF28283C)),
+                      shape = RoundedCornerShape(7.dp),
+                      color = Color(0xFF07070B),
+                      border = BorderStroke(1.dp, Color(0xFF191C26)),
                       modifier = Modifier.clickable { viewModel.clearDocumentMessages() }
                     ) {
                       Text(
@@ -672,33 +768,35 @@ fun AgentScreen(
                         color = Color(0xFFCBD5E1),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                       )
                     }
                   }
                   attachedDocuments.forEach { doc ->
                     Surface(
-                      shape = RoundedCornerShape(6.dp),
-                      color = Color(0xFF0B1E15),
-                      border = BorderStroke(0.8.dp, Color(0xFF16422C)),
+                      shape = RoundedCornerShape(7.dp),
+                      color = Color(0xFF10B981).copy(alpha = 0.12f),
+                      border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.45f)),
                       modifier = Modifier.testTag("doc_chip_${doc.id}")
                     ) {
                       Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(start = 7.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
+                        modifier = Modifier.padding(start = 8.dp, end = 5.dp, top = 3.dp, bottom = 3.dp)
                       ) {
                         Text(
-                          text = "📎 ${doc.displayName.take(16)}",
+                          text = "📎 ${doc.displayName.take(18)}",
                           fontFamily = JetBrainsMonoFontFamily,
                           fontSize = 8.5.sp,
+                          fontWeight = FontWeight.Bold,
                           color = Color(0xFF34D399),
                           maxLines = 1
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
                         Box(
                           modifier = Modifier
-                            .size(15.dp)
+                            .size(16.dp)
                             .clip(CircleShape)
+                            .background(Color(0xFF07070B))
                             .clickable { viewModel.setDocumentInScope(doc.id, false) },
                           contentAlignment = Alignment.Center
                         ) {
@@ -710,7 +808,7 @@ fun AgentScreen(
                 }
               }
 
-              // Text Features & Quick Action Strip (Shows when focused or when text is present)
+              // Quick Action & Syntax Strip (Shows when focused or when text is present)
               AnimatedVisibility(
                 visible = isInputActive,
                 enter = fadeIn(tween(140)) + expandVertically(tween(140)),
@@ -719,104 +817,147 @@ fun AgentScreen(
                 Row(
                   modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 2.dp),
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
                   horizontalArrangement = Arrangement.SpaceBetween,
                   verticalAlignment = Alignment.CenterVertically
                 ) {
                   Row(
+                    modifier = Modifier
+                      .weight(1f)
+                      .horizontalScroll(rememberScrollState()),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                   ) {
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
                     Surface(
                       shape = RoundedCornerShape(6.dp),
-                      color = Color(0xFF14141E),
-                      border = BorderStroke(0.7.dp, Color(0xFF242436)),
-                      modifier = Modifier.clickable {
-                        val clip = clipboard?.primaryClip
-                        val clipText = if (clip != null && clip.itemCount > 0) clip.getItemAt(0)?.text?.toString() else null
-                        if (!clipText.isNullOrBlank()) {
-                          inputText = if (inputText.isBlank()) clipText else "$inputText $clipText"
+                      color = Color(0xFF07070B),
+                      border = BorderStroke(1.dp, Color(0xFF191C26)),
+                      modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable {
+                          val clip = clipboard?.primaryClip
+                          val clipText = if (clip != null && clip.itemCount > 0) clip.getItemAt(0)?.text?.toString() else null
+                          if (!clipText.isNullOrBlank()) {
+                            inputText = if (inputText.isBlank()) clipText else "$inputText $clipText"
+                          }
                         }
-                      }
                     ) {
                       Text(
                         text = "📋 PASTE",
                         fontFamily = JetBrainsMonoFontFamily,
                         fontSize = 8.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF94A3B8),
-                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFFCBD5E1),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                       )
                     }
 
                     Surface(
                       shape = RoundedCornerShape(6.dp),
-                      color = Color(0xFF14141E),
-                      border = BorderStroke(0.7.dp, Color(0xFF242436)),
-                      modifier = Modifier.clickable {
-                        inputText = if (inputText.isBlank()) "```python\n\n```" else "$inputText\n```python\n\n```"
-                      }
+                      color = Color(0xFF07070B),
+                      border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.35f)),
+                      modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable {
+                          inputText = if (inputText.isBlank()) "Write and run a Python script in the sandbox to:\n```python\n\n```" else "$inputText\n```python\n\n```"
+                        }
                     ) {
                       Text(
-                        text = "💻 CODE",
+                        text = "🐍 PYTHON",
                         fontFamily = JetBrainsMonoFontFamily,
                         fontSize = 8.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.ExtraBold,
                         color = Color(0xFF38BDF8),
-                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                       )
                     }
 
                     Surface(
                       shape = RoundedCornerShape(6.dp),
-                      color = Color(0xFF14141E),
-                      border = BorderStroke(0.7.dp, Color(0xFF242436)),
-                      modifier = Modifier.clickable {
-                        inputText = if (inputText.isBlank()) "$ E = mc^2 $" else "$inputText $ formula $"
-                      }
+                      color = Color(0xFF07070B),
+                      border = BorderStroke(1.dp, Color(0xFFA855F7).copy(alpha = 0.35f)),
+                      modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable {
+                          val suffix = "Save the final deliverable as a formatted Markdown and PDF report (`report.md`, `report.pdf`)."
+                          inputText = if (inputText.isBlank()) suffix else "$inputText\n\n$suffix"
+                        }
+                    ) {
+                      Text(
+                        text = "📄 DELIVERABLE",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFFA855F7),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                      )
+                    }
+
+                    Surface(
+                      shape = RoundedCornerShape(6.dp),
+                      color = Color(0xFF07070B),
+                      border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.35f)),
+                      modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable {
+                          inputText = if (inputText.isBlank()) "$ E = mc^2 $" else "$inputText $ formula $"
+                        }
                     ) {
                       Text(
                         text = "∑ MATH",
                         fontFamily = JetBrainsMonoFontFamily,
                         fontSize = 8.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF34D399),
-                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFF10B981),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                       )
                     }
                   }
 
+                  Spacer(modifier = Modifier.width(6.dp))
+
                   val tokenCount = (inputText.length / 4).coerceAtLeast(if (inputText.isEmpty()) 0 else 1)
-                  Text(
-                    text = "${inputText.length}c · ~${tokenCount}t",
-                    fontFamily = JetBrainsMonoFontFamily,
-                    fontSize = 8.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color(0xFF64748B)
-                  )
+                  Surface(
+                    shape = RoundedCornerShape(5.dp),
+                    color = Color(0xFF07070B),
+                    border = BorderStroke(0.8.dp, Color(0xFF191C26))
+                  ) {
+                    Text(
+                      text = "${inputText.length}c · ~${tokenCount}t",
+                      fontFamily = JetBrainsMonoFontFamily,
+                      fontSize = 8.sp,
+                      fontWeight = FontWeight.Bold,
+                      color = Color(0xFF38BDF8),
+                      modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                  }
                 }
               }
 
-              // Text Input Area with Center-Justified Smaller Placeholder
+              // Text Input Area with crisp technical typography
               Box(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .heightIn(min = 38.dp)
-                  .padding(horizontal = 12.dp, vertical = 4.dp),
+                  .heightIn(min = 42.dp)
+                  .padding(horizontal = 10.dp, vertical = 5.dp),
                 contentAlignment = Alignment.CenterStart
               ) {
                 if (inputText.isEmpty()) {
                   Text(
-                    text = if (state.status == AgentStatus.COMPLETED) "Continue conversation with a follow-up..." else "Ask Aragon or describe a task...",
+                    text = if (state.status == AgentStatus.COMPLETED) {
+                      "Enter follow-up directive or refine deliverable..."
+                    } else {
+                      "Describe an autonomous mission, code pipeline, or deliverable..."
+                    },
                     style = TextStyle(
                       fontFamily = JetBrainsMonoFontFamily,
-                      fontSize = 12.5.sp,
+                      fontSize = 11.5.sp,
                       color = Color(0xFF64748B),
-                      lineHeight = 18.sp,
-                      letterSpacing = 0.5.sp,
-                      fontWeight = FontWeight.Normal,
-                      textAlign = TextAlign.Center
+                      lineHeight = 17.sp,
+                      letterSpacing = 0.3.sp,
+                      fontWeight = FontWeight.Medium,
+                      textAlign = TextAlign.Start
                     ),
                     modifier = Modifier.fillMaxWidth()
                   )
@@ -833,7 +974,7 @@ fun AgentScreen(
                     fontWeight = FontWeight.Normal
                   ),
                   cursorBrush = SolidColor(Color(0xFF38BDF8)),
-                  maxLines = 6,
+                  maxLines = 7,
                   keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                   keyboardActions = KeyboardActions(onSend = {
                     if (inputText.isNotBlank() && !state.canCancel) {
@@ -850,18 +991,18 @@ fun AgentScreen(
                 )
               }
 
-              // Bottom Actions Row: Left (+ attach, tool pill) and Right (mic, clear, send/stop)
+              // Bottom Control Bar inside the Command Dock
               Row(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .padding(start = 8.dp, end = 8.dp, top = 2.dp, bottom = 3.dp),
+                  .padding(start = 6.dp, end = 6.dp, top = 2.dp, bottom = 2.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
               ) {
-                // Left action buttons: Attachment (+) with clean AMOLED popover, and tool status pill
+                // Left action buttons: Attachment (+), Model Pill, Tools Pill
                 Row(
                   verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(8.dp)
+                  horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                   // Attachment button with options menu and rotation animation when opened
                   Box {
@@ -874,9 +1015,15 @@ fun AgentScreen(
                     Box(
                       modifier = Modifier
                         .size(32.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF0D0D14))
-                        .border(BorderStroke(0.9.dp, if (showAttachmentMenu) Color(0xFF38BDF8) else Color(0xFF222232)), CircleShape)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF07070B))
+                        .border(
+                          BorderStroke(
+                            1.dp,
+                            if (showAttachmentMenu || attachedDocuments.isNotEmpty()) Color(0xFF38BDF8).copy(alpha = 0.7f) else Color(0xFF191C26)
+                          ),
+                          RoundedCornerShape(10.dp)
+                        )
                         .tactilePress(attachInteraction, pressedScale = 0.85f)
                         .clickable(
                           interactionSource = attachInteraction,
@@ -892,9 +1039,9 @@ fun AgentScreen(
                       Icon(
                         imageVector = Icons.Default.Add,
                         contentDescription = "Attach files",
-                        tint = if (showAttachmentMenu) Color(0xFF38BDF8) else Color(0xFFE2E8F0),
+                        tint = if (showAttachmentMenu || attachedDocuments.isNotEmpty()) Color(0xFF38BDF8) else Color(0xFFE2E8F0),
                         modifier = Modifier
-                          .size(17.dp)
+                          .size(16.dp)
                           .graphicsLayer { rotationZ = attachRotation }
                       )
                     }
@@ -903,18 +1050,27 @@ fun AgentScreen(
                       expanded = showAttachmentMenu,
                       onDismissRequest = { showAttachmentMenu = false },
                       modifier = Modifier
-                        .background(Color(0xFF0C0C12))
-                        .border(BorderStroke(1.dp, Color(0xFF1E1E2C)), RoundedCornerShape(14.dp))
+                        .background(Color(0xFF07070B))
+                        .border(BorderStroke(1.dp, Color(0xFF191C26)), RoundedCornerShape(16.dp))
                     ) {
                       DropdownMenuItem(
                         text = {
                           Column {
-                            Text("Upload Documents & Files", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, color = Color(0xFFF1F5F9))
-                            Text("PDF, DOCX, XLSX, CSV, Code, Text", fontFamily = JetBrainsMonoFontFamily, fontSize = 9.5.sp, color = Color(0xFF94A3B8))
+                            Text("Upload Documents & Files", fontFamily = InterFontFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFFF8FAFC))
+                            Text("PDF, DOCX, XLSX, CSV, Code, Text", fontFamily = JetBrainsMonoFontFamily, fontSize = 9.sp, color = Color(0xFF94A3B8))
                           }
                         },
                         leadingIcon = {
-                          Icon(Icons.Default.FolderOpen, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(17.dp))
+                          Box(
+                            modifier = Modifier
+                              .size(28.dp)
+                              .clip(RoundedCornerShape(8.dp))
+                              .background(Color(0xFF38BDF8).copy(alpha = 0.14f))
+                              .border(1.dp, Color(0xFF38BDF8).copy(alpha = 0.35f), RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center
+                          ) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(15.dp))
+                          }
                         },
                         onClick = {
                           showAttachmentMenu = false
@@ -925,12 +1081,21 @@ fun AgentScreen(
                       DropdownMenuItem(
                         text = {
                           Column {
-                            Text("Upload Photos & Gallery", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, color = Color(0xFFF1F5F9))
-                            Text("Images, diagrams, screenshots", fontFamily = JetBrainsMonoFontFamily, fontSize = 9.5.sp, color = Color(0xFF94A3B8))
+                            Text("Upload Photos & Gallery", fontFamily = InterFontFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFFF8FAFC))
+                            Text("Images, diagrams, screenshots", fontFamily = JetBrainsMonoFontFamily, fontSize = 9.sp, color = Color(0xFF94A3B8))
                           }
                         },
                         leadingIcon = {
-                          Icon(Icons.Default.GraphicEq, contentDescription = null, tint = Color(0xFF34D399), modifier = Modifier.size(17.dp))
+                          Box(
+                            modifier = Modifier
+                              .size(28.dp)
+                              .clip(RoundedCornerShape(8.dp))
+                              .background(Color(0xFF10B981).copy(alpha = 0.14f))
+                              .border(1.dp, Color(0xFF10B981).copy(alpha = 0.35f), RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center
+                          ) {
+                            Icon(Icons.Default.GraphicEq, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(15.dp))
+                          }
                         },
                         onClick = {
                           showAttachmentMenu = false
@@ -941,12 +1106,21 @@ fun AgentScreen(
                       DropdownMenuItem(
                         text = {
                           Column {
-                            Text("Upload Folder", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, color = Color(0xFFF1F5F9))
-                            Text("Directory tree or project codebase", fontFamily = JetBrainsMonoFontFamily, fontSize = 9.5.sp, color = Color(0xFF94A3B8))
+                            Text("Upload Folder", fontFamily = InterFontFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFFF8FAFC))
+                            Text("Directory tree or project codebase", fontFamily = JetBrainsMonoFontFamily, fontSize = 9.sp, color = Color(0xFF94A3B8))
                           }
                         },
                         leadingIcon = {
-                          Icon(Icons.Default.Inventory2, contentDescription = null, tint = Color(0xFFFBBF24), modifier = Modifier.size(17.dp))
+                          Box(
+                            modifier = Modifier
+                              .size(28.dp)
+                              .clip(RoundedCornerShape(8.dp))
+                              .background(Color(0xFFF59E0B).copy(alpha = 0.14f))
+                              .border(1.dp, Color(0xFFF59E0B).copy(alpha = 0.35f), RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center
+                          ) {
+                            Icon(Icons.Default.Inventory2, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(15.dp))
+                          }
                         },
                         onClick = {
                           showAttachmentMenu = false
@@ -957,12 +1131,21 @@ fun AgentScreen(
                       DropdownMenuItem(
                         text = {
                           Column {
-                            Text("Manage Documents (${documents.size})", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, color = Color(0xFFF1F5F9))
-                            Text("OCR, search indexing, and scope", fontFamily = JetBrainsMonoFontFamily, fontSize = 9.5.sp, color = Color(0xFF94A3B8))
+                            Text("Manage Documents (${documents.size})", fontFamily = InterFontFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFFF8FAFC))
+                            Text("OCR, search indexing, and scope", fontFamily = JetBrainsMonoFontFamily, fontSize = 9.sp, color = Color(0xFF94A3B8))
                           }
                         },
                         leadingIcon = {
-                          Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFA78BFA), modifier = Modifier.size(17.dp))
+                          Box(
+                            modifier = Modifier
+                              .size(28.dp)
+                              .clip(RoundedCornerShape(8.dp))
+                              .background(Color(0xFFA855F7).copy(alpha = 0.14f))
+                              .border(1.dp, Color(0xFFA855F7).copy(alpha = 0.35f), RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center
+                          ) {
+                            Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFA855F7), modifier = Modifier.size(15.dp))
+                          }
                         },
                         onClick = {
                           showAttachmentMenu = false
@@ -973,16 +1156,18 @@ fun AgentScreen(
                     }
                   }
 
-                  // Quick tools indicator pill
+                  // Quick Tools / MCP status pill
                   Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = Color(0xFF14141E),
-                    border = BorderStroke(0.8.dp, Color(0xFF242436)),
-                    modifier = Modifier.clickable { showMcpDialog = true }
+                    shape = RoundedCornerShape(9.dp),
+                    color = Color(0xFF07070B),
+                    border = BorderStroke(1.dp, Color(0xFF191C26)),
+                    modifier = Modifier
+                      .clip(RoundedCornerShape(9.dp))
+                      .clickable { showMcpDialog = true }
                   ) {
                     Row(
                       verticalAlignment = Alignment.CenterVertically,
-                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
                     ) {
                       Box(
                         modifier = Modifier
@@ -995,26 +1180,57 @@ fun AgentScreen(
                         text = "TOOLS",
                         fontFamily = JetBrainsMonoFontFamily,
                         fontSize = 8.5.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.ExtraBold,
                         color = Color(0xFFE2E8F0)
+                      )
+                    }
+                  }
+
+                  // Active Model selector badge in dock
+                  Surface(
+                    shape = RoundedCornerShape(9.dp),
+                    color = Color(0xFF07070B),
+                    border = BorderStroke(1.dp, Color(0xFF191C26)),
+                    modifier = Modifier
+                      .clip(RoundedCornerShape(9.dp))
+                      .clickable { showModelSelectDialog = true }
+                  ) {
+                    Row(
+                      verticalAlignment = Alignment.CenterVertically,
+                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                    ) {
+                      Box(
+                        modifier = Modifier
+                          .size(5.dp)
+                          .clip(CircleShape)
+                          .background(Color(0xFF38BDF8))
+                      )
+                      Spacer(modifier = Modifier.width(5.dp))
+                      Text(
+                        text = activeModelShort.take(14).uppercase(),
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 8.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF94A3B8),
+                        maxLines = 1
                       )
                     }
                   }
                 }
 
-                // Right action buttons: Clear, Mic, and Animated Send/Stop Button
+                // Right action buttons: Clear, Mic, and Cybernetic Send/Stop Button
                 Row(
                   verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(8.dp)
+                  horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                   if (inputText.isNotBlank()) {
                     val clearInteraction = remember { MutableInteractionSource() }
                     Box(
                       modifier = Modifier
                         .size(32.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF0D0D14))
-                        .border(BorderStroke(0.9.dp, Color(0xFF242436)), CircleShape)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF07070B))
+                        .border(BorderStroke(1.dp, Color(0xFF191C26)), RoundedCornerShape(10.dp))
                         .tactilePress(clearInteraction, pressedScale = 0.85f)
                         .clickable(
                           interactionSource = clearInteraction,
@@ -1036,14 +1252,14 @@ fun AgentScreen(
                     }
                   }
 
-                  // Microphone button with subtle tactile glow
+                  // Microphone button
                   val micInteraction = remember { MutableInteractionSource() }
                   Box(
                     modifier = Modifier
                       .size(32.dp)
-                      .clip(CircleShape)
-                      .background(Color(0xFF0D0D14))
-                      .border(BorderStroke(0.9.dp, Color(0xFF222232)), CircleShape)
+                      .clip(RoundedCornerShape(10.dp))
+                      .background(Color(0xFF07070B))
+                      .border(BorderStroke(1.dp, Color(0xFF191C26)), RoundedCornerShape(10.dp))
                       .tactilePress(micInteraction, pressedScale = 0.85f)
                       .clickable(
                         interactionSource = micInteraction,
@@ -1060,18 +1276,18 @@ fun AgentScreen(
                       imageVector = Icons.Default.Mic,
                       contentDescription = "Voice input",
                       tint = Color(0xFFE2E8F0),
-                      modifier = Modifier.size(16.dp)
+                      modifier = Modifier.size(15.dp)
                     )
                   }
 
-                  // Enhanced fluid animated circular Send / Stop button with AMOLED glowing states
+                  // Cybernetic Send / Stop button
                   val canSend = inputText.isNotBlank()
                   val isRunning = state.canCancel
 
                   val runningInfiniteTransition = rememberInfiniteTransition(label = "send_pulse_trans")
                   val runningPulseScale by runningInfiniteTransition.animateFloat(
                     initialValue = 0.94f,
-                    targetValue = 1.08f,
+                    targetValue = 1.06f,
                     animationSpec = infiniteRepeatable(
                       animation = tween(650, easing = FastOutSlowInEasing),
                       repeatMode = RepeatMode.Reverse
@@ -1081,8 +1297,8 @@ fun AgentScreen(
 
                   val targetSendScale = when {
                     isRunning -> runningPulseScale
-                    canSend -> 1.10f
-                    else -> 0.92f
+                    canSend -> 1.06f
+                    else -> 0.96f
                   }
 
                   val sendScale by animateFloatAsState(
@@ -1097,8 +1313,8 @@ fun AgentScreen(
                   val sendBgColor by animateColorAsState(
                     targetValue = when {
                       isRunning -> Color(0xFFDC2626)
-                      canSend -> Color(0xFF2563EB)
-                      else -> Color(0xFF161622)
+                      canSend -> Color(0xFF0284C7)
+                      else -> Color(0xFF07070B)
                     },
                     animationSpec = tween(200),
                     label = "send_btn_bg"
@@ -1107,8 +1323,8 @@ fun AgentScreen(
                   val sendBorderColor by animateColorAsState(
                     targetValue = when {
                       isRunning -> Color(0xFFF87171)
-                      canSend -> Color(0xFF60A5FA)
-                      else -> Color(0xFF26263A)
+                      canSend -> Color(0xFF38BDF8)
+                      else -> Color(0xFF191C26)
                     },
                     animationSpec = tween(200),
                     label = "send_btn_border"
@@ -1121,7 +1337,7 @@ fun AgentScreen(
                   )
 
                   val sendIconOffsetY by animateFloatAsState(
-                    targetValue = if (canSend) -1.5f else 1.5f,
+                    targetValue = if (canSend) -1.0f else 1.0f,
                     animationSpec = spring(dampingRatio = 0.55f, stiffness = 400f),
                     label = "send_arrow_offset_y"
                   )
@@ -1129,12 +1345,12 @@ fun AgentScreen(
                   val sendInteractionSource = remember { MutableInteractionSource() }
 
                   Surface(
-                    shape = CircleShape,
+                    shape = RoundedCornerShape(11.dp),
                     color = sendBgColor,
-                    shadowElevation = if (canSend || isRunning) 6.dp else 0.dp,
+                    shadowElevation = if (canSend || isRunning) 8.dp else 0.dp,
                     border = BorderStroke(1.dp, sendBorderColor),
                     modifier = Modifier
-                      .size(36.dp)
+                      .size(34.dp)
                       .graphicsLayer {
                         scaleX = sendScale
                         scaleY = sendScale
@@ -1165,7 +1381,7 @@ fun AgentScreen(
                         Text(
                           text = "◼",
                           color = Color.White,
-                          fontSize = 12.sp,
+                          fontSize = 11.sp,
                           fontWeight = FontWeight.Bold
                         )
                       } else {
@@ -1174,7 +1390,7 @@ fun AgentScreen(
                           contentDescription = "Send",
                           tint = if (canSend) Color.White else Color(0xFF64748B),
                           modifier = Modifier
-                            .size(18.dp)
+                            .size(17.dp)
                             .graphicsLayer {
                               rotationZ = sendIconRotation
                               translationY = sendIconOffsetY
@@ -1419,7 +1635,14 @@ fun AgentScreen(
                 }
                 EmptyExecutionState(
                   currentModelName = currentModelName,
-                  onOpenModelSelect = { showModelSelectDialog = true }
+                  onOpenModelSelect = { showModelSelectDialog = true },
+                  onSelectSuggestionPrompt = { prompt ->
+                    inputText = prompt
+                  },
+                  onRunSuggestionPrompt = { prompt ->
+                    inputText = ""
+                    viewModel.submitTask(prompt)
+                  }
                 )
               }
             } else {
@@ -2134,23 +2357,26 @@ fun AgentScreen(
   if (showResetConfirm) {
     AlertDialog(
       onDismissRequest = { showResetConfirm = false },
-      containerColor = AmoledSurfaceElevated,
-      titleContentColor = AmoledTextPrimary,
-      textContentColor = AmoledTextSecondary,
+      containerColor = Color(0xFF07070B),
+      titleContentColor = Color(0xFFF8FAFC),
+      textContentColor = Color(0xFF94A3B8),
+      shape = RoundedCornerShape(18.dp),
       title = {
         Text(
-          text = "Reset Workspace?",
+          text = "RESET WORKSPACE?",
           fontFamily = JetBrainsMonoFontFamily,
-          fontWeight = FontWeight.Bold,
-          fontSize = 14.sp
+          fontWeight = FontWeight.ExtraBold,
+          fontSize = 13.sp,
+          letterSpacing = 0.8.sp,
+          color = Color(0xFFF8FAFC)
         )
       },
       text = {
         Text(
           text = "This stops any running task and permanently deletes every file in the workspace. This cannot be undone.",
           fontFamily = JetBrainsMonoFontFamily,
-          fontSize = 12.sp,
-          color = AmoledTextSecondary
+          fontSize = 11.5.sp,
+          color = Color(0xFF94A3B8)
         )
       },
       confirmButton = {
@@ -2162,7 +2388,7 @@ fun AgentScreen(
           },
           modifier = Modifier.testTag("confirm_reset_btn")
         ) {
-          Text("RESET", color = AmoledStatusError, fontWeight = FontWeight.Bold, fontFamily = JetBrainsMonoFontFamily)
+          Text("RESET", color = AmoledStatusError, fontWeight = FontWeight.ExtraBold, fontFamily = JetBrainsMonoFontFamily)
         }
       },
       dismissButton = {
@@ -2170,7 +2396,7 @@ fun AgentScreen(
           onClick = { showResetConfirm = false },
           modifier = Modifier.testTag("cancel_reset_btn")
         ) {
-          Text("CANCEL", color = AmoledTextMuted, fontFamily = JetBrainsMonoFontFamily)
+          Text("CANCEL", color = Color(0xFF94A3B8), fontFamily = JetBrainsMonoFontFamily)
         }
       }
     )
@@ -2259,8 +2485,8 @@ fun AgentScreen(
       Surface(
         modifier = Modifier
           .fillMaxSize()
-          .background(AmoledBackground),
-        color = AmoledBackground
+          .background(Color(0xFF050508)),
+        color = Color(0xFF050508)
       ) {
         Column(
           modifier = Modifier
@@ -2268,27 +2494,50 @@ fun AgentScreen(
             .statusBarsPadding()
             .navigationBarsPadding()
         ) {
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+          Surface(
+            color = Color(0xFF07070B),
+            border = BorderStroke(1.dp, Color(0xFF191C26)),
+            modifier = Modifier.fillMaxWidth()
           ) {
-            Text(
-              text = "EXECUTION STAGES",
-              style = MaterialTheme.typography.titleMedium,
-              fontFamily = JetBrainsMonoFontFamily,
-              fontWeight = FontWeight.Bold,
-              color = Color.White
-            )
-            AragonActionButton(
-              text = "CLOSE",
-              onClick = { showStagesDialog = false },
-              variant = AragonButtonVariant.MUTED,
-              height = 28.dp,
-              testTag = "close_stages_dialog_btn"
-            )
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                  Brush.radialGradient(
+                    colors = listOf(Color(0xFF0F203C).copy(alpha = 0.45f), Color(0xFF07070B)),
+                    center = Offset(200f, 40f),
+                    radius = 520f
+                  )
+                )
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+              Column {
+                Text(
+                  text = "COGNITIVE PIPELINE",
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontWeight = FontWeight.Bold,
+                  fontSize = 8.5.sp,
+                  color = Color(0xFF38BDF8),
+                  letterSpacing = 1.2.sp
+                )
+                Text(
+                  text = "EXECUTION STAGES",
+                  style = MaterialTheme.typography.titleMedium,
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontWeight = FontWeight.ExtraBold,
+                  color = Color(0xFFF8FAFC)
+                )
+              }
+              AragonActionButton(
+                text = "CLOSE",
+                onClick = { showStagesDialog = false },
+                variant = AragonButtonVariant.MUTED,
+                height = 28.dp,
+                testTag = "close_stages_dialog_btn"
+              )
+            }
           }
           FiveStagesInspector(record = state.fiveStageRecord)
         }
@@ -2305,8 +2554,8 @@ fun AgentScreen(
       Surface(
         modifier = Modifier
           .fillMaxSize()
-          .background(AmoledBackground),
-        color = AmoledBackground
+          .background(Color(0xFF050508)),
+        color = Color(0xFF050508)
       ) {
         Column(
           modifier = Modifier
@@ -2314,27 +2563,50 @@ fun AgentScreen(
             .statusBarsPadding()
             .navigationBarsPadding()
         ) {
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+          Surface(
+            color = Color(0xFF07070B),
+            border = BorderStroke(1.dp, Color(0xFF191C26)),
+            modifier = Modifier.fillMaxWidth()
           ) {
-            Text(
-              text = "WORKSPACE FILES",
-              style = MaterialTheme.typography.titleMedium,
-              fontFamily = JetBrainsMonoFontFamily,
-              fontWeight = FontWeight.Bold,
-              color = Color.White
-            )
-            AragonActionButton(
-              text = "CLOSE",
-              onClick = { showFilesDialog = false },
-              variant = AragonButtonVariant.MUTED,
-              height = 28.dp,
-              testTag = "close_files_dialog_btn"
-            )
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                  Brush.radialGradient(
+                    colors = listOf(Color(0xFF0F203C).copy(alpha = 0.45f), Color(0xFF07070B)),
+                    center = Offset(200f, 40f),
+                    radius = 520f
+                  )
+                )
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+              Column {
+                Text(
+                  text = "SANDBOX & LOCAL STORAGE",
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontWeight = FontWeight.Bold,
+                  fontSize = 8.5.sp,
+                  color = Color(0xFF10B981),
+                  letterSpacing = 1.2.sp
+                )
+                Text(
+                  text = "WORKSPACE FILES",
+                  style = MaterialTheme.typography.titleMedium,
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontWeight = FontWeight.ExtraBold,
+                  color = Color(0xFFF8FAFC)
+                )
+              }
+              AragonActionButton(
+                text = "CLOSE",
+                onClick = { showFilesDialog = false },
+                variant = AragonButtonVariant.MUTED,
+                height = 28.dp,
+                testTag = "close_files_dialog_btn"
+              )
+            }
           }
           WorkspaceFileExplorer(
             currentPath = currentExplorerPath,
@@ -2369,8 +2641,8 @@ fun AgentScreen(
       Surface(
         modifier = Modifier
           .fillMaxSize()
-          .background(AmoledBackground),
-        color = AmoledBackground
+          .background(Color(0xFF050508)),
+        color = Color(0xFF050508)
       ) {
         Column(
           modifier = Modifier
@@ -2378,27 +2650,50 @@ fun AgentScreen(
             .statusBarsPadding()
             .navigationBarsPadding()
         ) {
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+          Surface(
+            color = Color(0xFF07070B),
+            border = BorderStroke(1.dp, Color(0xFF191C26)),
+            modifier = Modifier.fillMaxWidth()
           ) {
-            Text(
-              text = "TASK LOGS & HISTORY",
-              style = MaterialTheme.typography.titleMedium,
-              fontFamily = JetBrainsMonoFontFamily,
-              fontWeight = FontWeight.Bold,
-              color = Color.White
-            )
-            AragonActionButton(
-              text = "CLOSE",
-              onClick = { showHistoryDialog = false },
-              variant = AragonButtonVariant.MUTED,
-              height = 28.dp,
-              testTag = "close_history_dialog_btn"
-            )
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                  Brush.radialGradient(
+                    colors = listOf(Color(0xFF0F203C).copy(alpha = 0.45f), Color(0xFF07070B)),
+                    center = Offset(200f, 40f),
+                    radius = 520f
+                  )
+                )
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+              Column {
+                Text(
+                  text = "MISSION ARCHIVE",
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontWeight = FontWeight.Bold,
+                  fontSize = 8.5.sp,
+                  color = Color(0xFFA855F7),
+                  letterSpacing = 1.2.sp
+                )
+                Text(
+                  text = "TASK LOGS & HISTORY",
+                  style = MaterialTheme.typography.titleMedium,
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontWeight = FontWeight.ExtraBold,
+                  color = Color(0xFFF8FAFC)
+                )
+              }
+              AragonActionButton(
+                text = "CLOSE",
+                onClick = { showHistoryDialog = false },
+                variant = AragonButtonVariant.MUTED,
+                height = 28.dp,
+                testTag = "close_history_dialog_btn"
+              )
+            }
           }
           TaskHistoryView(
             taskHistory = state.taskHistory,
@@ -2718,9 +3013,12 @@ fun StatusPill(status: AgentStatus) {
 @Composable
 fun EmptyExecutionState(
   currentModelName: String,
-  onOpenModelSelect: () -> Unit
+  onOpenModelSelect: () -> Unit,
+  onSelectSuggestionPrompt: (String) -> Unit = {},
+  onRunSuggestionPrompt: ((String) -> Unit)? = null
 ) {
   val scrollState = rememberScrollState()
+  var showSuggestions by rememberSaveable { mutableStateOf(true) }
 
   // Animated cybernetic orbital ring behind logo
   val infiniteTransition = rememberInfiniteTransition(label = "empty_state_orbital")
@@ -2747,25 +3045,25 @@ fun EmptyExecutionState(
     modifier = Modifier
       .fillMaxSize()
       .verticalScroll(scrollState)
-      .padding(horizontal = 24.dp, vertical = 28.dp),
+      .padding(horizontal = 18.dp, vertical = 20.dp),
     horizontalAlignment = Alignment.CenterHorizontally,
     verticalArrangement = Arrangement.Center
   ) {
     // Dynamic Cybernetic Emblem
     Box(
       contentAlignment = Alignment.Center,
-      modifier = Modifier.size(92.dp)
+      modifier = Modifier.size(84.dp)
     ) {
-      Canvas(modifier = Modifier.size(92.dp)) {
+      Canvas(modifier = Modifier.size(84.dp)) {
         val center = Offset(size.width / 2f, size.height / 2f)
         val radius = size.minDimension * 0.44f * breatheScale
 
         rotate(orbitAngle, center) {
           drawCircle(
-            color = Color(0xFF26262A),
+            color = Color(0xFF191C26),
             radius = radius,
             center = center,
-            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.2f)
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.4f)
           )
 
           val tickCount = 8
@@ -2774,10 +3072,10 @@ fun EmptyExecutionState(
             val rOuter = radius
             val rInner = radius - 5f
             drawLine(
-              color = Color.White.copy(alpha = 0.5f),
+              color = Color(0xFF38BDF8).copy(alpha = 0.65f),
               start = Offset(center.x + kotlin.math.cos(angle) * rInner, center.y + kotlin.math.sin(angle) * rInner),
               end = Offset(center.x + kotlin.math.cos(angle) * rOuter, center.y + kotlin.math.sin(angle) * rOuter),
-              strokeWidth = 1.2f
+              strokeWidth = 1.4f
             )
           }
         }
@@ -2785,39 +3083,39 @@ fun EmptyExecutionState(
 
       com.example.agent.ui.components.AragonLogoEmblem(
         tint = Color.White,
-        modifier = Modifier.size(50.dp)
+        modifier = Modifier.size(46.dp)
       )
     }
 
-    Spacer(modifier = Modifier.height(16.dp))
+    Spacer(modifier = Modifier.height(12.dp))
 
     Text(
       text = "ARAGON",
       style = MaterialTheme.typography.headlineSmall,
-      fontWeight = FontWeight.Bold,
+      fontWeight = FontWeight.ExtraBold,
       letterSpacing = 3.5.sp,
       color = Color.White
     )
 
-    Spacer(modifier = Modifier.height(10.dp))
+    Spacer(modifier = Modifier.height(8.dp))
 
     // Slogan with Typewriter Effect
     AmoledTypewriterQuote(
       quote = "From ambiguous intent to deterministic reality."
     )
 
-    Spacer(modifier = Modifier.height(20.dp))
+    Spacer(modifier = Modifier.height(16.dp))
 
-    // Middle Aragon Model: Interactive Model Selector Capsule (AMOLED Sleek & Justified)
+    // Middle Aragon Model: Interactive Model Selector Capsule in AboutAragonScreen theme
     val modelInteraction = remember { MutableInteractionSource() }
     Surface(
-      shape = RoundedCornerShape(12.dp),
-      color = Color(0xFF0C0C12),
-      shadowElevation = 0.dp,
-      border = BorderStroke(1.dp, Color(0xFF1E1E2C)),
+      shape = RoundedCornerShape(14.dp),
+      color = Color(0xFF07070B),
+      shadowElevation = 4.dp,
+      border = BorderStroke(1.dp, Color(0xFF191C26)),
       modifier = Modifier
         .tactilePress(modelInteraction)
-        .clip(RoundedCornerShape(12.dp))
+        .clip(RoundedCornerShape(14.dp))
         .clickable(
           interactionSource = modelInteraction,
           indication = ripple(color = Color.White.copy(alpha = 0.15f)),
@@ -2829,7 +3127,13 @@ fun EmptyExecutionState(
       Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
-        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.5.dp)
+        modifier = Modifier
+          .background(
+            Brush.horizontalGradient(
+              colors = listOf(Color(0xFF38BDF8).copy(alpha = 0.10f), Color(0xFF07070B))
+            )
+          )
+          .padding(horizontal = 14.dp, vertical = 7.dp)
       ) {
         Box(
           modifier = Modifier
@@ -2852,21 +3156,21 @@ fun EmptyExecutionState(
           text = currentModelName,
           style = MaterialTheme.typography.bodySmall,
           fontFamily = JetBrainsMonoFontFamily,
-          fontWeight = FontWeight.SemiBold,
+          fontWeight = FontWeight.ExtraBold,
           fontSize = 11.sp,
-          color = Color.White
+          color = Color(0xFFF8FAFC)
         )
         Spacer(modifier = Modifier.width(8.dp))
         Surface(
           shape = RoundedCornerShape(6.dp),
-          color = Color(0xFF161622),
-          border = BorderStroke(0.7.dp, Color(0xFF2E2E42))
+          color = Color(0xFF38BDF8).copy(alpha = 0.14f),
+          border = BorderStroke(0.7.dp, Color(0xFF38BDF8).copy(alpha = 0.45f))
         ) {
           Text(
             text = "SWITCH ▾",
             fontFamily = JetBrainsMonoFontFamily,
             fontSize = 8.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.ExtraBold,
             letterSpacing = 0.6.sp,
             color = Color(0xFF38BDF8),
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp)
@@ -2875,15 +3179,37 @@ fun EmptyExecutionState(
       }
     }
 
-    Spacer(modifier = Modifier.height(10.dp))
+    Spacer(modifier = Modifier.height(8.dp))
     Text(
       text = "Autonomous Intelligence Engine · E2B Sandbox MicroVM",
       fontFamily = JetBrainsMonoFontFamily,
       fontSize = 9.sp,
       letterSpacing = 0.4.sp,
-      color = AmoledTextMuted,
+      color = Color(0xFF64748B),
       textAlign = TextAlign.Center
     )
+
+    Spacer(modifier = Modifier.height(18.dp))
+
+    // Overhauled Autonomous Workflow Blueprints Panel
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .widthIn(max = 600.dp),
+      contentAlignment = Alignment.Center
+    ) {
+      if (showSuggestions) {
+        com.example.agent.ui.components.AmoledWorkflowSuggestions(
+          onSelectPrompt = onSelectSuggestionPrompt,
+          onRunPromptImmediately = onRunSuggestionPrompt,
+          onDismiss = { showSuggestions = false }
+        )
+      } else {
+        com.example.agent.ui.components.AmoledWorkflowReopenTrigger(
+          onReopen = { showSuggestions = true }
+        )
+      }
+    }
   }
 }
 
@@ -2967,31 +3293,51 @@ fun ModelSelectorDialog(
 
   Dialog(onDismissRequest = onDismiss) {
     Surface(
-      shape = RoundedCornerShape(20.dp),
-      color = Color(0xFF09090D),
+      shape = RoundedCornerShape(22.dp),
+      color = Color(0xFF050508),
       shadowElevation = 24.dp,
-      border = BorderStroke(1.dp, Color(0xFF1E1E2C)),
+      border = BorderStroke(1.dp, Color(0xFF191C26)),
       modifier = Modifier
         .fillMaxWidth()
         .widthIn(max = 560.dp)
-        .heightIn(max = 580.dp)
+        .heightIn(max = 600.dp)
         .testTag("model_selector_dialog")
     ) {
-      Column(modifier = Modifier.padding(16.dp)) {
+      Column(
+        modifier = Modifier
+          .background(
+            Brush.radialGradient(
+              colors = listOf(Color(0xFF0F203C).copy(alpha = 0.45f), Color(0xFF050508)),
+              center = Offset(220f, 50f),
+              radius = 560f
+            )
+          )
+          .padding(16.dp)
+      ) {
         // Header
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically
         ) {
-          Text(
-            text = "SELECT AI MODEL",
-            style = MaterialTheme.typography.titleSmall,
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.Bold,
-            color = Color.White,
-            letterSpacing = 1.sp
-          )
+          Column {
+            Text(
+              text = "INFERENCE TOPOLOGY",
+              fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = FontWeight.Bold,
+              fontSize = 8.5.sp,
+              color = Color(0xFF38BDF8),
+              letterSpacing = 1.2.sp
+            )
+            Text(
+              text = "SELECT AI MODEL",
+              style = MaterialTheme.typography.titleSmall,
+              fontFamily = InterFontFamily,
+              fontWeight = FontWeight.ExtraBold,
+              color = Color(0xFFF8FAFC),
+              letterSpacing = 0.8.sp
+            )
+          }
 
           AragonHeaderButton(
             text = "CLOSE",
@@ -3001,13 +3347,13 @@ fun ModelSelectorDialog(
           )
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-        // Search Bar for Models (AMOLED Unified)
+        // Search Bar for Models (AboutAragonScreen aesthetic)
         Surface(
-          shape = RoundedCornerShape(10.dp),
-          color = Color(0xFF121218),
-          border = BorderStroke(1.dp, Color(0xFF1E1E2A)),
+          shape = RoundedCornerShape(12.dp),
+          color = Color(0xFF07070B),
+          border = BorderStroke(1.dp, Color(0xFF191C26)),
           modifier = Modifier.fillMaxWidth()
         ) {
           Row(
@@ -3360,17 +3706,26 @@ fun SettingsProviderDialog(
       onResetSandboxConnectionStatus()
       onDismiss()
     },
-    containerColor = Color(0xFF09090D),
+    containerColor = Color(0xFF050508),
+    shape = RoundedCornerShape(22.dp),
     title = {
       Column {
         Text(
-          text = "Settings & Configuration",
-          style = MaterialTheme.typography.titleMedium,
-          fontWeight = FontWeight.SemiBold,
-          color = Color.White
+          text = "DEVELOPER CONFIGURATION",
+          fontFamily = JetBrainsMonoFontFamily,
+          fontWeight = FontWeight.Bold,
+          fontSize = 8.5.sp,
+          color = Color(0xFF38BDF8),
+          letterSpacing = 1.2.sp
         )
         Text(
-          text = "AI provider, API keys, and the E2B execution sandbox. Changes apply to new tasks.",
+          text = "Settings & Credentials",
+          style = MaterialTheme.typography.titleMedium,
+          fontWeight = FontWeight.ExtraBold,
+          color = Color(0xFFF8FAFC)
+        )
+        Text(
+          text = "AI provider, 15-key rotation pool, and the E2B Firecracker MicroVM sandbox.",
           style = MaterialTheme.typography.labelSmall,
           color = Color(0xFF94A3B8),
           fontSize = 10.sp,
@@ -4530,19 +4885,26 @@ fun TaskFullConversationHistoryView(
   Column(
     modifier = modifier
       .fillMaxSize()
-      .background(AmoledBackground)
+      .background(Color(0xFF050508))
   ) {
-    // Top Navigation Header
+    // Top Navigation Header in AboutAragonScreen theme
     Surface(
       shape = RoundedCornerShape(0.dp),
-      color = AmoledSurface,
-      border = BorderStroke(1.dp, AmoledBorderSubtle),
+      color = Color(0xFF07070B),
+      border = BorderStroke(1.dp, Color(0xFF191C26)),
       modifier = Modifier.fillMaxWidth()
     ) {
       Row(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(horizontal = 12.dp, vertical = 8.dp),
+          .background(
+            Brush.radialGradient(
+              colors = listOf(Color(0xFF0F203C).copy(alpha = 0.40f), Color(0xFF07070B)),
+              center = Offset(200f, 30f),
+              radius = 520f
+            )
+          )
+          .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
       ) {
@@ -4571,167 +4933,174 @@ fun TaskFullConversationHistoryView(
       }
     }
 
-    // Scrollable Transcript Body
-    Column(
-      modifier = Modifier
-        .fillMaxSize()
-        .verticalScroll(scrollState)
-        .padding(horizontal = 14.dp, vertical = 10.dp),
+    // Fast, RAM-light LazyColumn Transcript Body
+    LazyColumn(
+      modifier = Modifier.fillMaxSize(),
+      contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
       verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
       // Mission Overview Card
-      Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = AmoledSurfaceElevated,
-        border = BorderStroke(1.dp, AmoledBorderSubtle),
-        modifier = Modifier.fillMaxWidth()
-      ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Text(
-              text = "TASK OBJECTIVE & METRICS",
-              fontFamily = JetBrainsMonoFontFamily,
-              fontWeight = FontWeight.Bold,
-              fontSize = 9.sp,
-              color = AmoledActionPrimary
-            )
-            Surface(
-              shape = RoundedCornerShape(2.5.dp),
-              color = statusColor.copy(alpha = 0.12f),
-              border = BorderStroke(0.8.dp, statusColor.copy(alpha = 0.5f))
+      item(key = "mission_overview") {
+        Surface(
+          shape = RoundedCornerShape(14.dp),
+          color = Color(0xFF07070B),
+          border = BorderStroke(1.dp, Color(0xFF191C26)),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically
             ) {
               Text(
-                text = record.status.name,
+                text = "TASK OBJECTIVE & METRICS",
                 fontFamily = JetBrainsMonoFontFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 8.sp,
-                color = statusColor,
-                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 9.sp,
+                letterSpacing = 0.8.sp,
+                color = Color(0xFF38BDF8)
+              )
+              Surface(
+                shape = RoundedCornerShape(4.dp),
+                color = statusColor.copy(alpha = 0.14f),
+                border = BorderStroke(0.8.dp, statusColor.copy(alpha = 0.45f))
+              ) {
+                Text(
+                  text = record.status.name,
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontWeight = FontWeight.ExtraBold,
+                  fontSize = 8.sp,
+                  color = statusColor,
+                  modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+              }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+              text = record.goal,
+              style = MaterialTheme.typography.bodyMedium,
+              fontFamily = InterFontFamily,
+              fontWeight = FontWeight.SemiBold,
+              fontSize = 13.sp,
+              color = Color(0xFFF8FAFC)
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+              Text(
+                text = "Time: $formattedDate",
+                fontFamily = JetBrainsMonoFontFamily,
+                fontSize = 9.sp,
+                color = Color(0xFF94A3B8)
+              )
+              Text(
+                text = "Duration: $executionDuration",
+                fontFamily = JetBrainsMonoFontFamily,
+                fontSize = 9.sp,
+                color = Color(0xFF94A3B8)
               )
             }
-          }
 
-          Spacer(modifier = Modifier.height(6.dp))
-
-          Text(
-            text = record.goal,
-            style = MaterialTheme.typography.bodyMedium,
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 13.sp,
-            color = AmoledTextPrimary
-          )
-
-          Spacer(modifier = Modifier.height(6.dp))
-
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-          ) {
-            Text(
-              text = "Time: $formattedDate",
-              fontFamily = JetBrainsMonoFontFamily,
-              fontSize = 9.sp,
-              color = AmoledTextMuted
-            )
-            Text(
-              text = "Duration: $executionDuration",
-              fontFamily = JetBrainsMonoFontFamily,
-              fontSize = 9.sp,
-              color = AmoledTextMuted
-            )
-          }
-
-          if (!record.sessionId.isNullOrBlank()) {
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-              text = "Session ID: ${record.sessionId}",
-              fontFamily = JetBrainsMonoFontFamily,
-              fontSize = 8.5.sp,
-              color = AmoledIconGreyDark
-            )
+            if (!record.sessionId.isNullOrBlank()) {
+              Spacer(modifier = Modifier.height(2.dp))
+              Text(
+                text = "Session ID: ${record.sessionId}",
+                fontFamily = JetBrainsMonoFontFamily,
+                fontSize = 8.5.sp,
+                color = Color(0xFF64748B)
+              )
+            }
           }
         }
       }
 
       // Conclusion / Summary Card
       if (!record.conclusion.isNullOrBlank() || !record.summary.isNullOrBlank()) {
-        val summaryText = record.conclusion ?: record.summary ?: ""
-        Surface(
-          shape = RoundedCornerShape(10.dp),
-          color = Color(0xFF0F1410),
-          border = BorderStroke(1.dp, AmoledStatusSuccess.copy(alpha = 0.35f)),
-          modifier = Modifier.fillMaxWidth()
-        ) {
-          Column(modifier = Modifier.padding(12.dp)) {
-            Text(
-              text = "MISSION SYNTHESIS & OUTCOME",
-              fontFamily = JetBrainsMonoFontFamily,
-              fontWeight = FontWeight.Bold,
-              fontSize = 9.sp,
-              color = AmoledStatusSuccess
-            )
-            Spacer(modifier = Modifier.height(5.dp))
-            Text(
-              text = summaryText,
-              fontFamily = InterFontFamily,
-              fontSize = 11.5.sp,
-              lineHeight = 17.sp,
-              color = AmoledTextPrimary
-            )
+        item(key = "mission_conclusion") {
+          val summaryText = record.conclusion ?: record.summary ?: ""
+          Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = Color(0xFF07070B),
+            border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.40f)),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+              Text(
+                text = "MISSION SYNTHESIS & OUTCOME",
+                fontFamily = JetBrainsMonoFontFamily,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 9.sp,
+                letterSpacing = 0.8.sp,
+                color = Color(0xFF10B981)
+              )
+              Spacer(modifier = Modifier.height(6.dp))
+              Text(
+                text = summaryText,
+                fontFamily = InterFontFamily,
+                fontSize = 11.5.sp,
+                lineHeight = 17.sp,
+                color = Color(0xFFF8FAFC)
+              )
+            }
           }
         }
       }
 
       // Generated Deliverables Section
       if (record.deliverables.isNotEmpty()) {
-        Surface(
-          shape = RoundedCornerShape(10.dp),
-          color = AmoledSurfaceElevated,
-          border = BorderStroke(1.dp, AmoledBorderSubtle),
-          modifier = Modifier.fillMaxWidth()
-        ) {
-          Column(modifier = Modifier.padding(12.dp)) {
-            Text(
-              text = "FINAL DELIVERABLES (${record.deliverables.size})",
-              fontFamily = JetBrainsMonoFontFamily,
-              fontWeight = FontWeight.Bold,
-              fontSize = 9.sp,
-              color = AmoledActionPrimary
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-              record.deliverables.forEach { item ->
-                Surface(
-                  shape = RoundedCornerShape(4.dp),
-                  color = Color(0xFF121214),
-                  border = BorderStroke(1.dp, Color(0xFF222226)),
-                  modifier = Modifier.fillMaxWidth()
-                ) {
-                  Row(
-                    modifier = Modifier
-                      .fillMaxWidth()
-                      .padding(horizontal = 8.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+        item(key = "mission_deliverables") {
+          Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = Color(0xFF07070B),
+            border = BorderStroke(1.dp, Color(0xFF191C26)),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+              Text(
+                text = "FINAL DELIVERABLES (${record.deliverables.size})",
+                fontFamily = JetBrainsMonoFontFamily,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 9.sp,
+                letterSpacing = 0.8.sp,
+                color = Color(0xFF38BDF8)
+              )
+              Spacer(modifier = Modifier.height(6.dp))
+              Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                record.deliverables.forEach { item ->
+                  Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFF050508),
+                    border = BorderStroke(1.dp, Color(0xFF191C26)),
+                    modifier = Modifier.fillMaxWidth()
                   ) {
-                    Text(
-                      text = item,
-                      fontFamily = JetBrainsMonoFontFamily,
-                      fontSize = 10.sp,
-                      color = AmoledStatusSuccess,
-                      fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                      text = "SAVED TO WORKSPACE",
-                      fontFamily = JetBrainsMonoFontFamily,
-                      fontSize = 7.5.sp,
-                      color = AmoledTextMuted
-                    )
+                    Row(
+                      modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                      horizontalArrangement = Arrangement.SpaceBetween,
+                      verticalAlignment = Alignment.CenterVertically
+                    ) {
+                      Text(
+                        text = item,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 10.sp,
+                        color = Color(0xFF10B981),
+                        fontWeight = FontWeight.SemiBold
+                      )
+                      Text(
+                        text = "SAVED TO WORKSPACE",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 7.5.sp,
+                        color = Color(0xFF64748B)
+                      )
+                    }
                   }
                 }
               }
@@ -4742,42 +5111,45 @@ fun TaskFullConversationHistoryView(
 
       // Cognitive Plan Steps (if any)
       if (record.planSteps.isNotEmpty()) {
-        Surface(
-          shape = RoundedCornerShape(10.dp),
-          color = AmoledSurfaceElevated,
-          border = BorderStroke(1.dp, AmoledBorderSubtle),
-          modifier = Modifier.fillMaxWidth()
-        ) {
-          Column(modifier = Modifier.padding(12.dp)) {
-            Text(
-              text = "COGNITIVE EXECUTION PLAN (${record.planSteps.size} STAGES)",
-              fontFamily = JetBrainsMonoFontFamily,
-              fontWeight = FontWeight.Bold,
-              fontSize = 9.sp,
-              color = AmoledActionPrimary
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            record.planSteps.forEachIndexed { i, step ->
-              Row(
-                modifier = Modifier
-                  .fillMaxWidth()
-                  .padding(vertical = 2.dp),
-                verticalAlignment = Alignment.Top
-              ) {
-                Text(
-                  text = "[✓] ${i + 1}. ",
-                  fontFamily = JetBrainsMonoFontFamily,
-                  fontSize = 9.5.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = AmoledStatusSuccess
-                )
-                Text(
-                  text = step,
-                  fontFamily = JetBrainsMonoFontFamily,
-                  fontSize = 10.sp,
-                  color = AmoledTextSecondary,
-                  modifier = Modifier.weight(1f)
-                )
+        item(key = "mission_plan") {
+          Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = Color(0xFF07070B),
+            border = BorderStroke(1.dp, Color(0xFF191C26)),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+              Text(
+                text = "COGNITIVE EXECUTION PLAN (${record.planSteps.size} STAGES)",
+                fontFamily = JetBrainsMonoFontFamily,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 9.sp,
+                letterSpacing = 0.8.sp,
+                color = Color(0xFFA855F7)
+              )
+              Spacer(modifier = Modifier.height(6.dp))
+              record.planSteps.forEachIndexed { i, step ->
+                Row(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
+                  verticalAlignment = Alignment.Top
+                ) {
+                  Text(
+                    text = "[✓] ${i + 1}. ",
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontSize = 9.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF10B981)
+                  )
+                  Text(
+                    text = step,
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontSize = 10.sp,
+                    color = Color(0xFFCBD5E1),
+                    modifier = Modifier.weight(1f)
+                  )
+                }
               }
             }
           }
@@ -4785,56 +5157,60 @@ fun TaskFullConversationHistoryView(
       }
 
       // FULL CONVERSATION & AGENTIC FEED TRANSCRIPT
-      Text(
-        text = "FULL CONVERSATION & REASONING TRANSCRIPT",
-        fontFamily = JetBrainsMonoFontFamily,
-        fontWeight = FontWeight.Bold,
-        fontSize = 10.sp,
-        color = AmoledIconGreyLight,
-        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
-      )
+      item(key = "transcript_header") {
+        Text(
+          text = "FULL CONVERSATION & REASONING TRANSCRIPT",
+          fontFamily = JetBrainsMonoFontFamily,
+          fontWeight = FontWeight.ExtraBold,
+          fontSize = 10.sp,
+          letterSpacing = 0.8.sp,
+          color = Color(0xFF94A3B8),
+          modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+        )
+      }
 
       if (record.conversation.isEmpty() && record.executionFeed.isEmpty()) {
-        Surface(
-          shape = RoundedCornerShape(8.dp),
-          color = AmoledSurfaceElevated,
-          border = BorderStroke(1.dp, AmoledBorderSubtle),
-          modifier = Modifier.fillMaxWidth()
-        ) {
-          Text(
-            text = "No detailed conversation or tool feed was archived for this mission.",
-            fontFamily = JetBrainsMonoFontFamily,
-            fontSize = 10.sp,
-            color = AmoledTextMuted,
-            modifier = Modifier.padding(14.dp)
-          )
+        item(key = "transcript_empty") {
+          Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFF07070B),
+            border = BorderStroke(1.dp, Color(0xFF191C26)),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Text(
+              text = "No detailed conversation or tool feed was archived for this mission.",
+              fontFamily = JetBrainsMonoFontFamily,
+              fontSize = 10.sp,
+              color = Color(0xFF64748B),
+              modifier = Modifier.padding(14.dp)
+            )
+          }
         }
       }
 
-      // 1. Conversation turns
-      record.conversation.forEach { msg ->
+      // 1. Conversation turns rendered lazily
+      itemsIndexed(
+        items = record.conversation,
+        key = { idx, _ -> "conv_turn_$idx" }
+      ) { _, msg ->
         val isUser = msg.role == MessageRole.USER
         val isAssistant = msg.role == MessageRole.ASSISTANT
         val isTool = msg.role == MessageRole.TOOL
 
         Surface(
-          shape = RoundedCornerShape(8.dp),
-          color = when {
-            isUser -> Color(0xFF141418)
-            isTool -> Color(0xFF0F141A)
-            else -> Color(0xFF101012)
-          },
+          shape = RoundedCornerShape(12.dp),
+          color = Color(0xFF07070B),
           border = BorderStroke(
             1.dp,
             when {
-              isUser -> Color(0xFF2C2C34)
-              isTool -> Color(0xFF1C2C3E)
-              else -> Color(0xFF202026)
+              isUser -> Color(0xFF38BDF8).copy(alpha = 0.35f)
+              isTool -> Color(0xFFA855F7).copy(alpha = 0.35f)
+              else -> Color(0xFF191C26)
             }
           ),
           modifier = Modifier.fillMaxWidth()
         ) {
-          Column(modifier = Modifier.padding(10.dp)) {
+          Column(modifier = Modifier.padding(11.dp)) {
             Row(
               modifier = Modifier.fillMaxWidth(),
               horizontalArrangement = Arrangement.SpaceBetween,
@@ -4848,12 +5224,12 @@ fun TaskFullConversationHistoryView(
                   else -> msg.role.name
                 },
                 fontFamily = JetBrainsMonoFontFamily,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.ExtraBold,
                 fontSize = 8.sp,
                 color = when {
-                  isUser -> AmoledActionPrimary
-                  isAssistant -> AmoledStatusSuccess
-                  else -> Color(0xFF64B5F6)
+                  isUser -> Color(0xFF38BDF8)
+                  isAssistant -> Color(0xFF10B981)
+                  else -> Color(0xFFA855F7)
                 }
               )
 
@@ -4862,7 +5238,7 @@ fun TaskFullConversationHistoryView(
                   text = msg.toolName,
                   fontFamily = JetBrainsMonoFontFamily,
                   fontSize = 7.5.sp,
-                  color = AmoledStatusSuccess
+                  color = Color(0xFF10B981)
                 )
               }
             }
@@ -4873,32 +5249,38 @@ fun TaskFullConversationHistoryView(
               text = msg.content,
               fontFamily = if (isUser) InterFontFamily else JetBrainsMonoFontFamily,
               fontSize = 10.5.sp,
-              color = AmoledTextPrimary,
+              color = Color(0xFFF8FAFC),
               lineHeight = 16.sp
             )
           }
         }
       }
 
-      // 2. Execution Feed Steps (Tool Calls & Outputs)
+      // 2. Execution Feed Steps (Tool Calls & Outputs) rendered lazily
       if (record.executionFeed.isNotEmpty()) {
-        Text(
-          text = "EXECUTION TOOL CHAIN (${record.executionFeed.size} STEPS)",
-          fontFamily = JetBrainsMonoFontFamily,
-          fontWeight = FontWeight.Bold,
-          fontSize = 9.sp,
-          color = AmoledActionPrimary,
-          modifier = Modifier.padding(top = 6.dp)
-        )
+        item(key = "tool_chain_header") {
+          Text(
+            text = "EXECUTION TOOL CHAIN (${record.executionFeed.size} STEPS)",
+            fontFamily = JetBrainsMonoFontFamily,
+            fontWeight = FontWeight.ExtraBold,
+            fontSize = 9.sp,
+            letterSpacing = 0.8.sp,
+            color = Color(0xFF38BDF8),
+            modifier = Modifier.padding(top = 6.dp)
+          )
+        }
 
-        record.executionFeed.forEach { step ->
+        itemsIndexed(
+          items = record.executionFeed,
+          key = { idx, step -> "hist_step_${step.id}_$idx" }
+        ) { _, step ->
           Surface(
-            shape = RoundedCornerShape(6.dp),
-            color = Color(0xFF0E0E10),
-            border = BorderStroke(1.dp, Color(0xFF1C1C20)),
+            shape = RoundedCornerShape(10.dp),
+            color = Color(0xFF07070B),
+            border = BorderStroke(1.dp, Color(0xFF191C26)),
             modifier = Modifier.fillMaxWidth()
           ) {
-            Column(modifier = Modifier.padding(9.dp)) {
+            Column(modifier = Modifier.padding(10.dp)) {
               Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -4910,7 +5292,7 @@ fun TaskFullConversationHistoryView(
                     fontFamily = JetBrainsMonoFontFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 8.5.sp,
-                    color = AmoledActionPrimary
+                    color = Color(0xFF38BDF8)
                   )
                   Spacer(modifier = Modifier.width(6.dp))
                   Text(
@@ -4918,10 +5300,10 @@ fun TaskFullConversationHistoryView(
                     fontFamily = JetBrainsMonoFontFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 7.5.sp,
-                    color = if (step.type == StepType.ERROR) AmoledStatusError else AmoledIconGreyLight,
+                    color = if (step.type == StepType.ERROR) AmoledStatusError else Color(0xFFCBD5E1),
                     modifier = Modifier
-                      .background(Color(0xFF1A1A1E), RoundedCornerShape(2.dp))
-                      .padding(horizontal = 4.dp, vertical = 1.dp)
+                      .background(Color(0xFF0D111A), RoundedCornerShape(4.dp))
+                      .padding(horizontal = 5.dp, vertical = 1.dp)
                   )
                   if (!step.toolName.isNullOrBlank()) {
                     Spacer(modifier = Modifier.width(4.dp))
@@ -4930,7 +5312,7 @@ fun TaskFullConversationHistoryView(
                       fontFamily = JetBrainsMonoFontFamily,
                       fontSize = 8.5.sp,
                       fontWeight = FontWeight.SemiBold,
-                      color = AmoledStatusSuccess
+                      color = Color(0xFF10B981)
                     )
                   }
                 }
@@ -4940,7 +5322,7 @@ fun TaskFullConversationHistoryView(
                     text = "${step.durationMs}ms",
                     fontFamily = JetBrainsMonoFontFamily,
                     fontSize = 7.5.sp,
-                    color = AmoledTextMuted
+                    color = Color(0xFF64748B)
                   )
                 }
               }
@@ -4951,23 +5333,23 @@ fun TaskFullConversationHistoryView(
                   text = step.content,
                   fontFamily = JetBrainsMonoFontFamily,
                   fontSize = 9.5.sp,
-                  color = AmoledTextSecondary
+                  color = Color(0xFFCBD5E1)
                 )
               }
 
               if (!step.stdout.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Surface(
-                  shape = RoundedCornerShape(3.dp),
-                  color = Color(0xFF080D08),
-                  border = BorderStroke(0.6.dp, Color(0xFF183018)),
+                  shape = RoundedCornerShape(6.dp),
+                  color = Color(0xFF050508),
+                  border = BorderStroke(0.8.dp, Color(0xFF10B981).copy(alpha = 0.28f)),
                   modifier = Modifier.fillMaxWidth()
                 ) {
                   Text(
                     text = step.stdout,
                     fontFamily = JetBrainsMonoFontFamily,
                     fontSize = 8.sp,
-                    color = Color(0xFF81C784),
+                    color = Color(0xFF6EE7B7),
                     modifier = Modifier.padding(6.dp)
                   )
                 }
@@ -4977,19 +5359,19 @@ fun TaskFullConversationHistoryView(
         }
       }
 
-      Spacer(modifier = Modifier.height(10.dp))
-
       // Bottom Action: Restore / Continue
-      AragonActionButton(
-        text = "RESTORE MISSION INTO ACTIVE LIVE CHAT",
-        onClick = onRestore,
-        variant = AragonButtonVariant.PRIMARY,
-        height = 36.dp,
-        modifier = Modifier.fillMaxWidth(),
-        testTag = "restore_mission_bottom_btn"
-      )
-
-      Spacer(modifier = Modifier.height(20.dp))
+      item(key = "restore_footer") {
+        Spacer(modifier = Modifier.height(6.dp))
+        AragonActionButton(
+          text = "RESTORE MISSION INTO ACTIVE LIVE CHAT",
+          onClick = onRestore,
+          variant = AragonButtonVariant.PRIMARY,
+          height = 36.dp,
+          modifier = Modifier.fillMaxWidth(),
+          testTag = "restore_mission_bottom_btn"
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+      }
     }
   }
 }

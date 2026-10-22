@@ -539,30 +539,48 @@ class DeliverableTracker(
       }
     }
 
+    private val metricsCache = java.util.concurrent.ConcurrentHashMap<String, DeliverableFileMetrics>()
+    private val BINARY_EXTENSIONS = setOf(
+      "docx", "doc", "xlsx", "xls", "pdf", "png", "jpg", "jpeg", "webp", "gif", "zip", "tar", "gz", "db", "sqlite"
+    )
+
     fun computeDeliverableMetrics(file: File): DeliverableFileMetrics {
       if (!file.exists() || !file.isFile) return DeliverableFileMetrics()
+      val length = file.length()
+      if (length <= 0L) return DeliverableFileMetrics()
+      val cacheKey = "${file.absolutePath}:$length:${file.lastModified()}"
+      metricsCache[cacheKey]?.let { return it }
+
+      val ext = file.extension.lowercase(Locale.ROOT)
       val lines = try {
-        if (file.length() < 5_000_000) {
+        if (ext !in BINARY_EXTENSIONS && length < 2_000_000L) {
           file.bufferedReader().useLines { linesSeq -> linesSeq.count() }
         } else 0
       } catch (_: Exception) { 0 }
       val sha = try {
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-          val buf = ByteArray(8192)
-          var len = input.read(buf)
-          while (len != -1) {
-            digest.update(buf, 0, len)
-            len = input.read(buf)
+        if (length < 25_000_000L) {
+          val digest = java.security.MessageDigest.getInstance("SHA-256")
+          file.inputStream().use { input ->
+            val buf = ByteArray(8192)
+            var len = input.read(buf)
+            while (len != -1) {
+              digest.update(buf, 0, len)
+              len = input.read(buf)
+            }
           }
-        }
-        digest.digest().joinToString("") { "%02x".format(it) }
+          digest.digest().joinToString("") { "%02x".format(it) }
+        } else null
       } catch (_: Exception) { null }
-      return DeliverableFileMetrics(
+      val computed = DeliverableFileMetrics(
         lineCount = lines,
-        qualityScore = if (lines > 0 || file.length() > 0) 100 else 0,
+        qualityScore = if (lines > 0 || length > 0) 100 else 0,
         sha256 = sha
       )
+      if (metricsCache.size > 256) {
+        metricsCache.clear()
+      }
+      metricsCache[cacheKey] = computed
+      return computed
     }
   }
 }

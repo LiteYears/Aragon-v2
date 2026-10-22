@@ -509,7 +509,9 @@ data class TaskRecord(
             aObj.put("name", att.name)
             aObj.put("mimeType", att.mimeType)
             if (att.file != null) aObj.put("path", att.file.absolutePath)
-            if (att.base64Data != null) aObj.put("base64Data", att.base64Data)
+            if ((att.file == null || !att.file.exists()) && att.base64Data != null) {
+              aObj.put("base64Data", att.base64Data)
+            }
             attArr.put(aObj)
           }
           msgObj.put("attachments", attArr)
@@ -536,14 +538,14 @@ data class TaskRecord(
         sObj.put("stepNumber", step.stepNumber)
         sObj.put("type", step.type.name)
         sObj.put("title", step.title)
-        sObj.put("content", step.content)
+        sObj.put("content", step.content.take(24_000))
         if (step.toolName != null) sObj.put("toolName", step.toolName)
         if (step.toolCallId != null) sObj.put("toolCallId", step.toolCallId)
         if (step.toolStatus != null) sObj.put("toolStatus", step.toolStatus)
         if (step.durationMs != null) sObj.put("durationMs", step.durationMs)
         if (step.exitCode != null) sObj.put("exitCode", step.exitCode)
-        if (step.stdout != null) sObj.put("stdout", step.stdout)
-        if (step.stderr != null) sObj.put("stderr", step.stderr)
+        if (step.stdout != null) sObj.put("stdout", step.stdout.take(12_000))
+        if (step.stderr != null) sObj.put("stderr", step.stderr.take(12_000))
         sObj.put("timestamp", step.timestamp)
         sObj.put("isCompleted", step.isCompleted)
         if (step.outcome != null) sObj.put("outcome", step.outcome)
@@ -560,7 +562,9 @@ data class TaskRecord(
             aObj.put("name", att.name)
             aObj.put("mimeType", att.mimeType)
             if (att.file != null) aObj.put("path", att.file.absolutePath)
-            if (att.base64Data != null) aObj.put("base64Data", att.base64Data)
+            if ((att.file == null || !att.file.exists()) && att.base64Data != null) {
+              aObj.put("base64Data", att.base64Data)
+            }
             attArr.put(aObj)
           }
           sObj.put("attachments", attArr)

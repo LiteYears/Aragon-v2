@@ -199,20 +199,24 @@ class TerminalTool(
   }
 
   fun mapModuleToPipPackage(module: String): String {
-    val mod = module.trim().lowercase(java.util.Locale.US)
+    val mod = module.trim().substringBefore('.').lowercase(java.util.Locale.US)
     return when (mod) {
       "docx" -> "python-docx"
       "pptx" -> "python-pptx"
       "openpyxl" -> "openpyxl pandas"
       "xlsxwriter" -> "XlsxWriter"
+      "xlrd" -> "xlrd"
       "reportlab" -> "reportlab"
       "fpdf", "fpdf2" -> "fpdf2"
-      "fitz" -> "pymupdf"
+      "fitz", "pymupdf" -> "pymupdf"
+      "pdfplumber" -> "pdfplumber"
+      "pypdf", "pypdf2" -> "pypdf"
       "pil", "pillow" -> "pillow"
-      "bs4" -> "beautifulsoup4"
-      "yaml" -> "pyyaml"
+      "bs4", "beautifulsoup4" -> "beautifulsoup4 lxml"
+      "lxml" -> "lxml"
+      "yaml", "pyyaml" -> "pyyaml"
       "cv2" -> "opencv-python-headless"
-      "sklearn" -> "scikit-learn"
+      "sklearn", "scikit_learn" -> "scikit-learn"
       "dotenv" -> "python-dotenv"
       "jwt" -> "PyJWT"
       "git" -> "GitPython"
@@ -220,14 +224,25 @@ class TerminalTool(
       "matplotlib" -> "matplotlib"
       "seaborn" -> "seaborn"
       "scipy" -> "scipy"
+      "numpy" -> "numpy"
+      "pandas" -> "pandas tabulate openpyxl"
+      "tabulate" -> "tabulate"
       "requests" -> "requests"
+      "httpx" -> "httpx"
+      "aiohttp" -> "aiohttp"
       "jinja2" -> "jinja2"
-      else -> module.trim()
+      "sympy" -> "sympy"
+      "networkx" -> "networkx"
+      "plotly" -> "plotly"
+      "polars" -> "polars"
+      "duckdb" -> "duckdb"
+      "rich" -> "rich"
+      else -> module.trim().substringBefore('.')
     }
   }
 
   fun getDocumentLibraryGuidance(module: String): String {
-    val mod = module.trim().lowercase(java.util.Locale.US)
+    val mod = module.trim().substringBefore('.').lowercase(java.util.Locale.US)
     return when (mod) {
       "docx" -> "\nTip for Word (.docx): Run 'pip install --no-cache-dir python-docx' then run your python script."
       "openpyxl", "xlsxwriter" -> "\nTip for Excel (.xlsx): Run 'pip install --no-cache-dir openpyxl pandas' then run your python script."
@@ -330,9 +345,37 @@ class TerminalTool(
         .envs(REMOTE_COMMAND_ENVS)
         .build()
 
-      val execution = provider.executeCommand(currentSession, req)
-      val duration = System.currentTimeMillis() - startTime
+      var execution = provider.executeCommand(currentSession, req)
       var rawStdout = execution.stdoutText()
+      var rawStderr = execution.stderrText()
+      var exitCode = execution.exitCode ?: 0
+
+      // Auto-heal missing Python module on the fly without burning an extra LLM turn
+      if (exitCode != 0 && execution.error == null && !effectiveCommand.trim().startsWith("pip")) {
+        val autoMissingMod = extractMissingModule(rawStderr.ifBlank { rawStdout })
+        if (!autoMissingMod.isNullOrBlank()) {
+          val pipPkg = mapModuleToPipPackage(autoMissingMod)
+          if (pipPkg.isNotBlank() && pipPkg.all { it.isLetterOrDigit() || it in " -_." }) {
+            try {
+              val installCmd = "${pathPrefix}pip install --no-cache-dir -q $pipPkg"
+              val installReq = RunCommandRequest.builder()
+                .command(installCmd)
+                .timeout(java.time.Duration.ofSeconds(45))
+                .envs(REMOTE_COMMAND_ENVS)
+                .build()
+              val installExec = provider.executeCommand(currentSession, installReq)
+              if ((installExec.exitCode ?: 1) == 0) {
+                execution = provider.executeCommand(currentSession, req)
+                rawStdout = execution.stdoutText()
+                rawStderr = execution.stderrText()
+                exitCode = execution.exitCode ?: 0
+              }
+            } catch (_: Exception) {}
+          }
+        }
+      }
+
+      val duration = System.currentTimeMillis() - startTime
       if (rawStdout.contains("__ARAGON_CWD__:")) {
         val lines = rawStdout.lines()
         val cwdLine = lines.lastOrNull { it.startsWith("__ARAGON_CWD__:") }
@@ -346,8 +389,6 @@ class TerminalTool(
       }
       val envTag = "[env=e2b_cloud]"
       val combinedStdout = if (rawStdout.isBlank()) "" else if (rawStdout.startsWith("[env=")) rawStdout else "$envTag\n$rawStdout"
-      val rawStderr = execution.stderrText()
-      val exitCode = execution.exitCode ?: 0
 
       val isSearchCmd = ObservationPayloadPolicy.isSearchOrValidationCommand(effectiveCommand)
       val isValidationCmd = ObservationPayloadPolicy.isValidationCheckCommand(effectiveCommand)

@@ -347,29 +347,49 @@ fun AutonomyPolicyDialog(
 ) {
   Dialog(onDismissRequest = onDismiss) {
     Surface(
-      shape = RoundedCornerShape(20.dp),
-      color = Color(0xFF09090D),
+      shape = RoundedCornerShape(22.dp),
+      color = Color(0xFF050508),
       shadowElevation = 24.dp,
-      border = BorderStroke(1.dp, Color(0xFF1E1E2C)),
+      border = BorderStroke(1.dp, Color(0xFF191C26)),
       modifier = Modifier
         .fillMaxWidth()
         .widthIn(max = 520.dp)
         .testTag("autonomy_policy_dialog")
     ) {
-      Column(modifier = Modifier.padding(18.dp)) {
+      Column(
+        modifier = Modifier
+          .background(
+            androidx.compose.ui.graphics.Brush.radialGradient(
+              colors = listOf(Color(0xFF0F203C).copy(alpha = 0.45f), Color(0xFF050508)),
+              center = androidx.compose.ui.geometry.Offset(200f, 50f),
+              radius = 520f
+            )
+          )
+          .padding(18.dp)
+      ) {
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically
         ) {
-          Text(
-            text = "AGENT AUTONOMY & SAFETY",
-            style = MaterialTheme.typography.titleSmall,
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.Bold,
-            color = Color.White,
-            letterSpacing = 1.sp
-          )
+          Column {
+            Text(
+              text = "GOVERNANCE & SAFETY",
+              fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = FontWeight.Bold,
+              fontSize = 9.sp,
+              color = Color(0xFF38BDF8),
+              letterSpacing = 1.2.sp
+            )
+            Text(
+              text = "AGENT AUTONOMY POLICY",
+              style = MaterialTheme.typography.titleSmall,
+              fontFamily = InterFontFamily,
+              fontWeight = FontWeight.ExtraBold,
+              color = Color(0xFFF8FAFC),
+              letterSpacing = 0.8.sp
+            )
+          }
 
           AragonHeaderButton(
             text = "CLOSE",
@@ -379,7 +399,7 @@ fun AutonomyPolicyDialog(
           )
         }
 
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         Text(
           text = "Controls how tools, terminal commands, and workspace changes are approved during agent task runs.",
@@ -395,7 +415,7 @@ fun AutonomyPolicyDialog(
           PolicyCard(
             title = "FULL AUTONOMOUS (RECOMMENDED)",
             badge = "AUTO",
-            badgeColor = AmoledStatusSuccess,
+            badgeColor = Color(0xFF10B981),
             description = "Agent executes tools, bash scripts, and file modifications automatically without pausing. Optimal for high-speed end-to-end task solving.",
             isSelected = currentPolicy == ApprovalPolicy.AUTO_APPROVE,
             onClick = {
@@ -408,7 +428,7 @@ fun AutonomyPolicyDialog(
           PolicyCard(
             title = "SAFE HUMAN-IN-THE-LOOP",
             badge = "HITL",
-            badgeColor = AmoledStatusWarning,
+            badgeColor = Color(0xFFF59E0B),
             description = "Intercepts potentially high-risk shell commands (e.g. rm -rf, system resets, network writes) and prompts for approval before execution.",
             isSelected = currentPolicy == ApprovalPolicy.REQUIRE_APPROVAL,
             onClick = {
@@ -445,14 +465,15 @@ private fun PolicyCard(
   onClick: () -> Unit
 ) {
   Surface(
-    shape = RoundedCornerShape(12.dp),
-    color = if (isSelected) Color(0xFF161624) else Color(0xFF0F0F14),
+    shape = RoundedCornerShape(14.dp),
+    color = if (isSelected) Color(0xFF0A111D) else Color(0xFF07070B),
     border = BorderStroke(
       1.dp,
-      if (isSelected) Color(0xFF38BDF8) else Color(0xFF1E1E28)
+      if (isSelected) badgeColor.copy(alpha = 0.65f) else Color(0xFF191C26)
     ),
     modifier = Modifier
       .fillMaxWidth()
+      .clip(RoundedCornerShape(14.dp))
       .clickable { onClick() }
   ) {
     Column(modifier = Modifier.padding(12.dp)) {
@@ -466,18 +487,18 @@ private fun PolicyCard(
           horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
           Surface(
-            shape = RoundedCornerShape(4.dp),
-            color = Color(0xFF161622),
-            border = BorderStroke(0.8.dp, Color(0xFF2E2E42)),
+            shape = RoundedCornerShape(5.dp),
+            color = badgeColor.copy(alpha = 0.14f),
+            border = BorderStroke(0.8.dp, badgeColor.copy(alpha = 0.45f)),
             modifier = Modifier.padding(end = 4.dp)
           ) {
             Text(
               text = badge,
               fontFamily = JetBrainsMonoFontFamily,
-              fontWeight = FontWeight.Bold,
+              fontWeight = FontWeight.ExtraBold,
               fontSize = 8.sp,
               color = badgeColor,
-              modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+              modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
             )
           }
 
@@ -485,9 +506,9 @@ private fun PolicyCard(
             text = title,
             style = MaterialTheme.typography.bodyMedium,
             fontFamily = InterFontFamily,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 11.sp,
-            color = if (isSelected) Color.White else Color(0xFFF1F5F9)
+            fontWeight = FontWeight.Bold,
+            fontSize = 11.5.sp,
+            color = if (isSelected) Color(0xFFF8FAFC) else Color(0xFFE2E8F0)
           )
         }
 
@@ -495,7 +516,7 @@ private fun PolicyCard(
           Text(
             text = "[ACTIVE]",
             fontFamily = JetBrainsMonoFontFamily,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.ExtraBold,
             fontSize = 9.sp,
             color = Color(0xFF10B981)
           )
@@ -508,7 +529,7 @@ private fun PolicyCard(
         text = description,
         style = MaterialTheme.typography.bodySmall,
         color = if (isSelected) Color(0xFFCBD5E1) else Color(0xFF94A3B8),
-        fontSize = 10.sp,
+        fontSize = 10.5.sp,
         lineHeight = 15.sp
       )
     }
@@ -517,8 +538,7 @@ private fun PolicyCard(
 
 /**
  * Full Run Telemetry & Execution Analytics Dialog:
- * Shows detailed token estimation, duration breakdown, tool call counts,
- * and quick export actions (copy transcript, share transcript, save to workspace).
+ * Styled in Pure AMOLED True Black matching AboutAragonScreen.kt.
  */
 @Composable
 fun RunTelemetryDialog(
@@ -544,9 +564,9 @@ fun RunTelemetryDialog(
   Dialog(onDismissRequest = onDismiss) {
     Surface(
       shape = RoundedCornerShape(22.dp),
-      color = Color.White,
-      shadowElevation = 16.dp,
-      border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+      color = Color(0xFF050508),
+      shadowElevation = 24.dp,
+      border = BorderStroke(1.dp, Color(0xFF191C26)),
       modifier = Modifier
         .fillMaxWidth()
         .widthIn(max = 580.dp)
@@ -554,6 +574,13 @@ fun RunTelemetryDialog(
     ) {
       Column(
         modifier = Modifier
+          .background(
+            androidx.compose.ui.graphics.Brush.radialGradient(
+              colors = listOf(Color(0xFF0F203C).copy(alpha = 0.45f), Color(0xFF050508)),
+              center = androidx.compose.ui.geometry.Offset(220f, 50f),
+              radius = 580f
+            )
+          )
           .padding(18.dp)
           .verticalScroll(rememberScrollState())
       ) {
@@ -563,14 +590,22 @@ fun RunTelemetryDialog(
           horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically
         ) {
-          Row(verticalAlignment = Alignment.CenterVertically) {
+          Column {
+            Text(
+              text = "REAL-TIME DIAGNOSTICS",
+              fontFamily = JetBrainsMonoFontFamily,
+              fontWeight = FontWeight.Bold,
+              fontSize = 8.5.sp,
+              color = Color(0xFF38BDF8),
+              letterSpacing = 1.2.sp
+            )
             Text(
               text = "RUN TELEMETRY & METRICS",
               style = MaterialTheme.typography.titleSmall,
               fontFamily = InterFontFamily,
-              fontWeight = FontWeight.Bold,
-              color = Color(0xFF0F172A),
-              letterSpacing = 1.sp
+              fontWeight = FontWeight.ExtraBold,
+              color = Color(0xFFF8FAFC),
+              letterSpacing = 0.8.sp
             )
           }
 
@@ -582,7 +617,7 @@ fun RunTelemetryDialog(
           )
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         if (activeFilter != null && onSelectFilter != null && filterCounts != null) {
           Text(
@@ -590,18 +625,18 @@ fun RunTelemetryDialog(
             style = MaterialTheme.typography.labelSmall,
             fontFamily = JetBrainsMonoFontFamily,
             fontWeight = FontWeight.Bold,
-            color = Color(0xFF64748B),
+            color = Color(0xFF94A3B8),
             fontSize = 9.sp,
-            letterSpacing = 0.5.sp
+            letterSpacing = 0.8.sp
           )
-          Spacer(modifier = Modifier.height(4.dp))
+          Spacer(modifier = Modifier.height(6.dp))
           FeedFilterRow(
             activeFilter = activeFilter,
             onSelectFilter = onSelectFilter,
             counts = filterCounts,
             modifier = Modifier.padding(horizontal = 0.dp)
           )
-          Spacer(modifier = Modifier.height(10.dp))
+          Spacer(modifier = Modifier.height(12.dp))
         }
 
         // Summary Metric Cards
@@ -612,21 +647,25 @@ fun RunTelemetryDialog(
           TelemetryMetricCard(
             label = "TOTAL TIME",
             value = formattedDuration,
+            accentColor = Color(0xFF38BDF8),
             modifier = Modifier.weight(1f)
           )
           TelemetryMetricCard(
             label = "STEPS",
             value = "${telemetry.totalSteps}",
+            accentColor = Color(0xFF10B981),
             modifier = Modifier.weight(1f)
           )
           TelemetryMetricCard(
             label = "TOOLS",
             value = "${telemetry.toolCallsCount}",
+            accentColor = Color(0xFFA855F7),
             modifier = Modifier.weight(1f)
           )
           TelemetryMetricCard(
             label = "EST. COST",
             value = formattedCost,
+            accentColor = Color(0xFFF59E0B),
             modifier = Modifier.weight(1f)
           )
         }
@@ -635,43 +674,44 @@ fun RunTelemetryDialog(
 
         // Token Usage Breakdown
         Surface(
-          shape = RoundedCornerShape(12.dp),
-          color = Color(0xFFF8FAFC),
-          border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+          shape = RoundedCornerShape(14.dp),
+          color = Color(0xFF07070B),
+          border = BorderStroke(1.dp, Color(0xFF191C26)),
           modifier = Modifier.fillMaxWidth()
         ) {
-          Column(modifier = Modifier.padding(10.dp)) {
+          Column(modifier = Modifier.padding(12.dp)) {
             Text(
               text = "TOKEN USAGE ESTIMATE",
               style = MaterialTheme.typography.labelSmall,
               fontFamily = JetBrainsMonoFontFamily,
-              fontWeight = FontWeight.Bold,
+              fontWeight = FontWeight.ExtraBold,
               fontSize = 9.sp,
-              color = Color(0xFF0284C7)
+              color = Color(0xFF38BDF8),
+              letterSpacing = 0.8.sp
             )
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Row(
               modifier = Modifier.fillMaxWidth(),
               horizontalArrangement = Arrangement.SpaceBetween
             ) {
-              Text("Prompt Tokens (approx):", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF475569))
-              Text("~${telemetry.estimatedPromptTokens}", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF0F172A), fontWeight = FontWeight.SemiBold)
+              Text("Prompt Tokens (approx):", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+              Text("~${telemetry.estimatedPromptTokens}", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFFF8FAFC), fontWeight = FontWeight.SemiBold)
             }
-            Spacer(modifier = Modifier.height(2.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Row(
               modifier = Modifier.fillMaxWidth(),
               horizontalArrangement = Arrangement.SpaceBetween
             ) {
-              Text("Completion Tokens (approx):", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF475569))
-              Text("~${telemetry.estimatedCompletionTokens}", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF0F172A), fontWeight = FontWeight.SemiBold)
+              Text("Completion Tokens (approx):", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+              Text("~${telemetry.estimatedCompletionTokens}", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFFF8FAFC), fontWeight = FontWeight.SemiBold)
             }
-            Spacer(modifier = Modifier.height(2.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Row(
               modifier = Modifier.fillMaxWidth(),
               horizontalArrangement = Arrangement.SpaceBetween
             ) {
-              Text("Total Combined Tokens:", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF475569))
-              Text("~${telemetry.estimatedTotalTokens}", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF16A34A), fontWeight = FontWeight.Bold)
+              Text("Total Combined Tokens:", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+              Text("~${telemetry.estimatedTotalTokens}", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF10B981), fontWeight = FontWeight.Bold)
             }
           }
         }
@@ -681,30 +721,31 @@ fun RunTelemetryDialog(
         // Tool Invocation Breakdown
         if (telemetry.toolBreakdown.isNotEmpty()) {
           Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = Color(0xFFF8FAFC),
-            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+            shape = RoundedCornerShape(14.dp),
+            color = Color(0xFF07070B),
+            border = BorderStroke(1.dp, Color(0xFF191C26)),
             modifier = Modifier.fillMaxWidth()
           ) {
-            Column(modifier = Modifier.padding(10.dp)) {
+            Column(modifier = Modifier.padding(12.dp)) {
               Text(
                 text = "TOOL CALLS BREAKDOWN",
                 style = MaterialTheme.typography.labelSmall,
                 fontFamily = JetBrainsMonoFontFamily,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.ExtraBold,
                 fontSize = 9.sp,
-                color = Color(0xFF0284C7)
+                color = Color(0xFFA855F7),
+                letterSpacing = 0.8.sp
               )
-              Spacer(modifier = Modifier.height(6.dp))
+              Spacer(modifier = Modifier.height(8.dp))
               telemetry.toolBreakdown.forEach { (toolName, count) ->
                 Row(
                   modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 1.dp),
+                    .padding(vertical = 2.dp),
                   horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                  Text(toolName, fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF475569))
-                  Text("$count calls", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF0F172A))
+                  Text(toolName, fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFFCBD5E1))
+                  Text("$count calls", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.SemiBold)
                 }
               }
             }
@@ -714,34 +755,35 @@ fun RunTelemetryDialog(
 
         // Runtime Details
         Surface(
-          shape = RoundedCornerShape(12.dp),
-          color = Color(0xFFF8FAFC),
-          border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+          shape = RoundedCornerShape(14.dp),
+          color = Color(0xFF07070B),
+          border = BorderStroke(1.dp, Color(0xFF191C26)),
           modifier = Modifier.fillMaxWidth()
         ) {
-          Column(modifier = Modifier.padding(10.dp)) {
+          Column(modifier = Modifier.padding(12.dp)) {
             Text(
               text = "EXECUTION ENVIRONMENT",
               style = MaterialTheme.typography.labelSmall,
               fontFamily = JetBrainsMonoFontFamily,
-              fontWeight = FontWeight.Bold,
+              fontWeight = FontWeight.ExtraBold,
               fontSize = 9.sp,
-              color = Color(0xFF0284C7)
+              color = Color(0xFF10B981),
+              letterSpacing = 0.8.sp
             )
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-              Text("Active Engine:", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF475569))
-              Text(currentProviderName, fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF0F172A))
+              Text("Active Engine:", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+              Text(currentProviderName, fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFFF8FAFC), fontWeight = FontWeight.SemiBold)
             }
-            Spacer(modifier = Modifier.height(2.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-              Text("Autonomy Policy:", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF475569))
-              Text(currentPolicy.name, fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF16A34A))
+              Text("Autonomy Policy:", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+              Text(currentPolicy.name, fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF10B981), fontWeight = FontWeight.Bold)
             }
-            Spacer(modifier = Modifier.height(2.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-              Text("Deliverables Produced:", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF475569))
-              Text("${telemetry.deliverableCount} files", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF0F172A))
+              Text("Deliverables Produced:", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFF94A3B8))
+              Text("${telemetry.deliverableCount} files", fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = Color(0xFFF8FAFC), fontWeight = FontWeight.SemiBold)
             }
           }
         }
@@ -759,7 +801,7 @@ fun RunTelemetryDialog(
             text = "SHARE TRANSCRIPT",
             onClick = onShareTranscript,
             variant = AragonButtonVariant.PRIMARY,
-            height = 30.dp,
+            height = 32.dp,
             testTag = "telemetry_share_transcript_btn"
           )
 
@@ -767,7 +809,7 @@ fun RunTelemetryDialog(
             text = "SAVE AS .MD FILE",
             onClick = onSaveTranscriptToWorkspace,
             variant = AragonButtonVariant.DEFAULT,
-            height = 30.dp,
+            height = 32.dp,
             testTag = "telemetry_save_file_btn"
           )
         }
@@ -780,16 +822,17 @@ fun RunTelemetryDialog(
 private fun TelemetryMetricCard(
   label: String,
   value: String,
+  accentColor: Color = Color(0xFF38BDF8),
   modifier: Modifier = Modifier
 ) {
   Surface(
-    shape = RoundedCornerShape(10.dp),
-    color = Color(0xFFF8FAFC),
-    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+    shape = RoundedCornerShape(12.dp),
+    color = Color(0xFF07070B),
+    border = BorderStroke(1.dp, Color(0xFF191C26)),
     modifier = modifier
   ) {
     Column(
-      modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
+      modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
       horizontalAlignment = Alignment.CenterHorizontally
     ) {
       Text(
@@ -797,17 +840,17 @@ private fun TelemetryMetricCard(
         fontFamily = JetBrainsMonoFontFamily,
         fontSize = 8.sp,
         fontWeight = FontWeight.Bold,
-        color = Color(0xFF64748B),
+        color = Color(0xFF94A3B8),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis
       )
-      Spacer(modifier = Modifier.height(2.dp))
+      Spacer(modifier = Modifier.height(3.dp))
       Text(
         text = value,
         fontFamily = JetBrainsMonoFontFamily,
-        fontSize = 11.sp,
-        fontWeight = FontWeight.Bold,
-        color = Color(0xFF0F172A),
+        fontSize = 11.5.sp,
+        fontWeight = FontWeight.ExtraBold,
+        color = accentColor,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis
       )
@@ -817,7 +860,6 @@ private fun TelemetryMetricCard(
 
 /**
  * Sleek, unified telemetry button designed for top bar / header integration.
- * Replaces stacked telemetry bars with an organized 1-tap UI button.
  */
 @Composable
 fun CompactTelemetryButton(
@@ -833,8 +875,8 @@ fun CompactTelemetryButton(
 
   Surface(
     shape = RoundedCornerShape(14.dp),
-    color = Color.White,
-    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+    color = Color(0xFF07070B),
+    border = BorderStroke(1.dp, Color(0xFF191C26)),
     shadowElevation = 2.dp,
     modifier = modifier
       .clip(RoundedCornerShape(14.dp))
@@ -857,15 +899,14 @@ fun CompactTelemetryButton(
         fontFamily = JetBrainsMonoFontFamily,
         fontSize = 9.sp,
         fontWeight = FontWeight.Bold,
-        color = Color(0xFFD4D4D8)
+        color = Color(0xFFE2E8F0)
       )
     }
   }
 }
 
 /**
- * Compact filter button that opens an organized filter dialog/popover,
- * keeping the execution feed uncluttered and maximizing room for execution items.
+ * Compact filter button that opens an organized filter dialog/popover.
  */
 @Composable
 fun FeedFilterDropdownButton(
@@ -876,8 +917,8 @@ fun FeedFilterDropdownButton(
 ) {
   Surface(
     shape = RoundedCornerShape(14.dp),
-    color = Color.White,
-    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+    color = Color(0xFF07070B),
+    border = BorderStroke(1.dp, Color(0xFF191C26)),
     shadowElevation = 2.dp,
     modifier = modifier
       .clip(RoundedCornerShape(14.dp))
@@ -891,17 +932,17 @@ fun FeedFilterDropdownButton(
     ) {
       Text(
         text = "${activeFilter.label} ($totalCount) ▾",
-        fontFamily = InterFontFamily,
+        fontFamily = JetBrainsMonoFontFamily,
         fontSize = 9.5.sp,
         fontWeight = FontWeight.Bold,
-        color = Color(0xFF0F172A)
+        color = Color(0xFFF8FAFC)
       )
     }
   }
 }
 
 /**
- * Modal dialog for selecting feed filters cleanly without cluttering the main screen.
+ * Modal dialog for selecting feed filters cleanly in Pure AMOLED style.
  */
 @Composable
 fun FeedFilterDialog(
@@ -913,16 +954,26 @@ fun FeedFilterDialog(
   Dialog(onDismissRequest = onDismiss) {
     Surface(
       shape = RoundedCornerShape(22.dp),
-      color = Color.White,
-      shadowElevation = 16.dp,
-      border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+      color = Color(0xFF050508),
+      shadowElevation = 24.dp,
+      border = BorderStroke(1.dp, Color(0xFF191C26)),
       modifier = Modifier
         .fillMaxWidth()
         .padding(horizontal = 16.dp)
         .widthIn(max = 420.dp)
         .testTag("feed_filter_dialog")
     ) {
-      Column(modifier = Modifier.padding(18.dp)) {
+      Column(
+        modifier = Modifier
+          .background(
+            androidx.compose.ui.graphics.Brush.radialGradient(
+              colors = listOf(Color(0xFF0F203C).copy(alpha = 0.45f), Color(0xFF050508)),
+              center = androidx.compose.ui.geometry.Offset(180f, 40f),
+              radius = 420f
+            )
+          )
+          .padding(18.dp)
+      ) {
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.SpaceBetween,
@@ -930,10 +981,11 @@ fun FeedFilterDialog(
         ) {
           Text(
             text = "FILTER EXECUTIONS",
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.Bold,
-            fontSize = 13.sp,
-            color = Color(0xFF0F172A)
+            fontFamily = JetBrainsMonoFontFamily,
+            fontWeight = FontWeight.ExtraBold,
+            fontSize = 12.sp,
+            letterSpacing = 0.8.sp,
+            color = Color(0xFFF8FAFC)
           )
           AragonHeaderButton(
             text = "DONE",
@@ -942,15 +994,15 @@ fun FeedFilterDialog(
             testTag = "done_filter_dialog_btn"
           )
         }
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(12.dp))
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
           FeedFilter.values().forEach { filter ->
             val isSelected = activeFilter == filter
             val count = counts[filter] ?: 0
             Surface(
               shape = RoundedCornerShape(12.dp),
-              color = if (isSelected) Color(0xFFF1F5F9) else Color(0xFFF8FAFC),
-              border = BorderStroke(1.dp, if (isSelected) Color(0xFF0F172A) else Color(0xFFE2E8F0)),
+              color = if (isSelected) Color(0xFF0B1322) else Color(0xFF07070B),
+              border = BorderStroke(1.dp, if (isSelected) Color(0xFF38BDF8) else Color(0xFF191C26)),
               modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
@@ -963,7 +1015,7 @@ fun FeedFilterDialog(
               Row(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .padding(horizontal = 12.dp, vertical = 9.dp),
+                  .padding(horizontal = 12.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
               ) {
@@ -971,28 +1023,28 @@ fun FeedFilterDialog(
                   Text(
                     text = if (isSelected) "●" else "○",
                     fontSize = 10.sp,
-                    color = if (isSelected) Color(0xFF0F172A) else Color(0xFF94A3B8)
+                    color = if (isSelected) Color(0xFF38BDF8) else Color(0xFF64748B)
                   )
                   Text(
                     text = filter.label,
-                    fontFamily = InterFontFamily,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                    fontSize = 11.5.sp,
-                    color = Color(0xFF0F172A)
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
+                    fontSize = 11.sp,
+                    color = if (isSelected) Color(0xFFF8FAFC) else Color(0xFFCBD5E1)
                   )
                 }
                 Surface(
-                  shape = RoundedCornerShape(8.dp),
-                  color = Color.White,
-                  border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+                  shape = RoundedCornerShape(6.dp),
+                  color = if (isSelected) Color(0xFF38BDF8).copy(alpha = 0.16f) else Color(0xFF0D111A),
+                  border = BorderStroke(0.8.dp, if (isSelected) Color(0xFF38BDF8).copy(alpha = 0.45f) else Color(0xFF191C26))
                 ) {
                   Text(
                     text = "$count",
                     fontFamily = JetBrainsMonoFontFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 9.sp,
-                    color = Color(0xFF0F172A),
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    color = if (isSelected) Color(0xFF38BDF8) else Color(0xFF94A3B8),
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                   )
                 }
               }

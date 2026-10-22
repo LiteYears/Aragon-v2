@@ -160,29 +160,36 @@ fun McpServersDialog(
     Surface(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(horizontal = 16.dp, vertical = 20.dp)
-        .widthIn(max = 520.dp)
-        .heightIn(min = 380.dp, max = 620.dp),
-      shape = RoundedCornerShape(20.dp),
-      color = Color(0xFF0A0A0F),
+        .padding(horizontal = 14.dp, vertical = 18.dp)
+        .widthIn(max = 540.dp)
+        .heightIn(min = 400.dp, max = 640.dp),
+      shape = RoundedCornerShape(22.dp),
+      color = Color(0xFF050508),
       shadowElevation = 24.dp,
-      border = BorderStroke(1.dp, Color(0xFF222232))
+      border = BorderStroke(1.dp, Color(0xFF191C26))
     ) {
       Column(modifier = Modifier.fillMaxSize()) {
         val customServers = remember(servers) {
           servers.filter { !it.isNative && it.transport != McpTransportType.INTERNAL && !it.url.startsWith("internal://") }
         }
 
-        // Dialog Header
+        // Dialog Header in AboutAragonScreen aesthetic
         Surface(
           modifier = Modifier.fillMaxWidth(),
-          color = Color(0xFF12121A),
-          border = BorderStroke(1.dp, Color(0xFF1E1E2C))
+          color = Color(0xFF07070B),
+          border = BorderStroke(1.dp, Color(0xFF191C26))
         ) {
           Row(
             modifier = Modifier
               .fillMaxWidth()
-              .padding(horizontal = 16.dp, vertical = 12.dp),
+              .background(
+                androidx.compose.ui.graphics.Brush.radialGradient(
+                  colors = listOf(Color(0xFF0F203C).copy(alpha = 0.45f), Color(0xFF07070B)),
+                  center = androidx.compose.ui.geometry.Offset(200f, 50f),
+                  radius = 520f
+                )
+              )
+              .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
           ) {
@@ -192,29 +199,29 @@ fun McpServersDialog(
             ) {
               Box(
                 modifier = Modifier
-                  .size(9.dp)
+                  .size(10.dp)
                   .clip(CircleShape)
-                  .background(if (customServers.any { it.enabled }) Color(0xFF10B981) else Color(0xFF94A3B8))
+                  .background(if (customServers.any { it.enabled }) Color(0xFF10B981) else Color(0xFF38BDF8))
               )
               Spacer(modifier = Modifier.width(10.dp))
               Column {
                 Text(
                   text = "MODEL CONTEXT PROTOCOL (MCP)",
                   style = MaterialTheme.typography.titleSmall,
-                  fontWeight = FontWeight.Bold,
-                  fontFamily = InterFontFamily,
-                  fontSize = 12.5.sp,
-                  letterSpacing = 0.5.sp,
-                  color = Color.White,
+                  fontWeight = FontWeight.ExtraBold,
+                  fontFamily = JetBrainsMonoFontFamily,
+                  fontSize = 12.sp,
+                  letterSpacing = 0.8.sp,
+                  color = Color(0xFFF8FAFC),
                   maxLines = 1,
                   overflow = TextOverflow.Ellipsis
                 )
                 Text(
                   text = "${customServers.size} custom servers · ${discoveredTools.size} tools · ${discoveredResources.size} resources",
                   style = MaterialTheme.typography.labelSmall,
-                  fontFamily = InterFontFamily,
-                  color = Color(0xFF64748B),
-                  fontSize = 10.sp,
+                  fontFamily = JetBrainsMonoFontFamily,
+                  color = Color(0xFF94A3B8),
+                  fontSize = 9.5.sp,
                   maxLines = 1,
                   overflow = TextOverflow.Ellipsis
                 )
@@ -266,15 +273,22 @@ fun McpServersDialog(
 
         ScrollableTabRow(
           selectedTabIndex = selectedTab,
-          containerColor = Color(0xFF101014),
-          contentColor = AmoledTextPrimary,
+          containerColor = Color(0xFF07070B),
+          contentColor = Color(0xFFF8FAFC),
           edgePadding = 12.dp,
-          divider = {},
+          divider = {
+            Box(
+              modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(Color(0xFF191C26))
+            )
+          },
           indicator = { tabPositions ->
             if (selectedTab < tabPositions.size) {
               TabRowDefaults.SecondaryIndicator(
                 Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
-                color = AmoledActionPrimary,
+                color = Color(0xFF38BDF8),
                 height = 2.dp
               )
             }
@@ -296,26 +310,27 @@ fun McpServersDialog(
                     text = label,
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = JetBrainsMonoFontFamily,
-                    fontSize = 10.5.sp,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                    color = if (isSelected) AmoledTextPrimary else AmoledTextMuted
+                    fontSize = 10.sp,
+                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
+                    color = if (isSelected) Color(0xFFF8FAFC) else Color(0xFF64748B)
                   )
                   Spacer(modifier = Modifier.width(6.dp))
                   Surface(
-                    shape = RoundedCornerShape(3.dp),
-                    color = if (isSelected) AmoledActionPrimary else Color(0xFF1A1A20),
-                    modifier = Modifier.height(15.dp)
+                    shape = RoundedCornerShape(4.dp),
+                    color = if (isSelected) Color(0xFF38BDF8).copy(alpha = 0.16f) else Color(0xFF0D111A),
+                    border = BorderStroke(0.5.dp, if (isSelected) Color(0xFF38BDF8).copy(alpha = 0.45f) else Color(0xFF191C26)),
+                    modifier = Modifier.height(16.dp)
                   ) {
                     Box(
                       contentAlignment = Alignment.Center,
-                      modifier = Modifier.padding(horizontal = 4.dp)
+                      modifier = Modifier.padding(horizontal = 5.dp)
                     ) {
                       Text(
                         text = "$count",
                         fontFamily = JetBrainsMonoFontFamily,
                         fontSize = 8.5.sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (isSelected) AmoledActionPrimaryOn else AmoledIconGreyLight
+                        color = if (isSelected) Color(0xFF38BDF8) else Color(0xFF94A3B8)
                       )
                     }
                   }

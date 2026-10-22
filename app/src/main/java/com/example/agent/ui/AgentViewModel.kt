@@ -33,10 +33,13 @@ import com.example.agent.docs.EmbeddingProviders
 import com.example.agent.service.AgentExecutionService
 import com.example.agent.service.AgentServiceBridge
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -374,9 +377,12 @@ class AgentViewModel(
       loadExplorerDirectory("")
       viewModelScope.launch {
         try {
-          engine.state.collect {
-            loadExplorerDirectory(_currentExplorerPath.value)
-          }
+          engine.state
+            .map { Triple(it.status, it.artifacts.size, it.trackedDeliverables.size) }
+            .distinctUntilChanged()
+            .collect {
+              loadExplorerDirectory(_currentExplorerPath.value)
+            }
         } catch (_: Throwable) {}
       }
       viewModelScope.launch {
@@ -1220,8 +1226,11 @@ class AgentViewModel(
     engine.clearTaskHistory()
   }
 
+  private var explorerLoadJob: Job? = null
+
   fun loadExplorerDirectory(relativePath: String = _currentExplorerPath.value) {
-    viewModelScope.launch(Dispatchers.IO) {
+    explorerLoadJob?.cancel()
+    explorerLoadJob = viewModelScope.launch(Dispatchers.IO) {
       val cleanRel = relativePath.trim().removePrefix("/").removePrefix("./")
       val targetDir = if (cleanRel.isBlank()) {
         workspaceDir

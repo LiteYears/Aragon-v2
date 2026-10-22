@@ -362,6 +362,9 @@ class ScratchpadMemoryManager(val workspaceDir: File) {
   val tasksDir: File
     get() = File(File(workspaceDir, "notes"), "tasks").apply { if (!exists()) mkdirs() }
 
+  @Volatile
+  private var cachedTaskHistory: List<TaskRecord>? = null
+
   /**
    * Records or updates a task in notes/task_history.jsonl and notes/tasks/<id>.json.
    */
@@ -377,24 +380,22 @@ class ScratchpadMemoryManager(val workspaceDir: File) {
       val jsonContent = record.toJsonString()
       individualTaskFile.writeText(jsonContent, StandardCharsets.UTF_8)
 
-      // 2. Update task_history.jsonl
-      val existing = loadTaskHistory().toMutableList()
+      // 2. Update in-memory cache and task_history.jsonl without re-reading all disk files
+      val existing = (cachedTaskHistory ?: loadTaskHistoryFromDisk()).toMutableList()
       val idx = existing.indexOfFirst { it.id == record.id }
       if (idx >= 0) {
         existing[idx] = record
       } else {
         existing.add(0, record)
       }
+      val bounded = existing.take(30)
+      cachedTaskHistory = bounded
+
+      val serialized = bounded.joinToString("\n") { it.toJsonString() } + "\n"
       val tmpFile = File(notesBase, "task_history.jsonl.tmp")
-      tmpFile.writeText(
-        existing.joinToString("\n") { it.toJsonString() } + "\n",
-        StandardCharsets.UTF_8
-      )
+      tmpFile.writeText(serialized, StandardCharsets.UTF_8)
       if (!tmpFile.renameTo(taskHistoryFile)) {
-        taskHistoryFile.writeText(
-          existing.joinToString("\n") { it.toJsonString() } + "\n",
-          StandardCharsets.UTF_8
-        )
+        taskHistoryFile.writeText(serialized, StandardCharsets.UTF_8)
         tmpFile.delete()
       }
     } catch (_: Exception) {}
@@ -411,36 +412,44 @@ class ScratchpadMemoryManager(val workspaceDir: File) {
         dedicatedFile.delete()
       }
 
-      val existing = loadTaskHistory().filter { it.id != taskId }
+      val existing = (cachedTaskHistory ?: loadTaskHistoryFromDisk()).filter { it.id != taskId }
+      cachedTaskHistory = existing
       val notesBase = File(workspaceDir, "notes")
+      val serialized = if (existing.isEmpty()) "" else existing.joinToString("\n") { it.toJsonString() } + "\n"
       val tmpFile = File(notesBase, "task_history.jsonl.tmp")
-      tmpFile.writeText(
-        existing.joinToString("\n") { it.toJsonString() } + "\n",
-        StandardCharsets.UTF_8
-      )
+      tmpFile.writeText(serialized, StandardCharsets.UTF_8)
       if (!tmpFile.renameTo(taskHistoryFile)) {
-        taskHistoryFile.writeText(
-          existing.joinToString("\n") { it.toJsonString() } + "\n",
-          StandardCharsets.UTF_8
-        )
+        taskHistoryFile.writeText(serialized, StandardCharsets.UTF_8)
         tmpFile.delete()
       }
     } catch (_: Exception) {}
   }
 
   /**
-   * Reads all recorded tasks from notes/task_history.jsonl and notes/tasks/<id>.json.
+   * Reads all recorded tasks from in-memory cache or notes/task_history.jsonl and notes/tasks/<id>.json.
    */
+  @Synchronized
   fun loadTaskHistory(): List<TaskRecord> {
+    cachedTaskHistory?.let { return it }
+    val loaded = loadTaskHistoryFromDisk()
+    cachedTaskHistory = loaded
+    return loaded
+  }
+
+  private fun loadTaskHistoryFromDisk(): List<TaskRecord> {
     if (!taskHistoryFile.exists()) return emptyList()
     return try {
       val baseRecords = taskHistoryFile.readLines(StandardCharsets.UTF_8)
-        .mapNotNull { line -> if (line.isNotBlank()) TaskRecord.fromJson(line.trim()) else null }
-      
+        .asSequence()
+        .filter { it.isNotBlank() }
+        .take(30)
+        .mapNotNull { line -> TaskRecord.fromJson(line.trim()) }
+        .toList()
+
       // Enrich with full task JSON if available
       baseRecords.map { base ->
         val dedicatedFile = File(tasksDir, "${base.id}.json")
-        if (dedicatedFile.exists()) {
+        if (dedicatedFile.exists() && dedicatedFile.length() < 5_000_000L) {
           try {
             TaskRecord.fromJson(dedicatedFile.readText(StandardCharsets.UTF_8)) ?: base
           } catch (_: Exception) {
@@ -459,6 +468,7 @@ class ScratchpadMemoryManager(val workspaceDir: File) {
    * Loads a specific detailed task record by its ID.
    */
   fun loadTaskDetail(taskId: String): TaskRecord? {
+    cachedTaskHistory?.firstOrNull { it.id == taskId }?.let { return it }
     val file = File(tasksDir, "$taskId.json")
     if (file.exists()) {
       try {
@@ -473,6 +483,7 @@ class ScratchpadMemoryManager(val workspaceDir: File) {
    */
   @Synchronized
   fun clearTaskHistory() {
+    cachedTaskHistory = emptyList()
     try {
       if (taskHistoryFile.exists()) {
         taskHistoryFile.delete()
