@@ -3250,15 +3250,6 @@ class AgentEngine(
               )
             )
           }
-          else -> {
-            checks.add(
-              RequirementCheck(
-                name = checkName,
-                status = RequirementCheckStatus.NOT_VERIFIED,
-                evidence = "Step status unverified."
-              )
-            )
-          }
         }
       }
     }

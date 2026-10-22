@@ -273,7 +273,18 @@ object ArtifactDownloader {
               f
             )
           } catch (e: Throwable) {
-            Uri.fromFile(f)
+            try {
+              val shareCache = File(context.cacheDir, "shared_downloads").apply { mkdirs() }
+              val tempShareFile = File(shareCache, f.name)
+              f.copyTo(tempShareFile, overwrite = true)
+              androidx.core.content.FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                tempShareFile
+              )
+            } catch (_: Throwable) {
+              null
+            }
           }
         }
       }

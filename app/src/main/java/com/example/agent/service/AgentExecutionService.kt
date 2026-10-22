@@ -19,7 +19,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -87,10 +89,24 @@ class AgentExecutionService : Service() {
     }
   }
 
+  private var isTerminalNotificationPosted = false
+
   private fun monitorAgentProgress() {
     monitorJob?.cancel()
     monitorJob = serviceScope.launch {
-      val engine = AgentServiceBridge.engine ?: return@launch
+      var engine = AgentServiceBridge.engine
+      var retries = 0
+      while (engine == null && retries < 15 && isActive) {
+        delay(100L)
+        engine = AgentServiceBridge.engine
+        retries++
+      }
+      if (engine == null) {
+        Log.w(TAG, "AgentServiceBridge.engine not found after waiting; stopping foreground service")
+        stopForegroundExecution()
+        stopSelf()
+        return@launch
+      }
       engine.state.collectLatest { state ->
         try {
           when (state.status) {
@@ -103,6 +119,7 @@ class AgentExecutionService : Service() {
             AgentStatus.SANDBOX_RESET,
             AgentStatus.DELIVERABLE_PENDING,
             AgentStatus.VERIFYING -> {
+              isTerminalNotificationPosted = false
               val content = state.currentAction ?: "Executing autonomous tasks..."
               val updatedNotif = buildNotification(
                 title = "Aragon: Executing Task",
@@ -113,6 +130,7 @@ class AgentExecutionService : Service() {
               nm?.notify(NOTIFICATION_ID, updatedNotif)
             }
             AgentStatus.COMPLETED -> {
+              isTerminalNotificationPosted = true
               val summary = state.completionSummary ?: "Deliverables verified successfully."
               val completedNotif = buildNotification(
                 title = "Aragon: Task Completed",
@@ -126,6 +144,7 @@ class AgentExecutionService : Service() {
               stopSelf()
             }
             AgentStatus.PARTIAL_COMPLETION -> {
+              isTerminalNotificationPosted = true
               val summary = state.completionSummary ?: "Task completed partially."
               val partialNotif = buildNotification(
                 title = "Aragon: Task Partially Completed",
@@ -139,6 +158,7 @@ class AgentExecutionService : Service() {
               stopSelf()
             }
             AgentStatus.FAILED -> {
+              isTerminalNotificationPosted = true
               val errorMsg = state.error ?: "Task halted"
               val errorNotif = buildNotification(
                 title = "Aragon: Task Halted",
@@ -152,7 +172,8 @@ class AgentExecutionService : Service() {
               stopSelf()
             }
             AgentStatus.CANCELLED -> {
-              stopForegroundExecution()
+              isTerminalNotificationPosted = false
+              stopForegroundExecution(removeNotification = true)
               stopSelf()
             }
             AgentStatus.IDLE -> {}
@@ -238,17 +259,21 @@ class AgentExecutionService : Service() {
     wakeLock = null
   }
 
-  private fun stopForegroundExecution() {
+  private fun stopForegroundExecution(removeNotification: Boolean = true) {
     monitorJob?.cancel()
     releaseWakeLock()
     try {
-      stopForeground(STOP_FOREGROUND_REMOVE)
+      if (removeNotification) {
+        stopForeground(STOP_FOREGROUND_REMOVE)
+      } else {
+        stopForeground(STOP_FOREGROUND_DETACH)
+      }
     } catch (_: Exception) {}
   }
 
   override fun onDestroy() {
     super.onDestroy()
-    stopForegroundExecution()
+    stopForegroundExecution(removeNotification = !isTerminalNotificationPosted)
     serviceScope.cancel()
   }
 

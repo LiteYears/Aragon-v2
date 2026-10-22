@@ -140,10 +140,11 @@ class DocumentIntelligenceService(
           val idCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
           val nameCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
           val mimeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+          if (idCol < 0) return@use
           while (cursor.moveToNext()) {
             val childId = cursor.getString(idCol) ?: continue
-            val name = cursor.getString(nameCol) ?: "file"
-            val mime = cursor.getString(mimeCol) ?: ""
+            val name = if (nameCol >= 0) cursor.getString(nameCol) ?: "file" else "file"
+            val mime = if (mimeCol >= 0) cursor.getString(mimeCol) ?: "" else ""
             if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
               val subPath = if (currentPath.isEmpty()) name else "$currentPath/$name"
               traverse(childId, subPath)

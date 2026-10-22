@@ -565,7 +565,6 @@ class ActionEvaluator {
       ToolFailureClass.PERMISSION_POLICY -> ActionFailureCategory.PERMISSION_ERROR
       ToolFailureClass.INVALID_INPUT -> ActionFailureCategory.INVALID_ARGUMENTS
       ToolFailureClass.UNAVAILABLE_TOOL -> ActionFailureCategory.MISSING_DEPENDENCY
-      else -> ActionFailureCategory.UNRECOVERABLE_FAILURE
     }
 
     val (strategy, backoffMs, maxRetries, altTool, recoveryResult) = when (toolFailureClass) {
@@ -589,9 +588,6 @@ class ActionEvaluator {
       ToolFailureClass.UNAVAILABLE_TOOL -> {
         val alt = getApprovedPolicyAlternative(toolName, toolCall.arguments)
         Tuple5(RecoveryStrategy.SWITCH_EQUIVALENT_TOOL, 0L, 0, alt, "Tool or binary is unavailable. Switched to alternative tool '$alt'. Never repeat unchanged.")
-      }
-      else -> {
-        Tuple5(RecoveryStrategy.CHANGE_PARAMETERS, 0L, 0, null, "Operation failed and cannot be repeated unchanged.")
       }
     }
 

@@ -1040,16 +1040,32 @@ class AgentViewModel(
     }
   }
 
+  @Volatile
+  private var lastSubmitTimeMs = 0L
+  @Volatile
+  private var lastSubmittedIntent = ""
+
   fun submitTask(intent: String, expectedArtifact: String? = null) {
+    val clean = intent.trim()
+    if (clean.isBlank()) return
+
+    val now = System.currentTimeMillis()
+    if (clean == lastSubmittedIntent && now - lastSubmitTimeMs < 400L) {
+      // Rapid duplicate submission ignored to prevent concurrent session race condition
+      return
+    }
+    lastSubmitTimeMs = now
+    lastSubmittedIntent = clean
+
     _activeTab.value = UiTab.EXECUTION_FEED
     _selectedArtifactForPreview.value = null
     _previewContent.value = null
-    AgentExecutionService.start(getApplication(), intent)
+    AgentExecutionService.start(getApplication(), clean)
 
     val isContinuation = state.value.status == AgentStatus.COMPLETED && state.value.messages.isNotEmpty()
     val resumeSessionId = if (isContinuation) state.value.sessionId else null
     engine.submitTask(
-      intent = intent,
+      intent = clean,
       expectedArtifact = expectedArtifact,
       resumeSessionId = resumeSessionId,
       continueConversation = isContinuation
@@ -1279,6 +1295,8 @@ class AgentViewModel(
                 engine.artifactManager.unregisterArtifact(item.relativePath)
                 val newRel = PathSecurity.getRelativePath(workspaceDir, newFile)
                 engine.artifactManager.registerArtifact(newRel)
+              } else {
+                engine.artifactManager.syncWorkspace()
               }
               engine.deliverableTracker.scanAndVerify(engine.artifactManager)
               loadExplorerDirectory(_currentExplorerPath.value)
@@ -1482,7 +1500,7 @@ class AgentViewModel(
   override fun onCleared() {
     super.onCleared()
     mcpManager.shutdown()
-    if (AgentServiceBridge.engine === engine) {
+    if (AgentServiceBridge.engine === engine && !engine.state.value.canCancel) {
       AgentServiceBridge.engine = null
     }
   }

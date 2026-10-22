@@ -638,7 +638,7 @@ class OcrRouter(
       // Fallback B: E2B Cloud Tesseract OCR
       if (cloud.isAvailable() && (forceCloud || needsArabic)) {
         val cloudResult = try {
-          cloud.recognize(imageFile, hintArabic = needsArabic || local == null)
+          cloud.recognize(imageFile, hintArabic = needsArabic)
         } catch (e: Exception) {
           if (local != null && local.fullText.isNotBlank()) {
             return local.copy(

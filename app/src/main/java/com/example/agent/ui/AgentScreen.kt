@@ -733,7 +733,8 @@ fun AgentScreen(
                       color = Color(0xFF14141E),
                       border = BorderStroke(0.7.dp, Color(0xFF242436)),
                       modifier = Modifier.clickable {
-                        val clipText = clipboard?.primaryClip?.getItemAt(0)?.text?.toString()
+                        val clip = clipboard?.primaryClip
+                        val clipText = if (clip != null && clip.itemCount > 0) clip.getItemAt(0)?.text?.toString() else null
                         if (!clipText.isNullOrBlank()) {
                           inputText = if (inputText.isBlank()) clipText else "$inputText $clipText"
                         }
@@ -835,7 +836,7 @@ fun AgentScreen(
                   maxLines = 6,
                   keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                   keyboardActions = KeyboardActions(onSend = {
-                    if (inputText.isNotBlank()) {
+                    if (inputText.isNotBlank() && !state.canCancel) {
                       val taskText = inputText
                       inputText = ""
                       viewModel.submitTask(taskText)
