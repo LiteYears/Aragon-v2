@@ -64,6 +64,9 @@ class DocumentIntelligenceService(
   private val _scope = MutableStateFlow<Set<String>>(emptySet())
   val scope: StateFlow<Set<String>> = _scope.asStateFlow()
 
+  private val _activeTaskScope = MutableStateFlow<Set<String>>(emptySet())
+  val activeTaskScope: StateFlow<Set<String>> = _activeTaskScope.asStateFlow()
+
   private var initialized = false
 
   suspend fun initialize() {
@@ -78,7 +81,7 @@ class DocumentIntelligenceService(
       repository.delete(art.id)
     }
     val artifactDocIds = artifactDocs.map { it.id }.toSet()
-    val cleanScope = savedScope - artifactDocIds
+    val cleanScope = (_scope.value + savedScope) - artifactDocIds
     _scope.value = cleanScope
     if (cleanScope.size != savedScope.size) {
       prefs.edit().putStringSet("documents_scope_ids", cleanScope).apply()
@@ -86,8 +89,24 @@ class DocumentIntelligenceService(
     refreshDocuments()
   }
 
+  /**
+   * Captures the currently staged attachment scope for the task being submitted
+   * and clears the composer attachment scope so subsequent messages do not re-send old attachments.
+   */
+  fun consumeScopeForTask(): Set<String> {
+    val current = _scope.value.toSet()
+    _activeTaskScope.value = current
+    if (_scope.value.isNotEmpty()) {
+      _scope.value = emptySet()
+      prefs.edit().remove("documents_scope_ids").apply()
+      refreshDocumentsAsync()
+    }
+    return current
+  }
+
   fun clearScope() {
     _scope.value = emptySet()
+    _activeTaskScope.value = emptySet()
     prefs.edit().remove("documents_scope_ids").apply()
     refreshDocumentsAsync()
   }
@@ -296,7 +315,8 @@ class DocumentIntelligenceService(
   }
 
   private fun copyWithLimit(uri: Uri, target: File) {
-    val input = appContext.contentResolver.openInputStream(uri)
+    val input = (if (uri.scheme == "file") uri.path?.let { File(it).takeIf { f -> f.exists() }?.inputStream() } else null)
+      ?: appContext.contentResolver.openInputStream(uri)
       ?: throw DocumentException("Could not open the selected file")
     input.use { source ->
       target.outputStream().use { out ->
@@ -415,18 +435,21 @@ class DocumentIntelligenceService(
   }
 
   suspend fun searchDocuments(query: String, k: Int, docIds: List<String>?): RetrievalOutcome {
-    val scoped = docIds?.toSet() ?: _scope.value
+    val scoped = docIds?.toSet()?.takeIf { it.isNotEmpty() }
+      ?: _activeTaskScope.value.takeIf { it.isNotEmpty() }
+      ?: _scope.value.takeIf { it.isNotEmpty() }
     return retriever.search(query, k, scoped)
   }
 
   fun snapshotForPrompt(): String? {
-    val docs = _documents.value
+    val activeScope = _activeTaskScope.value.ifEmpty { _scope.value }
+    if (activeScope.isEmpty()) return null
+    val docs = _documents.value.filter { it.id in activeScope }
     if (docs.isEmpty()) return null
     val sb = StringBuilder()
     sb.appendLine("UPLOADED DOCUMENTS (ready in workspace & pre-synced to E2B microVM at /home/user):")
-    val scopeSet = _scope.value
     for ((index, doc) in docs.withIndex()) {
-      val scopeTag = if (doc.id in scopeSet) "in scope" else "OUT OF SCOPE"
+      val scopeTag = "in scope"
       val embTag = when {
         doc.hasEmbeddings -> "embeddings: yes"
         doc.isReady -> "embeddings: no (lexical only)"

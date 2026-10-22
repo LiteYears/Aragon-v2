@@ -537,6 +537,7 @@ class GeminiLLMProvider(
             is JSONArray -> (0 until v.length()).map { jsonValToKotlin(v.get(it)) }
             else -> v
           }
+          @Suppress("UNCHECKED_CAST")
           val argsMap = jsonValToKotlin(argsObj) as? Map<String, Any?> ?: emptyMap()
           toolCalls.add(
             ToolCall(

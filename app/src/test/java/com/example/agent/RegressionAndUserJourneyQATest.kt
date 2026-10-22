@@ -176,4 +176,51 @@ class RegressionAndUserJourneyQATest {
     // Destroyed cleanly without uncaught exception
     assertTrue(true)
   }
+
+  @Test
+  fun testSinglePromptAttachmentConsumptionDoesNotLeakToSubsequentMessages() = kotlinx.coroutines.runBlocking {
+    val app = RuntimeEnvironment.getApplication()
+    val vm = AgentViewModel(app)
+    val engine = AgentServiceBridge.engine!!
+
+    // Create a sample image file in workspace and import it into DocumentIntelligenceService
+    val sampleImg = File(vm.workspaceDir, "test_attached_chart.png")
+    sampleImg.writeBytes(
+      byteArrayOf(
+        0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+      )
+    )
+    val uri = android.net.Uri.fromFile(sampleImg)
+    val outcomes = engine.documentService!!.importUris(listOf(uri))
+    assertTrue("Image import should succeed", outcomes.isNotEmpty() && outcomes.first().ok)
+    val docId = outcomes.first().docId!!
+    assertTrue("Imported doc should initially be in scope for the next prompt", vm.documentScope.value.contains(docId))
+
+    // Submit Prompt 1 with the attachment
+    vm.submitTask("Analyze this attached chart")
+    assertTrue(
+      "Composer attachment scope must be cleared immediately after sending Prompt 1",
+      vm.documentScope.value.isEmpty()
+    )
+    val firstIntentStep = vm.state.value.executionFeed.first { it.type == com.example.agent.core.StepType.TASK_INTENT }
+    assertEquals("Prompt 1 must carry the attached image", 1, firstIntentStep.attachments.size)
+    vm.stopExecution()
+
+    // Submit Prompt 2 WITHOUT attaching any file
+    engine.submitTask("Now write a summary poem", continueConversation = true)
+    val intentSteps = vm.state.value.executionFeed.filter { it.type == com.example.agent.core.StepType.TASK_INTENT }
+    assertTrue("Should have two intent steps", intentSteps.size >= 2)
+    val secondIntentStep = intentSteps.last()
+    assertTrue(
+      "Prompt 2 must NOT inherit or re-attach the image from Prompt 1",
+      secondIntentStep.attachments.isEmpty()
+    )
+    val userMessages = vm.state.value.messages.filter { it.role == com.example.agent.core.MessageRole.USER }
+    assertTrue(
+      "All user messages in active LLM context for Prompt 2 must have zero attachments",
+      userMessages.all { it.attachments.isEmpty() }
+    )
+    vm.stopExecution()
+  }
 }

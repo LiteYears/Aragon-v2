@@ -284,11 +284,7 @@ class AgentViewModel(
     prefs.edit().putString("aragon_approval_policy", policy.name).apply()
   }
 
-  val state: StateFlow<AgentState> = engine.state.stateIn(
-    scope = viewModelScope,
-    started = SharingStarted.WhileSubscribed(5000),
-    initialValue = engine.state.value
-  )
+  val state: StateFlow<AgentState> = engine.state
 
   private val _activeTab = MutableStateFlow(UiTab.EXECUTION_FEED)
   val activeTab: StateFlow<UiTab> = _activeTab.asStateFlow()
@@ -1062,6 +1058,7 @@ class AgentViewModel(
     _activeTab.value = UiTab.EXECUTION_FEED
     _selectedArtifactForPreview.value = null
     _previewContent.value = null
+    _documentMessages.value = emptyList()
     AgentExecutionService.start(getApplication(), clean)
 
     val isContinuation = state.value.status == AgentStatus.COMPLETED && state.value.messages.isNotEmpty()

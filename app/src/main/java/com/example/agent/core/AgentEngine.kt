@@ -42,7 +42,7 @@ class AgentEngine(
   initialSandboxConfig: com.alibaba.opensandbox.sandbox.config.ConnectionConfig = com.alibaba.opensandbox.sandbox.config.ConnectionConfig.DEFAULT_E2B,
   val maxSteps: Int = 1000,
   private val webEnabled: Boolean = true,
-  private val documentService: DocumentIntelligenceService? = null
+  val documentService: DocumentIntelligenceService? = null
 ) {
 
   private val _state = MutableStateFlow(
@@ -232,9 +232,7 @@ class AgentEngine(
     (registry.getTool("file_exists") as? FileExistsTool)?.sandboxProvider = active
     (registry.getTool("file_metadata") as? FileMetadataTool)?.sandboxProvider = active
     (registry.getTool("install_package") as? InstallPackageTool)?.sandboxProvider = active
-    if (active is E2BSandboxProvider) {
-      (registry.getTool("e2b_sandbox") as? E2BCloudTool)?.e2bProvider = active
-    }
+    (registry.getTool("e2b_sandbox") as? E2BCloudTool)?.e2bProvider = active
   }
 
   fun getProvider(): LLMProvider = activeProvider
@@ -475,11 +473,32 @@ class AgentEngine(
         ?: scratchpad.loadTaskHistory().firstOrNull { it.sessionId == sessionId }
     } else null
 
-    val previousMessages = when {
+    val rawPreviousMessages = when {
       isContinuation && _state.value.messages.isNotEmpty() -> _state.value.messages
       isResuming && existingRecord != null -> existingRecord.conversation
       isContinuation -> _state.value.messages
       else -> emptyList()
+    }
+    val previousMessages = if (!isResuming && rawPreviousMessages.isNotEmpty()) {
+      rawPreviousMessages.map { msg ->
+        if (msg.role == MessageRole.USER &&
+          (msg.attachments.isNotEmpty() ||
+            msg.content.contains("[USER ATTACHMENTS") ||
+            msg.content.contains("[PRE-EXTRACTED CONTENT") ||
+            msg.content.contains("[INPUT FILES"))
+        ) {
+          val cleanContent = msg.content
+            .substringBefore("\n\n[USER ATTACHMENTS")
+            .substringBefore("\n[PRE-EXTRACTED CONTENT")
+            .substringBefore("\n\n[INPUT FILES")
+            .trimEnd()
+          msg.copy(content = cleanContent, attachments = emptyList())
+        } else {
+          msg
+        }
+      }
+    } else {
+      rawPreviousMessages
     }
     val previousFeed = when {
       isContinuation && _state.value.executionFeed.isNotEmpty() -> _state.value.executionFeed
@@ -489,9 +508,12 @@ class AgentEngine(
     }
     val startingStep = previousFeed.size
 
-    val inScopeIds = documentService?.scope?.value ?: emptySet()
+    val effectiveScopeIds = if (isResuming) {
+      documentService?.activeTaskScope?.value?.ifEmpty { documentService?.scope?.value ?: emptySet() } ?: emptySet()
+    } else {
+      documentService?.consumeScopeForTask() ?: emptySet()
+    }
     val allUploadedDocs = documentService?.documents?.value ?: emptyList()
-    val effectiveScopeIds = if (inScopeIds.isNotEmpty()) inScopeIds else allUploadedDocs.map { it.id }.toSet()
 
     val inScopeDocNames = if (effectiveScopeIds.isNotEmpty()) {
       allUploadedDocs
@@ -499,21 +521,7 @@ class AgentEngine(
         .map { it.displayName }
     } else emptyList()
 
-    val inputFiles = inScopeDocNames
-      .plus(
-        workspaceDir.walkTopDown()
-          .onEnter { d ->
-            val dLower = d.name.lowercase()
-            !dLower.startsWith(".") && dLower !in DeliverableTracker.INTERNAL_WORKSPACE_DIRS
-          }
-          .filter { f ->
-            val rel = f.relativeTo(workspaceDir).path.replace('\\', '/')
-            f.isFile && !DeliverableTracker.isInternalWorkspacePath(rel, f.name.lowercase())
-          }
-          .map { it.relativeTo(workspaceDir).path.replace('\\', '/') }
-          .toList()
-      )
-      .distinct()
+    val inputFiles = inScopeDocNames.distinct()
 
     val messageAttachments = mutableListOf<FileAttachment>()
     val attachedDocTexts = mutableListOf<Pair<String, String>>()
@@ -553,30 +561,6 @@ class AgentEngine(
             }
           }
         }
-      }
-    }
-
-    // Fallback: If no documentService attachments were found, look for standalone image files in workspace
-    if (messageAttachments.isEmpty()) {
-      val imageExts = setOf("png", "jpg", "jpeg", "webp", "bmp", "gif")
-      val wsImages = workspaceDir.walkTopDown().maxDepth(2)
-        .filter { f ->
-          f.isFile && !f.name.startsWith(".") &&
-            !f.relativeTo(workspaceDir).path.startsWith("documents/") &&
-            !f.relativeTo(workspaceDir).path.startsWith(".scratchpad/") &&
-            !f.relativeTo(workspaceDir).path.startsWith(".observations/") &&
-            f.extension.lowercase() in imageExts
-        }
-        .sortedByDescending { it.lastModified() }
-        .toList()
-      for (img in wsImages.take(3)) {
-        messageAttachments.add(
-          FileAttachment(
-            name = img.name,
-            mimeType = DocumentDetector.imageMimeType(img),
-            file = img
-          )
-        )
       }
     }
 
@@ -753,56 +737,31 @@ class AgentEngine(
     onStepCreated: (ExecutionStep) -> Unit
   ) {
     val activeSandbox = sandboxProvider
-    if (activeSandbox != null && activeSandbox.isRemote) {
+    if (activeSandbox.isRemote) {
       try {
         val syncedFiles = mutableListOf<String>()
-        val inScopeIds = documentService?.scope?.value ?: emptySet()
+        val effectiveDocIds = documentService?.activeTaskScope?.value ?: emptySet()
         val allDocs = documentService?.documents?.value ?: emptyList()
-        val effectiveDocIds = if (inScopeIds.isNotEmpty()) inScopeIds else allDocs.map { it.id }.toSet()
-        val hasRunningSession = (activeSandbox as? E2BSandboxProvider)?.hasActiveRunningSession(task.sessionId) == true
 
-        // Avoid cold-booting a remote E2B Firecracker MicroVM before Turn 1's LLM call
-        // unless the user attached documents or a sandbox session is already running.
-        if (effectiveDocIds.isEmpty() && !hasRunningSession) {
+        // Avoid cold-booting a remote E2B Firecracker MicroVM or re-syncing old files
+        // unless the user attached documents to this task.
+        if (effectiveDocIds.isEmpty()) {
           return
         }
 
-        if (effectiveDocIds.isNotEmpty()) {
-          val inScopeDocs = allDocs.filter { it.id in effectiveDocIds }
-          for (doc in inScopeDocs) {
-            val localDocFile = documentService?.getOriginalFile(doc.id)
-              ?: documentService?.resolveDocumentFile(doc.id)
-              ?: File(workspaceDir, doc.displayName).takeIf { it.exists() }
-              ?: File(workspaceDir, DocumentText.sanitizeFileName(doc.displayName)).takeIf { it.exists() }
-            if (localDocFile != null && localDocFile.isFile) {
-              val wsCopy = File(workspaceDir, doc.displayName)
-              if (!wsCopy.exists() || wsCopy.length() == 0L) {
-                try { localDocFile.copyTo(wsCopy, overwrite = true) } catch (_: Exception) {}
-              }
-              val ok = activeSandbox.pushFileToRemote(task.sessionId, doc.displayName, localDocFile)
-              if (ok) syncedFiles.add(doc.displayName)
+        val inScopeDocs = allDocs.filter { it.id in effectiveDocIds }
+        for (doc in inScopeDocs) {
+          val localDocFile = documentService?.getOriginalFile(doc.id)
+            ?: documentService?.resolveDocumentFile(doc.id)
+            ?: File(workspaceDir, doc.displayName).takeIf { it.exists() }
+            ?: File(workspaceDir, DocumentText.sanitizeFileName(doc.displayName)).takeIf { it.exists() }
+          if (localDocFile != null && localDocFile.isFile) {
+            val wsCopy = File(workspaceDir, doc.displayName)
+            if (!wsCopy.exists() || wsCopy.length() == 0L) {
+              try { localDocFile.copyTo(wsCopy, overwrite = true) } catch (_: Exception) {}
             }
-          }
-        }
-        val isExistingActiveSandbox = expectedSandboxId != null
-        if (!isExistingActiveSandbox && hasRunningSession) {
-          val allWorkspaceFiles = workspaceDir.walkTopDown()
-            .filter { f ->
-              val rel = f.relativeTo(workspaceDir).path.replace('\\', '/')
-              f.isFile && !f.name.startsWith(".") &&
-                !rel.startsWith("documents/") &&
-                !rel.startsWith(".scratchpad/") &&
-                !rel.startsWith(".observations/") &&
-                !rel.startsWith("tmp/") &&
-                !rel.startsWith("temp/")
-            }
-            .toList()
-          for (f in allWorkspaceFiles) {
-            val relPath = f.relativeTo(workspaceDir).path.replace('\\', '/')
-            if (!syncedFiles.contains(relPath)) {
-              val ok = activeSandbox.pushFileToRemote(task.sessionId, relPath, f)
-              if (ok) syncedFiles.add(relPath)
-            }
+            val ok = activeSandbox.pushFileToRemote(task.sessionId, doc.displayName, localDocFile)
+            if (ok) syncedFiles.add(doc.displayName)
           }
         }
         if (syncedFiles.isNotEmpty()) {
