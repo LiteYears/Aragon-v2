@@ -1,7 +1,5 @@
 package com.example.agent.core
 
-import com.alibaba.opensandbox.codeinterpreter.domain.models.execd.executions.CodeContext
-import com.alibaba.opensandbox.codeinterpreter.domain.models.execd.executions.RunCodeRequest
 import com.alibaba.opensandbox.sandbox.domain.models.execd.executions.RunCommandRequest
 import com.alibaba.opensandbox.sandbox.Sandbox
 import kotlinx.coroutines.CancellationException
@@ -938,16 +936,16 @@ class E2BCloudTool(
 
   override val name: String = "e2b_sandbox"
   override val description: String =
-    "Execute commands, run code, or manage cloud Firecracker microVM sandboxes via E2B (https://github.com/e2b-dev). Supports actions: 'run_command', 'run_code', 'list_sandboxes', 'status', 'pause_sandbox', 'resume_sandbox'."
+    "Execute commands or manage cloud Firecracker microVM sandboxes via E2B (https://github.com/e2b-dev). Supports actions: 'run_command', 'list_sandboxes', 'status', 'pause_sandbox', 'resume_sandbox'."
 
   override val schema: ToolSchema = ToolSchema(
     listOf(
       ToolParameter(
         name = "action",
         type = "string",
-        description = "The E2B operation: 'run_command' (default), 'run_code', 'list_sandboxes', 'status', 'pause_sandbox', or 'resume_sandbox'.",
+        description = "The E2B operation: 'run_command' (default), 'list_sandboxes', 'status', 'pause_sandbox', or 'resume_sandbox'.",
         required = false,
-        enumValues = listOf("run_command", "run_code", "list_sandboxes", "status", "pause_sandbox", "resume_sandbox"),
+        enumValues = listOf("run_command", "list_sandboxes", "status", "pause_sandbox", "resume_sandbox"),
         defaultValue = "run_command",
         aliases = listOf("act", "op", "operation")
       ),
@@ -957,22 +955,6 @@ class E2BCloudTool(
         description = "Shell command to execute in the E2B microVM (required for action='run_command').",
         required = false,
         aliases = listOf("cmd", "c")
-      ),
-      ToolParameter(
-        name = "code",
-        type = "string",
-        description = "Code snippet to run in the E2B microVM (required for action='run_code').",
-        required = false,
-        aliases = listOf("script", "source", "snippet")
-      ),
-      ToolParameter(
-        name = "language",
-        type = "string",
-        description = "Language runtime: 'python' (default), 'bash', or 'javascript'.",
-        required = false,
-        enumValues = listOf("python", "bash", "javascript"),
-        defaultValue = "python",
-        aliases = listOf("lang")
       ),
       ToolParameter(
         name = "template",
@@ -1082,46 +1064,6 @@ class E2BCloudTool(
             duration = System.currentTimeMillis() - startTime,
             stdout = msg,
             exitCode = 0
-          )
-        }
-
-        "run_code" -> {
-          val code = arguments["code"]?.toString()?.trim() ?: ""
-          val lang = arguments["language"]?.toString()?.trim()?.lowercase() ?: "python"
-          if (code.isBlank()) {
-            return@withContext ToolResult(
-              callId = callId,
-              toolName = name,
-              status = ToolStatus.FAILED,
-              arguments = arguments,
-              output = null,
-              error = "Parameter 'code' is required for action='run_code'.",
-              errorType = ToolErrorCode.INVALID_ARGUMENTS,
-              duration = System.currentTimeMillis() - startTime,
-              exitCode = 1
-            )
-          }
-
-          val req = RunCodeRequest.builder()
-            .code(code)
-            .context(CodeContext.builder().language(lang).build())
-            .build()
-          val exec = e2bProvider.executeCode(sessionIdProvider(), req)
-          val artifacts = artifactManager.syncWorkspace()
-          val isSuccess = (exec.exitCode ?: 0) == 0 && exec.error == null
-          ToolResult(
-            callId = callId,
-            toolName = name,
-            status = if (isSuccess) ToolStatus.SUCCEEDED else ToolStatus.FAILED,
-            arguments = arguments,
-            output = if (isSuccess) exec.stdoutText().ifBlank { "(code executed in E2B microVM)" } else null,
-            error = if (isSuccess) null else exec.stderrText().ifBlank { "E2B code execution failed" },
-            errorType = if (isSuccess) null else ToolErrorCode.PROCESS_FAILED,
-            duration = System.currentTimeMillis() - startTime,
-            stdout = exec.stdoutText(),
-            stderr = exec.stderrText(),
-            exitCode = exec.exitCode ?: 0,
-            artifacts = artifacts
           )
         }
 

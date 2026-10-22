@@ -43,7 +43,6 @@ class DocumentIntelligenceService(
   private val database = DocumentDatabase.build(appContext)
   private val repository = DocumentRepository(database.documentDao())
   val retriever = DocumentRetriever(repository, embeddingProviderSupplier)
-  private val converter = DocumentConverter(workspaceDir)
   val ocrRouter = OcrRouter(
     context = appContext,
     workspaceDir = workspaceDir,
@@ -418,22 +417,6 @@ class DocumentIntelligenceService(
   suspend fun searchDocuments(query: String, k: Int, docIds: List<String>?): RetrievalOutcome {
     val scoped = docIds?.toSet() ?: _scope.value
     return retriever.search(query, k, scoped)
-  }
-
-  suspend fun convertDocument(docId: String, format: String, baseName: String?, targetDir: File): ConversionReport {
-    val entity = repository.documentById(docId) ?: throw DocumentException("Document not found")
-    val structure = structureFor(docId) ?: throw DocumentException("Document has not finished processing; no extractable structure is available")
-    val name = baseName?.takeIf { it.isNotBlank() }
-      ?: entity.displayName.substringBeforeLast('.')
-    return withContext(Dispatchers.IO) {
-      when (format.lowercase()) {
-        "docx" -> converter.toDocx(structure, targetDir, name)
-        "xlsx" -> converter.toXlsx(structure, targetDir, name)
-        "markdown", "md" -> converter.toMarkdown(structure, targetDir, name)
-        "pdf" -> converter.toPdf(structure, targetDir, name)
-        else -> throw DocumentException("Unsupported conversion target '$format'. Supported: docx, xlsx, markdown, pdf")
-      }
-    }
   }
 
   fun snapshotForPrompt(): String? {

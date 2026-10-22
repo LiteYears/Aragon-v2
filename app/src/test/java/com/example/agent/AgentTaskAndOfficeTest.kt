@@ -2,13 +2,11 @@ package com.example.agent
 
 import com.example.agent.core.AgentMessage
 import com.example.agent.core.AgentStatus
-import com.example.agent.core.DocxBuilder
 import com.example.agent.core.ExecutionStep
 import com.example.agent.core.FiveStageRecord
 import com.example.agent.core.MessageRole
 import com.example.agent.core.StepType
 import com.example.agent.core.TaskRecord
-import com.example.agent.core.XlsxBuilder
 import com.example.agent.docs.DocumentChunker
 import com.example.agent.docs.DocumentStructure
 import com.example.agent.docs.DocumentText
@@ -109,76 +107,6 @@ class AgentTaskAndOfficeTest {
   }
 
   @Test
-  fun testDocxBuilderGenerationAndIntegrity() {
-    val tempFile = File.createTempFile("test_document", ".docx")
-    try {
-      val builder = DocxBuilder()
-      builder.setCoreProperties("Executive Summary", "Aragon Test")
-      builder.addHeading("Market Overview", level = 1)
-      builder.addParagraph("This is a verified test paragraph detailing the quarterly surge.")
-      builder.addList(listOf("Point A", "Point B", "Point C"), ordered = false)
-      builder.addTable(
-        headers = listOf("Metric", "2024", "2025"),
-        rows = listOf(
-          listOf("Revenue", "$1.2M", "$2.5M"),
-          listOf("Users", "50,000", "120,000")
-        )
-      )
-      builder.save(tempFile)
-
-      assertTrue(tempFile.exists())
-      assertTrue(tempFile.length() > 500)
-
-      // Verify it is a valid Zip archive containing OpenXML parts
-      ZipFile(tempFile).use { zip ->
-        assertNotNull(zip.getEntry("[Content_Types].xml"))
-        assertNotNull(zip.getEntry("_rels/.rels"))
-        assertNotNull(zip.getEntry("word/document.xml"))
-        assertNotNull(zip.getEntry("word/styles.xml"))
-        val docXml = zip.getInputStream(zip.getEntry("word/document.xml")!!).bufferedReader().readText()
-        assertTrue(docXml.contains("Market Overview"))
-        assertTrue(docXml.contains("Executive Summary") || docXml.contains("quarterly surge"))
-        assertTrue(docXml.contains("Revenue"))
-      }
-    } finally {
-      tempFile.delete()
-    }
-  }
-
-  @Test
-  fun testXlsxBuilderGenerationAndIntegrity() {
-    val tempFile = File.createTempFile("test_spreadsheet", ".xlsx")
-    try {
-      val builder = XlsxBuilder("Q1 Performance")
-      builder.freezeTopRow()
-      builder.addHeader("Division", "Budget", "Actual", "Variance")
-      builder.addRow("Engineering", "500000", "480000", "-20000")
-      builder.addRow("Marketing", "200000", "215000", "15000")
-      builder.addSheet("Headcount")
-      builder.addHeader("Department", "FTEs")
-      builder.addRow("Engineering", "35")
-      builder.addRow("Marketing", "12")
-      builder.save(tempFile)
-
-      assertTrue(tempFile.exists())
-      assertTrue(tempFile.length() > 500)
-
-      ZipFile(tempFile).use { zip ->
-        assertNotNull(zip.getEntry("[Content_Types].xml"))
-        assertNotNull(zip.getEntry("_rels/.rels"))
-        assertNotNull(zip.getEntry("xl/workbook.xml"))
-        assertNotNull(zip.getEntry("xl/worksheets/sheet1.xml"))
-        assertNotNull(zip.getEntry("xl/worksheets/sheet2.xml"))
-        val sheet1Xml = zip.getInputStream(zip.getEntry("xl/worksheets/sheet1.xml")!!).bufferedReader().readText()
-        assertTrue(sheet1Xml.contains("Engineering"))
-        assertTrue(sheet1Xml.contains("500000"))
-      }
-    } finally {
-      tempFile.delete()
-    }
-  }
-
-  @Test
   fun testRtsAndOrSearchQueries() {
     val query = "quarterly revenue 2025"
     val andQuery = DocumentText.buildFtsQuery(query)
@@ -214,101 +142,6 @@ class AgentTaskAndOfficeTest {
     val firstChunk = chunkingResult.chunks.first()
     assertEquals("SingleRowSheet", firstChunk.sheetName)
     assertTrue(firstChunk.text.contains("Operations"))
-  }
-
-  @Test
-  fun testDocxBuilderAdvancedFeatureParity() {
-    val tempFile = File.createTempFile("test_adv_doc", ".docx")
-    try {
-      val builder = DocxBuilder()
-      builder.setCoreProperties("Q3 Strategy", "Aragon Test", "Strategic Operations", "Quarterly Roadmap")
-      builder.setPageSettings(
-        orientation = DocxBuilder.PageOrientation.PORTRAIT,
-        margins = DocxBuilder.MarginPreset.NORMAL,
-        header = "Executive Strategy 2026",
-        footer = "Confidential",
-        pageNumbers = true
-      )
-      builder.addTitle("Q3 Strategic Operations", subtitle = "Mission Critical Initiatives")
-      builder.addHeading("Key Performance Indicators", level = 1)
-      builder.addCallout("Maintain 99.99% microVM execution uptime across all clusters.", title = "SYSTEM TARGET", type = DocxBuilder.CalloutType.TIP)
-      builder.addBlockquote("Simplicity is prerequisite for reliability.", citation = "Edsger W. Dijkstra")
-      builder.addCodeBlock("fun calculateRun(): Long = System.currentTimeMillis()", language = "kotlin")
-      builder.addHyperlink("Aragon Documentation", "https://github.com/LiteYears/Aragon-v2")
-      builder.addHorizontalRule()
-      builder.addPageBreak()
-
-      val markdown = """
-        ## Markdown Synthesis
-        This section is parsed directly from Markdown.
-        - High priority track
-        - Deterministic tool calls
-        - Comprehensive verification
-
-        | Cluster | Node Count | Status |
-        | --- | --- | --- |
-        | Primary | 16 | Active |
-        | Backup | 4 | Standby |
-      """.trimIndent()
-      builder.addMarkdown(markdown)
-      builder.save(tempFile)
-
-      assertTrue(tempFile.exists())
-      assertTrue(tempFile.length() > 1000)
-
-      ZipFile(tempFile).use { zip ->
-        assertNotNull(zip.getEntry("word/header1.xml"))
-        assertNotNull(zip.getEntry("word/footer1.xml"))
-        val docXml = zip.getInputStream(zip.getEntry("word/document.xml")!!).bufferedReader().readText()
-        assertTrue(docXml.contains("Executive Strategy 2026") || docXml.contains("Q3 Strategic Operations"))
-        assertTrue(docXml.contains("SYSTEM TARGET") || docXml.contains("99.99%"))
-        assertTrue(docXml.contains("Dijkstra"))
-        assertTrue(docXml.contains("Primary"))
-      }
-    } finally {
-      tempFile.delete()
-    }
-  }
-
-  @Test
-  fun testXlsxBuilderAdvancedFeatureParity() {
-    val tempFile = File.createTempFile("test_adv_sheet", ".xlsx")
-    try {
-      val builder = XlsxBuilder("Financial Model")
-      builder.current.theme = XlsxBuilder.Theme.EMERALD
-      builder.freezeTopRow()
-      builder.setAutoFilter(true)
-      builder.setZebraStriping(true)
-      builder.addHeader("Asset", "Qty", "Unit Price", "Total Value")
-      builder.addRow("Compute Clusters", "10", "$5,000.00", "=B2*C2")
-      builder.addRow("Storage Buckets", "25", "$200.00", "=B3*C3")
-      builder.addRow("Bandwidth Allocation", "50", "$45.00", "=B4*C4")
-      builder.addTotalRow("Grand Total", "", "", "=SUM(D2:D4)")
-
-      val mdTable = """
-        | Region | Latency | Availability |
-        | us-central1 | 12ms | 99.9% |
-        | europe-west1 | 18ms | 99.8% |
-      """.trimIndent()
-      builder.addSheet("Regional Telemetry", theme = XlsxBuilder.Theme.SLATE)
-      builder.addMarkdownTable(mdTable)
-
-      builder.save(tempFile)
-
-      assertTrue(tempFile.exists())
-      assertTrue(tempFile.length() > 1000)
-
-      ZipFile(tempFile).use { zip ->
-        val s1Xml = zip.getInputStream(zip.getEntry("xl/worksheets/sheet1.xml")!!).bufferedReader().readText()
-        assertTrue(s1Xml.contains("Compute Clusters"))
-        assertTrue(s1Xml.contains("autoFilter"))
-        assertTrue(s1Xml.contains("SUM(D2:D4)"))
-        val s2Xml = zip.getInputStream(zip.getEntry("xl/worksheets/sheet2.xml")!!).bufferedReader().readText()
-        assertTrue(s2Xml.contains("us-central1"))
-      }
-    } finally {
-      tempFile.delete()
-    }
   }
 
   @Test
