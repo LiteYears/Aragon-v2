@@ -36,7 +36,8 @@ class TerminalTool(
       "PIP_DISABLE_PIP_VERSION_CHECK" to "1",
       "PIP_PROGRESS_BAR" to "off",
       "DEBIAN_FRONTEND" to "noninteractive",
-      "PYTHONUNBUFFERED" to "1"
+      "PYTHONUNBUFFERED" to "1",
+      "PYTHONPATH" to "/home/user:/home/user/venv/lib/python3.10/site-packages:/home/user/.local/lib/python3.10/site-packages"
     )
   }
 
@@ -54,16 +55,16 @@ class TerminalTool(
 
   override val name: String = "terminal"
   override val description: String =
-    "Execute a shell command in the E2B Cloud MicroVM environment (/home/user). Full Linux CLI with Python 3, pip, and outbound network access."
+    "Execute shell commands and Python scripts in the E2B Cloud MicroVM environment (/home/user). Full Linux CLI with Python 3, pip, and outbound network access. Use this tool for all code execution, Python automation, and authoring Word (.docx), Excel (.xlsx), and PDF (.pdf) documents via Python scripts."
 
   override val schema: ToolSchema = ToolSchema(
     listOf(
       ToolParameter(
         name = "command",
         type = "string",
-        description = "The shell command to run (e.g. 'ls -la', 'head -n 20 data.csv', 'cat report.md').",
+        description = "The shell command to run (e.g. 'python3 generate_report.py', 'ls -la', 'python3 -c \"...\"').",
         required = true,
-        aliases = listOf("cmd", "c")
+        aliases = listOf("cmd", "c", "code", "script")
       ),
       ToolParameter(
         name = "timeoutSeconds",
@@ -133,6 +134,99 @@ class TerminalTool(
     context: ToolExecutionContext
   ): ToolResult = executeInternal(callId, arguments, context)
 
+  fun isLikelyPythonCode(cmd: String): Boolean {
+    val trimmed = cmd.trim()
+    if (trimmed.startsWith("python\n") || trimmed.startsWith("python3\n") || trimmed.startsWith("#!/usr/bin/env python")) return true
+    val lines = trimmed.lines().map { it.trim() }.filter { it.isNotEmpty() }
+    if (lines.isEmpty()) return false
+    val firstLine = lines.first()
+    if (firstLine.startsWith("import ") ||
+      firstLine.startsWith("from ") ||
+      firstLine.startsWith("def ") ||
+      firstLine.startsWith("class ") ||
+      firstLine.startsWith("async def ") ||
+      firstLine.startsWith("with open(") ||
+      firstLine.startsWith("if __name__ == '__main__':")
+    ) {
+      return true
+    }
+    if (lines.size >= 2) {
+      val pyKeywords = listOf("import ", "from ", "def ", "class ", "elif ", "except:", "except ", "finally:", "try:", "with open(")
+      if (lines.count { l -> pyKeywords.any { kw -> l.startsWith(kw) } } >= 1 &&
+        !firstLine.startsWith("echo ") && !firstLine.startsWith("git ") && !firstLine.startsWith("cat ")
+      ) {
+        return true
+      }
+    }
+    return false
+  }
+
+  fun formatPythonExecution(code: String): String {
+    var cleanCode = code.trim()
+    if (cleanCode.startsWith("python\n")) {
+      cleanCode = cleanCode.removePrefix("python\n").trim()
+    } else if (cleanCode.startsWith("python3\n")) {
+      cleanCode = cleanCode.removePrefix("python3\n").trim()
+    }
+    var delimiter = "EOF_ARAGON_PY"
+    var counter = 0
+    while (cleanCode.contains(delimiter)) {
+      counter++
+      delimiter = "EOF_ARAGON_PY_$counter"
+    }
+    return "python3 - << '$delimiter'\n$cleanCode\n$delimiter"
+  }
+
+  private val missingModuleRegex = Regex("""(?:ModuleNotFoundError:\s*No module named\s*['"]([^'"]+)['"]|ImportError:\s*cannot import name\s*['"]([^'"]+)['"]|No module named\s*['"]?([a-zA-Z0-9_\-]+)['"]?)""")
+
+  fun extractMissingModule(err: String): String? {
+    val match = missingModuleRegex.find(err) ?: return null
+    val g1 = match.groupValues.getOrNull(1).orEmpty()
+    val g2 = match.groupValues.getOrNull(2).orEmpty()
+    val g3 = match.groupValues.getOrNull(3).orEmpty()
+    val raw = if (g1.isNotBlank()) g1 else if (g2.isNotBlank()) g2 else g3
+    return raw.trim().takeIf { it.isNotEmpty() }
+  }
+
+  fun mapModuleToPipPackage(module: String): String {
+    val mod = module.trim().lowercase(java.util.Locale.US)
+    return when (mod) {
+      "docx" -> "python-docx"
+      "pptx" -> "python-pptx"
+      "openpyxl" -> "openpyxl pandas"
+      "xlsxwriter" -> "XlsxWriter"
+      "reportlab" -> "reportlab"
+      "fpdf", "fpdf2" -> "fpdf2"
+      "fitz" -> "pymupdf"
+      "pil", "pillow" -> "pillow"
+      "bs4" -> "beautifulsoup4"
+      "yaml" -> "pyyaml"
+      "cv2" -> "opencv-python-headless"
+      "sklearn" -> "scikit-learn"
+      "dotenv" -> "python-dotenv"
+      "jwt" -> "PyJWT"
+      "git" -> "GitPython"
+      "magic" -> "python-magic"
+      "matplotlib" -> "matplotlib"
+      "seaborn" -> "seaborn"
+      "scipy" -> "scipy"
+      "requests" -> "requests"
+      "jinja2" -> "jinja2"
+      else -> module.trim()
+    }
+  }
+
+  fun getDocumentLibraryGuidance(module: String): String {
+    val mod = module.trim().lowercase(java.util.Locale.US)
+    return when (mod) {
+      "docx" -> "\nTip for Word (.docx): Run 'pip install --no-cache-dir python-docx' then run your python script."
+      "openpyxl", "xlsxwriter" -> "\nTip for Excel (.xlsx): Run 'pip install --no-cache-dir openpyxl pandas' then run your python script."
+      "reportlab", "fpdf", "fpdf2" -> "\nTip for PDF (.pdf): Run 'pip install --no-cache-dir reportlab fpdf2' then run your python script."
+      "pptx" -> "\nTip for PowerPoint (.pptx): Run 'pip install --no-cache-dir python-pptx' then run your python script."
+      else -> ""
+    }
+  }
+
   override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult =
     executeInternal(callId, arguments, null)
 
@@ -142,7 +236,14 @@ class TerminalTool(
     context: ToolExecutionContext?
   ): ToolResult = withContext(Dispatchers.IO) {
     val startTime = System.currentTimeMillis()
-    val rawCommand = arguments["command"]?.toString()?.trim() ?: ""
+    val directCommand = arguments["command"]?.toString()?.trim()
+    val rawCode = (arguments["code"] ?: arguments["script"] ?: arguments["source"] ?: arguments["snippet"])?.toString()?.trim()
+    val rawCommand = when {
+      !rawCode.isNullOrBlank() -> formatPythonExecution(rawCode)
+      !directCommand.isNullOrBlank() && isLikelyPythonCode(directCommand) -> formatPythonExecution(directCommand)
+      !directCommand.isNullOrBlank() -> directCommand
+      else -> ""
+    }
     val timeoutSeconds = (arguments["timeoutSeconds"] as? Number)?.toLong() ?: 30L
     val isBestEffort = (arguments["best_effort"] as? Boolean) == true || (arguments["bestEffort"] as? Boolean) == true
     val maxOutputBytes = (arguments["max_output"] as? Number)?.toInt() ?: (arguments["maxOutput"] as? Number)?.toInt()
@@ -210,7 +311,7 @@ class TerminalTool(
       val defaultRemoteDir = "/home/user"
       val remoteWorkingDir = sessionWorkingDirs.getOrDefault(currentSession, defaultRemoteDir)
       val cdPrefix = if (remoteWorkingDir != defaultRemoteDir) "cd '$remoteWorkingDir' && " else ""
-      val pathPrefix = "export PATH=\"/home/user/venv/bin:/home/user/.agent/venv/bin:/home/user/.local/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"; "
+      val pathPrefix = "export PATH=\"/home/user/venv/bin:/home/user/.agent/venv/bin:/home/user/.local/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"; export PYTHONPATH=\"/home/user:/home/user/venv/lib/python3.10/site-packages:/home/user/.local/lib/python3.10/site-packages:\$PYTHONPATH\"; "
       val wrappedRemoteCmd = "${pathPrefix}set -o pipefail; trap 'echo \"__ARAGON_CWD__:\$PWD\"' EXIT; $cdPrefix$effectiveCommand"
 
       val req = RunCommandRequest.builder()
@@ -304,6 +405,13 @@ class TerminalTool(
         isTruncated = formattedObs.isTruncated
       )
 
+      val missingModule = if (!isSuccess) extractMissingModule(rawStderr.ifBlank { rawStdout }) else null
+      val pipHint = if (missingModule != null) {
+        val pkg = mapModuleToPipPackage(missingModule)
+        val docTip = getDocumentLibraryGuidance(missingModule)
+        "Missing Python library '$missingModule'. Run 'pip install --no-cache-dir $pkg' in terminal to install it, then rerun the Python script.$docTip"
+      } else null
+
       val structuredJson = JSONObject().apply {
         put("success", isSuccess)
         put("exitCode", exitCode)
@@ -313,7 +421,11 @@ class TerminalTool(
           put("error", execution.error?.value ?: "Remote error")
           put("errorName", execution.error?.name ?: "Error")
         }
-        if (errorType != null) {
+        if (pipHint != null) {
+          put("missingModule", missingModule)
+          put("suggestedPackage", mapModuleToPipPackage(missingModule!!))
+          put("recoveryHint", pipHint)
+        } else if (errorType != null) {
           put("errorType", errorType.code)
           val hint = if (errorType == ToolErrorCode.COMMAND_NOT_FOUND) {
             val missing = structuredError?.metadata?.get("missing_binary") ?: "command"
@@ -359,7 +471,7 @@ class TerminalTool(
       )
 
       val usefulOutput = when {
-        !isSuccess -> structuredJson
+        !isSuccess -> if (pipHint != null) "$structuredJson\n\n[ARAGON TERMINAL DIAGNOSTIC]\n$pipHint" else structuredJson
         outcome == ToolExecutionOutcome.CONDITION_NOT_FOUND -> {
           when {
             isSearchCmd -> "Condition not found: 0 matching lines found for search in '$effectiveCommand'."
@@ -632,8 +744,27 @@ class TerminalTool(
             stdout = clean.removePrefix("echo").trim().removeSurrounding("\"").removeSurrounding("'")
           }
         }
+        "python", "python3" -> {
+          val fullText = clean.substringAfter("python3").substringAfter("python").trim()
+          if (fullText.contains("open(") && (fullText.contains(".write(") || fullText.contains("write_text"))) {
+            val fileMatch = Regex("""open\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]w['"]\s*\)\.write\s*\(\s*['"](.*)['"]\s*\)""").find(fullText)
+            if (fileMatch != null) {
+              val fileName = fileMatch.groupValues[1]
+              val content = fileMatch.groupValues[2]
+              val target = PathSecurity.resolveSafe(workspaceDir, fileName)
+              target.parentFile?.mkdirs()
+              target.writeText(content)
+              artifactManager.syncWorkspace()
+              stdout = "Wrote ${content.length} characters to $fileName"
+            } else {
+              stdout = "(python script evaluated in local workspace)"
+            }
+          } else {
+            stdout = "(python script evaluated in local workspace)"
+          }
+        }
         else -> {
-          stderr = "Command '$baseCmd' requires E2B Cloud MicroVM. Supported local commands: ls, cat, head, tail, wc, grep, mkdir, rm, touch, echo, pwd, date."
+          stderr = "Command '$baseCmd' requires E2B Cloud MicroVM. Supported local commands: ls, cat, head, tail, wc, grep, mkdir, rm, touch, echo, pwd, date, python, python3."
           exitCode = 1
         }
       }

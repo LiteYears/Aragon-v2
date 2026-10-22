@@ -155,10 +155,13 @@ class ToolRegistry {
       "install" to "install_package",
       "pip_install" to "install_package",
       "pkg_install" to "install_package",
-      "run_code" to "code_interpreter",
-      "python" to "code_interpreter",
-      "execute_code" to "code_interpreter",
-      "eval" to "code_interpreter",
+      "run_code" to "terminal",
+      "python" to "terminal",
+      "execute_code" to "terminal",
+      "eval" to "terminal",
+      "code_interpreter" to "terminal",
+      "python_execute" to "terminal",
+      "python_interpreter" to "terminal",
       "diagnostics" to "sandbox_diagnostics",
       "system_info" to "sandbox_diagnostics",
       "sandbox_info" to "sandbox_diagnostics",
@@ -187,8 +190,6 @@ class ToolRegistry {
       "transcribe_image" to "read_image",
       "read_image" to "read_image",
       "image_to_text" to "read_image",
-      "python_execute" to "code_interpreter",
-      "python_interpreter" to "code_interpreter",
       "search_web" to "web_search",
       "search_files" to "list_directory",
       "find_files" to "list_directory",
@@ -212,17 +213,7 @@ class ToolRegistry {
       "terminal_command" to "terminal",
       "run_terminal" to "terminal",
       "run_bash" to "terminal",
-      "bash_command" to "terminal",
-      "replicate_document" to "recreate_document",
-      "clone_document" to "recreate_document",
-      "recreate_file" to "recreate_document",
-      "recreate_word" to "recreate_document",
-      "recreate_excel" to "recreate_document",
-      "recreate_pdf" to "recreate_document",
-      "build_pdf" to "build_pdf_document",
-      "create_pdf" to "build_pdf_document",
-      "generate_pdf" to "build_pdf_document",
-      "pdf_builder" to "build_pdf_document"
+      "bash_command" to "terminal"
     )
 
     fun resolveCanonicalName(name: String): String {
@@ -273,10 +264,18 @@ class ToolRegistry {
     val canonicalName = resolveToolName(toolCall.toolName)
     val normArgs = toolCall.arguments.toMutableMap()
 
-    // 1. Terminal / Shell Command Execution
+    // 1. Terminal / Shell Command & Python Execution
     if (canonicalName == "terminal") {
       val cmdAlias = normArgs["command"] ?: normArgs["cmd"] ?: normArgs["c"]
-      if (cmdAlias != null) normArgs["command"] = cmdAlias
+      if (cmdAlias != null) {
+        normArgs["command"] = cmdAlias
+      } else {
+        val codeAlias = normArgs["code"] ?: normArgs["script"] ?: normArgs["source"] ?: normArgs["snippet"]
+        if (codeAlias != null) {
+          val codeStr = codeAlias.toString()
+          normArgs["command"] = "python3 -c " + JSONObject.quote(codeStr)
+        }
+      }
       val timeoutAlias = normArgs["timeoutSeconds"] ?: normArgs["timeout"] ?: normArgs["timeout_seconds"]
       if (timeoutAlias != null) normArgs["timeoutSeconds"] = timeoutAlias
       val cwdAlias = normArgs["cwd"] ?: normArgs["workingDirectory"] ?: normArgs["working_dir"] ?: normArgs["dir"]
@@ -289,16 +288,6 @@ class ToolRegistry {
       if (allowNonzeroAlias != null) normArgs["allow_nonzero"] = allowNonzeroAlias
       val resetCwdAlias = normArgs["reset_cwd"] ?: normArgs["resetWorkingDirectory"] ?: normArgs["reset_working_directory"]
       if (resetCwdAlias != null) normArgs["reset_cwd"] = resetCwdAlias
-    }
-
-    // 2. Code Interpreter
-    if (canonicalName == "code_interpreter") {
-      val codeAlias = normArgs["code"] ?: normArgs["script"] ?: normArgs["source"] ?: normArgs["snippet"]
-      if (codeAlias != null) normArgs["code"] = codeAlias
-      val langAlias = normArgs["language"] ?: normArgs["lang"]
-      if (langAlias != null) normArgs["language"] = langAlias
-      val timeoutAlias = normArgs["timeoutSeconds"] ?: normArgs["timeout"] ?: normArgs["timeout_seconds"]
-      if (timeoutAlias != null) normArgs["timeoutSeconds"] = timeoutAlias
     }
 
     // 3. Web & Research Tools
@@ -413,23 +402,7 @@ class ToolRegistry {
       if (remoteAlias != null) normArgs["remotePath"] = remoteAlias
     }
 
-    // 6. Document Generation & Replication Tools
-    if (canonicalName == "build_pdf_document") {
-      val pathAlias = normArgs["path"] ?: normArgs["file"] ?: normArgs["filePath"] ?: normArgs["file_path"] ?: normArgs["target"]
-      if (pathAlias != null) normArgs["path"] = pathAlias
-      val contentAlias = normArgs["content"] ?: normArgs["text"] ?: normArgs["markdown"] ?: normArgs["body"]
-      if (contentAlias != null) normArgs["content"] = contentAlias
-    }
-    if (canonicalName == "recreate_document") {
-      val srcAlias = normArgs["sourcePath"] ?: normArgs["source_path"] ?: normArgs["source"] ?: normArgs["file"] ?: normArgs["path"]
-      if (srcAlias != null) normArgs["sourcePath"] = srcAlias
-      val fmtAlias = normArgs["targetFormat"] ?: normArgs["target_format"] ?: normArgs["format"] ?: normArgs["output_format"]
-      if (fmtAlias != null) normArgs["targetFormat"] = fmtAlias
-    }
-    if (canonicalName == "document_process") {
-      val pathAlias = normArgs["path"] ?: normArgs["file"] ?: normArgs["filePath"] ?: normArgs["file_path"] ?: normArgs["target"]
-      if (pathAlias != null) normArgs["path"] = pathAlias
-    }
+    // 6. Image Reading / OCR Tool
     if (canonicalName == "read_image") {
       val imgAlias = normArgs["imagePath"] ?: normArgs["image_path"] ?: normArgs["path"] ?: normArgs["file"] ?: normArgs["image"]
       if (imgAlias != null) normArgs["imagePath"] = imgAlias

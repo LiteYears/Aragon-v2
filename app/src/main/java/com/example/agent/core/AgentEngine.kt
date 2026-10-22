@@ -3,7 +3,6 @@ package com.example.agent.core
 import com.alibaba.opensandbox.sandbox.Sandbox
 import com.example.agent.docs.DocumentIntelligenceService
 import com.example.agent.docs.DocumentListTool
-import com.example.agent.docs.DocumentProcessTool
 import com.example.agent.docs.DocumentSearchTool
 import com.example.agent.docs.DocumentDetector
 import com.example.agent.docs.DocumentText
@@ -110,15 +109,7 @@ class AgentEngine(
     registry.register(E2BCloudTool(initialE2BProvider, artifactManager, sessionIdProvider = { _state.value.sessionId }))
     registry.register(CheckToolsTool(workspaceDir, sandboxProvider = sandboxProvider, sessionIdProvider = { _state.value.sessionId }))
 
-    // Code Interpreter & Diagnostics & Capabilities
-    val codeInterpreterTool = CodeInterpreterTool(
-      sandboxProvider = sandboxProvider,
-      artifactManager = artifactManager,
-      sessionIdProvider = { _state.value.sessionId },
-      taskIdProvider = { _state.value.task?.id }
-    )
-    registry.register(codeInterpreterTool)
-
+    // Diagnostics & Capabilities
     val sandboxDiagnosticsTool = SandboxDiagnosticsTool(
       sandboxProvider = sandboxProvider,
       sessionIdProvider = { _state.value.sessionId },
@@ -198,12 +189,11 @@ class AgentEngine(
     registry.register(BrowserAutomationTool(isConfigured = webEnabled))
     registry.register(DeepWebResearchTool(isConfigured = webEnabled))
 
-    // 6. Document Intelligence Tools (imported documents: OCR, RAG search, native generation)
+    // 6. Document Intelligence Tools (imported documents: OCR, RAG search)
     val docs = documentService
     if (docs != null) {
       registry.register(DocumentListTool(docs))
       registry.register(DocumentSearchTool(docs))
-      registry.register(DocumentProcessTool(workspaceDir, docs, artifactManager))
       registry.register(
         com.example.agent.docs.ReadImageTool(
           workspaceDir = workspaceDir,
@@ -215,10 +205,6 @@ class AgentEngine(
       )
     }
 
-    // 7. Native PDF Document Builder & Universal Replicator (Word & Excel are authored exclusively via Python)
-    registry.register(BuildPdfDocumentTool(workspaceDir, artifactManager))
-    registry.register(RecreateDocumentTool(workspaceDir, artifactManager, docs?.ocrRouter, docs))
-
     // Initial filesystem sync
     artifactManager.syncWorkspace()
     val initialHistory = scratchpad.loadTaskHistory()
@@ -229,7 +215,6 @@ class AgentEngine(
     sandboxManager.updateConfig(config)
     val active = sandboxManager.activeProvider
     (registry.getTool("terminal") as? TerminalTool)?.sandboxProvider = active
-    (registry.getTool("code_interpreter") as? CodeInterpreterTool)?.sandboxProvider = active
     (registry.getTool("sandbox_diagnostics") as? SandboxDiagnosticsTool)?.sandboxProvider = active
     (registry.getTool("environment_capability") as? EnvironmentCapabilityTool)?.sandboxProvider = active
     (registry.getTool("check_tools") as? CheckToolsTool)?.sandboxProvider = active
@@ -642,12 +627,12 @@ class AgentEngine(
           appendLine("• /home/user/$filePath (workspace: '$filePath', $sizeBytes bytes, type: $ext)")
         }
         appendLine()
-        appendLine("DIRECTIVE FOR INPUT FILES & DOCUMENT RECREATION:")
+        appendLine("DIRECTIVE FOR INPUT FILES & DOCUMENT CREATION:")
         appendLine("- All input files and uploaded folders are placed live in the E2B Cloud Sandbox at /home/user and /home/user/workspace.")
-        appendLine("- If the task asks to REPLICATE, RECREATE, or CLONE a document, image, or screenshot (e.g. replicating a Word document, spreadsheet, or PDF from a photo or screenshot, or modifying its title, author, and date):")
-        appendLine("  * Call 'recreate_document(source: \"<filename>\", target_format: \"docx\"|\"xlsx\"|\"pdf\", title: \"...\", author: \"...\", date: \"today\")'.")
-        appendLine("  * It automatically executes high-precision OCR on pictures/screenshots, extracts sections/headings/tables, substitutes the title, author name, and date to the current date, and builds a verified deliverable.")
-        appendLine("- To create Word (.docx) or Excel (.xlsx) files: ALWAYS write and execute a Python script in the sandbox using 'python-docx' for Word and 'openpyxl'/'pandas' for Excel. When stuck, ALWAYS turn to Python!")
+        appendLine("- If the task asks to REPLICATE, RECREATE, CLONE, or CREATE a Word (.docx), Excel (.xlsx), or PDF (.pdf) document:")
+        appendLine("  * NEVER rely on specialized document creation tools. Write and execute a Python script in the sandbox via 'terminal'!")
+        appendLine("  * Python scripting is very powerful: use 'python-docx' for Word (.docx), 'openpyxl'/'pandas' for Excel (.xlsx), and 'reportlab'/'fpdf2' for PDF (.pdf).")
+        appendLine("  * To run code, use Python commands directly in the 'terminal' tool (e.g. 'python3 script.py' or 'python3 -c \"...\"'). When stuck, ALWAYS turn to Python!")
       }
     }
 
@@ -1697,7 +1682,7 @@ class AgentEngine(
 
     if (deliverableReport.totalRequired > 0 && deliverableReport.verifiedCount == 0 && consecutiveVerificationFailures < 2) {
       onVerificationFailureIncremented(consecutiveVerificationFailures + 1)
-      val steeringPrompt = "CRITICAL REQUIREMENT NOT MET: You declared task completion, but the required deliverable files (${deliverableReport.pendingOrInvalidDetails}) do NOT exist on disk in the workspace! You MUST write the deliverable files (e.g. using 'write_file', 'build_pdf_document', 'docx_builder', 'xlsx_builder', or 'execute_code') to the workspace before declaring completion."
+      val steeringPrompt = "CRITICAL REQUIREMENT NOT MET: You declared task completion, but the required deliverable files (${deliverableReport.pendingOrInvalidDetails}) do NOT exist on disk in the workspace! You MUST write the deliverable files (e.g. using 'write_file' or writing and executing a Python script via 'terminal') to the workspace before declaring completion."
       val steerStep = ExecutionStep(
         id = "step_steer_t${turnCounter}_${task.id}",
         stepNumber = stepCounterProvider(),
@@ -3061,7 +3046,7 @@ class AgentEngine(
           )
           missing.add("${d.name} (0 bytes)")
         } else {
-          val lastAttempt = state.executionFeed.lastOrNull { it.content.contains(d.name) || (it.toolName in listOf("write_file", "edit_file", "build_pdf_document", "recreate_document")) }
+          val lastAttempt = state.executionFeed.lastOrNull { it.content.contains(d.name) || (it.toolName in listOf("write_file", "edit_file", "terminal")) }
           val isBlocked = lastAttempt?.structuredError?.failureClass in listOf(ToolFailureClass.PERMISSION_POLICY, ToolFailureClass.UNAVAILABLE_TOOL) ||
             lastAttempt?.failureCategory in listOf(ActionFailureCategory.PERMISSION_ERROR.name, ActionFailureCategory.MISSING_DEPENDENCY.name)
           if (isBlocked) {
@@ -3096,7 +3081,7 @@ class AgentEngine(
         val directF = File(workspaceDir, out)
         val f = if (directF.exists()) directF else (deliverableTracker.findMatchingFile(File(out).name) ?: directF)
         if (!f.exists() || !f.isFile || !f.canRead() || f.length() == 0L) {
-          val lastAttempt = state.executionFeed.lastOrNull { it.content.contains(out) || (it.toolName in listOf("write_file", "edit_file", "build_pdf_document", "recreate_document")) }
+          val lastAttempt = state.executionFeed.lastOrNull { it.content.contains(out) || (it.toolName in listOf("write_file", "edit_file", "terminal")) }
           val isBlocked = lastAttempt?.structuredError?.failureClass in listOf(ToolFailureClass.PERMISSION_POLICY, ToolFailureClass.UNAVAILABLE_TOOL) ||
             lastAttempt?.failureCategory in listOf(ActionFailureCategory.PERMISSION_ERROR.name, ActionFailureCategory.MISSING_DEPENDENCY.name) ||
             state.toolExecutions.any { it.arguments["path"]?.toString()?.contains(out) == true && it.status == ToolStatus.FAILED }
@@ -3393,7 +3378,7 @@ class AgentEngine(
     sb.appendLine("- FRONTIER SWE EXECUTION DISCIPLINE:")
     sb.appendLine("  1. PARALLEL DISCOVERY: Batch independent read-only inspections (read_file, list_directory, web_search, wikipedia__*, fetch__*) in a single turn to execute concurrently.")
     sb.appendLine("  2. READ-BEFORE-EDIT: Always inspect target file contents before invoking edit_file or apply_patch to ensure exact context matching.")
-    sb.appendLine("  3. DETERMINISTIC VERIFICATION: After writing code or generating artifacts, verify correctness via code_interpreter, terminal test execution, or file inspection before concluding.")
+    sb.appendLine("  3. DETERMINISTIC VERIFICATION: After writing code or generating artifacts, verify correctness via terminal test execution, Python script execution, or file inspection before concluding.")
     sb.appendLine()
     sb.appendLine(deliverableTracker.generatePromptSummary(deliverableReport))
 
@@ -3436,11 +3421,12 @@ class AgentEngine(
     sb.appendLine("SYSTEM CALENDAR & TEMPORAL CONTEXT:")
     sb.appendLine("- CURRENT LOCAL DATE: $todayDate ($formattedDate)")
     sb.appendLine()
-    sb.appendLine("DOCUMENT REPLICATION, CREATION & TRANSFORMATION DIRECTIVES:")
-    sb.appendLine("- When the user asks to replicate, recreate, or modify a document or screenshot (e.g., 'see this picture of a word file, replicate it and change title, author, and date to current date'):")
-    sb.appendLine("  * Call 'recreate_document(source: \"<filename>\", target_format: \"docx|xlsx|pdf\", output_path: \"...\", title: \"...\", author: \"...\", date: \"$formattedDate\", replacements: {...})'.")
-    sb.appendLine("  * It automatically analyzes the image/screenshot via OCR, transcribes structure, replaces title/author/date, and builds the target file!")
-    sb.appendLine("  * For authoring from scratch: ALWAYS use Python scripts (python-docx for .docx, openpyxl/pandas for .xlsx) or 'build_pdf_document' for PDF. WHEN STUCK: ALWAYS USE PYTHON!")
+    sb.appendLine("DOCUMENT CREATION, REPLICATION & SCRIPTING DIRECTIVES:")
+    sb.appendLine("- For creating, replicating, or modifying Word (.docx), Excel (.xlsx), and PDF (.pdf) documents:")
+    sb.appendLine("  * NEVER call specialized document creation tools. ALL document creation must be done exclusively using Python scripts executed via 'terminal'!")
+    sb.appendLine("  * Python scripting is very powerful: use 'python-docx' for Word (.docx), 'openpyxl' or 'pandas' for Excel (.xlsx), and 'reportlab' or 'fpdf2' for PDF (.pdf).")
+    sb.appendLine("  * To run code, use Python commands directly in the 'terminal' tool (e.g. 'python3 script.py' or 'python3 -c \"...\"').")
+    sb.appendLine("  * WHEN STUCK: ALWAYS USE PYTHON!")
 
     // Model Context Protocol (MCP) Subsystem Status & Guidance
     val mcp = mcpManager
@@ -3497,8 +3483,7 @@ class AgentEngine(
       "write_file", "edit_file", "apply_patch", "delete_file", "move_file", "copy_file",
       "create_directory", "delete_directory", "install_package", "e2b_write_file",
       "transfer_artifact_to_sandbox", "download_artifact_from_sandbox",
-      "document_process", "mcp_manage_server", "build_pdf_document", "recreate_document",
-      "terminal", "code_interpreter", "e2b_sandbox"
+      "mcp_manage_server", "terminal", "e2b_sandbox"
     )
 
     /** Tools whose successful execution produces genuinely new information. */
@@ -3509,7 +3494,7 @@ class AgentEngine(
       "e2b_read_file", "e2b_list_directory", "diff_files",
       "document_search", "document_list",
       "mcp_list_servers", "mcp_list_resources", "mcp_read_resource", "mcp_list_prompts", "mcp_refresh", "mcp_call_tool",
-      "terminal", "code_interpreter", "e2b_sandbox"
+      "terminal", "e2b_sandbox"
     )
   }
 

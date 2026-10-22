@@ -635,7 +635,7 @@ class ActionEvaluator {
           if (cmd.startsWith("cat ") || cmd.startsWith("head ") || cmd.startsWith("tail ")) "read_file"
           else if (cmd.startsWith("echo ") || cmd.startsWith("tee ")) "write_file"
           else if (cmd.startsWith("ls ")) "list_directory"
-          else "code_interpreter"
+          else "terminal"
         }
         else -> "terminal"
       }
@@ -906,9 +906,7 @@ class UnifiedRecoveryManager(
     val toolNameLower = toolCall.toolName.lowercase(Locale.US)
     val mutatesEnv = toolNameLower in listOf(
       "terminal", "install_package", "write_file", "edit_file", "apply_patch", "move_file", "delete_file",
-      "copy_file", "create_directory", "code_interpreter", "execute_code", "run_code", "python",
-      "recreate_document", "document_process", "build_pdf_document", "docx_builder", "xlsx_builder",
-      "environment_capability"
+      "copy_file", "create_directory", "environment_capability"
     ) || toolNameLower.contains("__")
 
     if (conclusion.madeProgress && conclusion.isSatisfied) {
@@ -929,18 +927,18 @@ class UnifiedRecoveryManager(
       retryCountsBySignature[sig.callHash] = priorAttempts + 1
 
       // Block repeat of blocked operations unchanged, preserving exact error
-      // Note: code_interpreter runs arbitrary dynamic scripts and should not be permanently locked out if dependencies change
+      // Note: terminal runs arbitrary dynamic commands/scripts and should not be permanently locked out if dependencies change
       val isBlockedOperation = (conclusion.toolFailureClass in listOf(
         ToolFailureClass.PERMISSION_POLICY,
         ToolFailureClass.INVALID_INPUT,
         ToolFailureClass.UNAVAILABLE_TOOL
       ) || (conclusion.toolFailureClass == ToolFailureClass.TRANSIENT && priorAttempts >= 1)) &&
-        toolNameLower != "code_interpreter"
+        toolNameLower != "terminal"
 
       if (isBlockedOperation && conclusion.structuredError != null) {
         blockedOperations[sig.callHash] = conclusion.structuredError
         deterministicFailures[sig.callHash] = conclusion.structuredError.exactToolError
-      } else if (conclusion.isDeterministic && toolNameLower != "code_interpreter" && conclusion.failureCategory in listOf(
+      } else if (conclusion.isDeterministic && toolNameLower != "terminal" && conclusion.failureCategory in listOf(
           ActionFailureCategory.MISSING_DEPENDENCY,
           ActionFailureCategory.PERMISSION_ERROR,
           ActionFailureCategory.INVALID_ARGUMENTS

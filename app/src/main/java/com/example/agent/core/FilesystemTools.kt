@@ -702,14 +702,14 @@ class WriteFileTool(
 ) : Tool {
   override val name: String = "write_file"
   override val description: String =
-    "Create, overwrite, or append text content to a file inside the E2B Cloud MicroVM workspace (/home/user). For Microsoft Word (.docx) or Excel (.xlsx) documents, author them via Python scripts in the sandbox using 'python-docx' or 'openpyxl'. For verified PDF documents, use 'build_pdf_document'."
+    "Create, overwrite, or append text content to a file inside the E2B Cloud MicroVM workspace (/home/user). For Word (.docx), Excel (.xlsx), and PDF (.pdf) documents, author them via Python scripts executed in the terminal using 'python-docx', 'openpyxl', or 'reportlab'/'fpdf2'."
 
   override val schema: ToolSchema = ToolSchema(
     listOf(
       ToolParameter(
         name = "path",
         type = "string",
-        description = "Path where the file should be saved relative to workspace (e.g. 'report.md', 'output.json', 'script.py', 'data.csv'). Note: Word (.docx) and Excel (.xlsx) files must be authored via Python script in the microVM.",
+        description = "Path where the file should be saved relative to workspace (e.g. 'report.md', 'output.json', 'script.py', 'data.csv'). Note: Word (.docx), Excel (.xlsx), and PDF (.pdf) files must be authored via Python script in the terminal.",
         required = true,
         aliases = listOf("file", "filename", "file_path", "filePath", "target")
       ),
@@ -808,7 +808,7 @@ class WriteFileTool(
             status = ToolStatus.FAILED,
             arguments = arguments,
             output = null,
-            error = "Direct text writing to Word (.docx) files via write_file is not supported. Generate Word files using Python executed in the E2B Cloud Sandbox with 'python-docx' via code_interpreter or terminal.",
+            error = "Direct text writing to Word (.docx) files via write_file is not supported. Generate Word files using Python executed in the terminal using 'python-docx'.",
             errorType = ToolErrorCode.UNSUPPORTED_OPERATION,
             duration = System.currentTimeMillis() - startTime,
             exitCode = 1
@@ -820,7 +820,19 @@ class WriteFileTool(
             status = ToolStatus.FAILED,
             arguments = arguments,
             output = null,
-            error = "Direct text writing to Excel (.xlsx) files via write_file is not supported. Generate Excel files using Python executed in the E2B Cloud Sandbox with 'openpyxl' via code_interpreter or terminal.",
+            error = "Direct text writing to Excel (.xlsx) files via write_file is not supported. Generate Excel files using Python executed in the terminal using 'openpyxl' or 'pandas'.",
+            errorType = ToolErrorCode.UNSUPPORTED_OPERATION,
+            duration = System.currentTimeMillis() - startTime,
+            exitCode = 1
+          )
+        } else if (pathStr.endsWith(".pdf", ignoreCase = true)) {
+          return@withContext ToolResult(
+            callId = callId,
+            toolName = name,
+            status = ToolStatus.FAILED,
+            arguments = arguments,
+            output = null,
+            error = "Direct text writing to PDF (.pdf) files via write_file is not supported. Generate PDF files using Python executed in the terminal using 'reportlab' or 'fpdf2'.",
             errorType = ToolErrorCode.UNSUPPORTED_OPERATION,
             duration = System.currentTimeMillis() - startTime,
             exitCode = 1

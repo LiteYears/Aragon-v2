@@ -62,7 +62,7 @@ data class EnvironmentTopology(
   companion object {
     fun createDefault(): EnvironmentTopology {
       val cloudTools = listOf(
-        "terminal", "code_interpreter", "write_file", "read_file", "list_files", "list_directory",
+        "terminal", "write_file", "read_file", "list_files", "list_directory",
         "edit_file", "apply_patch", "diff_files", "delete_file", "move_file", "copy_file",
         "create_directory", "delete_directory", "file_exists", "file_metadata",
         "install_package", "web_search", "web_open", "web_fetch",

@@ -88,12 +88,12 @@ fun AmoledWorkflowSuggestions(
         expectedArtifact = "agent_architecture_brief.md"
       ),
       WorkflowSuggestion(
-        id = "code_interpreter",
+        id = "python_analytics",
         category = "CODE",
         categoryTag = "DATA & PYTHON",
         title = "Statistical Data Analysis & Metrics",
-        description = "Executes Python in sandbox to compute distribution statistics, calculate percentiles, and output clean markdown.",
-        prompt = "Write and execute a Python script using code_interpreter to generate statistical metrics (mean, standard deviation, percentiles) for a simulated benchmark dataset and produce a formatted markdown report.",
+        description = "Executes Python in terminal shell to compute distribution statistics, calculate percentiles, and output clean markdown.",
+        prompt = "Write and execute a Python script in the terminal to generate statistical metrics (mean, standard deviation, percentiles) for a simulated benchmark dataset and produce a formatted markdown report.",
         expectedArtifact = "benchmark_metrics.md"
       ),
       WorkflowSuggestion(
@@ -108,10 +108,10 @@ fun AmoledWorkflowSuggestions(
       WorkflowSuggestion(
         id = "doc_synthesis",
         category = "DOCS",
-        categoryTag = "PDF COMPILER",
-        title = "Compile Executive PDF Specification",
-        description = "Gathers requirements, designs clean structured tables, and compiles an executive deliverable PDF document.",
-        prompt = "Compile a comprehensive technical specification for an autonomous agent engine with deterministic tool orchestration, state recovery, and error taxonomy. Export as an executive document.",
+        categoryTag = "PYTHON PDF",
+        title = "Compile Executive PDF via Python",
+        description = "Writes and runs a Python reportlab script in the terminal to compile a styled executive deliverable PDF document.",
+        prompt = "Write and execute a Python script in terminal to author a comprehensive technical specification for an autonomous agent engine with deterministic tool orchestration, state recovery, and error taxonomy. Export as an executive PDF document.",
         expectedArtifact = "executive_spec.pdf"
       ),
       WorkflowSuggestion(

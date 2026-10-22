@@ -6,10 +6,13 @@ import com.example.agent.core.ActionFailureCategory
 import com.example.agent.core.ActionSignature
 import com.example.agent.core.AgentEngine
 import com.example.agent.core.AgentState
+import com.example.agent.core.AgentStatus
 import com.example.agent.core.ErrorTaxonomyClassifier
+import com.example.agent.core.ExecutionStep
 import com.example.agent.core.PreFlightDecision
 import com.example.agent.core.RecoveryStrategy
 import com.example.agent.core.RequirementCheckStatus
+import com.example.agent.core.StepType
 import com.example.agent.core.Task
 import com.example.agent.core.ToolCall
 import com.example.agent.core.ToolErrorCode
@@ -19,6 +22,9 @@ import com.example.agent.core.ToolResult
 import com.example.agent.core.ToolStatus
 import com.example.agent.core.UnifiedLoopDetector
 import com.example.agent.core.UnifiedRecoveryManager
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -354,13 +360,13 @@ class WorkflowReliabilityAndRecoveryTest {
   }
 
   @Test
-  fun testCodeInterpreterRecovery_DoesNotBlockAfterPipInstall() {
-    val codeCall = ToolCall("call_code", "code_interpreter", mapOf("code" to "from docx import Document\ndoc = Document()"))
-    val codeResultFail = ToolResult(
+  fun testTerminalPythonRecovery_DoesNotBlockAfterPipInstall() {
+    val termCall = ToolCall("call_code", "terminal", mapOf("command" to "python3 -c \"from docx import Document\ndoc = Document()\""))
+    val termResultFail = ToolResult(
       callId = "call_code",
-      toolName = "code_interpreter",
+      toolName = "terminal",
       status = ToolStatus.FAILED,
-      arguments = codeCall.arguments,
+      arguments = termCall.arguments,
       output = null,
       error = "ModuleNotFoundError: No module named 'docx'",
       errorType = ToolErrorCode.PROCESS_FAILED,
@@ -368,12 +374,12 @@ class WorkflowReliabilityAndRecoveryTest {
       exitCode = 1,
       stderr = "Traceback (most recent call last):\nModuleNotFoundError: No module named 'docx'"
     )
-    val codeObs = com.example.agent.core.Observation(
+    val termObs = com.example.agent.core.Observation(
       callId = "call_code",
-      toolName = "code_interpreter",
+      toolName = "terminal",
       status = ToolStatus.FAILED,
       isSuccess = false,
-      inputsSummary = "code=from docx import Document...",
+      inputsSummary = "python3 -c from docx import Document...",
       result = null,
       error = "ModuleNotFoundError: No module named 'docx'",
       summary = "ModuleNotFoundError",
@@ -381,12 +387,12 @@ class WorkflowReliabilityAndRecoveryTest {
     )
 
     // Evaluate failure
-    val conclusion = recoveryManager.evaluateExecution(codeCall, codeResultFail, codeObs, null)
+    val conclusion = recoveryManager.evaluateExecution(termCall, termResultFail, termObs, null)
     assertNotNull(conclusion)
 
-    // Code interpreter should NOT be permanently placed into blockedOperations
-    val preFlightBefore = recoveryManager.checkPreFlight(codeCall)
-    assertFalse("Code interpreter should not be permanently locked out", preFlightBefore is PreFlightDecision.BlockDeterministicFailure)
+    // Terminal dynamic execution should NOT be permanently placed into blockedOperations
+    val preFlightBefore = recoveryManager.checkPreFlight(termCall)
+    assertFalse("Terminal python runs should not be permanently locked out", preFlightBefore is PreFlightDecision.BlockDeterministicFailure)
 
     // Now simulate terminal installing the package
     val terminalCall = ToolCall("call_pip", "terminal", mapOf("command" to "pip install python-docx --no-cache-dir"))
@@ -415,13 +421,13 @@ class WorkflowReliabilityAndRecoveryTest {
 
     recoveryManager.evaluateExecution(terminalCall, terminalResultSuccess, terminalObs, null)
 
-    // Verify code_interpreter can proceed cleanly
-    val preFlightAfter = recoveryManager.checkPreFlight(codeCall)
+    // Verify terminal can proceed cleanly
+    val preFlightAfter = recoveryManager.checkPreFlight(termCall)
     assertTrue("Preflight decision should be Proceed after package install", preFlightAfter is PreFlightDecision.Proceed)
   }
 
   @Test
-  fun testCodeInterpreterClearsDeterministicFailuresForCreatedFiles() {
+  fun testTerminalScriptExecutionClearsDeterministicFailuresForCreatedFiles() {
     val readCall = ToolCall("call_read_1", "read_file", mapOf("path" to "output.docx"))
     val readFailResult = ToolResult(
       callId = "call_read_1",
@@ -452,22 +458,22 @@ class WorkflowReliabilityAndRecoveryTest {
       recoveryManager.checkPreFlight(readCall) is PreFlightDecision.BlockDeterministicFailure
     )
 
-    // Now code_interpreter creates output.docx
-    val codeCall = ToolCall("call_py_create", "code_interpreter", mapOf("code" to "open('output.docx','w').write('ok')"))
-    val codeSuccessResult = ToolResult(
+    // Now terminal creates output.docx
+    val pyCall = ToolCall("call_py_create", "terminal", mapOf("command" to "python3 -c \"open('output.docx','w').write('ok')\""))
+    val pySuccessResult = ToolResult(
       callId = "call_py_create",
-      toolName = "code_interpreter",
+      toolName = "terminal",
       status = ToolStatus.SUCCEEDED,
-      arguments = codeCall.arguments,
+      arguments = pyCall.arguments,
       output = "Created output.docx",
       error = null,
       duration = 500L,
       exitCode = 0,
       stdout = "Created output.docx"
     )
-    val codeSuccessObs = com.example.agent.core.Observation(
+    val pySuccessObs = com.example.agent.core.Observation(
       callId = "call_py_create",
-      toolName = "code_interpreter",
+      toolName = "terminal",
       status = ToolStatus.SUCCEEDED,
       isSuccess = true,
       inputsSummary = "python script",
@@ -476,10 +482,10 @@ class WorkflowReliabilityAndRecoveryTest {
       summary = "Created output.docx",
       outcome = ToolExecutionOutcome.SUCCESS_WITH_RESULTS
     )
-    recoveryManager.evaluateExecution(codeCall, codeSuccessResult, codeSuccessObs, null)
+    recoveryManager.evaluateExecution(pyCall, pySuccessResult, pySuccessObs, null)
 
     assertTrue(
-      "After code_interpreter succeeds, prior deterministic failure on output.docx must be cleared",
+      "After terminal script succeeds, prior deterministic failure on output.docx must be cleared",
       recoveryManager.checkPreFlight(readCall) is PreFlightDecision.Proceed
     )
   }
@@ -511,8 +517,8 @@ class WorkflowReliabilityAndRecoveryTest {
       override val name: String = "flaky_net"
       override val description: String = "Flaky network tool"
       override val schema = com.example.agent.core.ToolSchema(emptyList())
-      override val category = com.example.agent.core.ToolCategory.WEB_RESEARCH
-      override val target = com.example.agent.core.ToolTarget.LOCAL_NETWORK
+      override val category = com.example.agent.core.ToolCategory.WEB
+      override val target = com.example.agent.core.ToolTarget.HOST_NETWORK
       override val permissions = setOf(com.example.agent.core.ToolPermission.NETWORK_ACCESS)
       override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult {
         transientFailCount++
@@ -523,7 +529,7 @@ class WorkflowReliabilityAndRecoveryTest {
           arguments = arguments,
           output = null,
           error = "Connection timed out",
-          errorType = ToolErrorCode.TIMEOUT_EXCEEDED,
+          errorType = ToolErrorCode.TIMEOUT,
           duration = 50L,
           exitCode = 1
         )
@@ -534,7 +540,7 @@ class WorkflowReliabilityAndRecoveryTest {
     val executor = com.example.agent.core.ToolExecutor(registry, artifactManager)
     val recoveryManager = UnifiedRecoveryManager()
     val approvalManager = com.example.agent.core.ApprovalManager()
-    val dispatcher = com.example.agent.core.ToolDispatcher(registry, executor, recoveryManager, approvalManager)
+    val dispatcher = com.example.agent.core.ToolDispatcher(registry, executor, approvalManager, recoveryManager)
 
     // 1. Simulate AgentEngine flow: dispatch with evaluateRecovery = false, then evaluate once in engine
     val lsCall1 = ToolCall("call_ls_1", "list_directory", mapOf("path" to "."))
@@ -605,16 +611,16 @@ class WorkflowReliabilityAndRecoveryTest {
       exitCode = 1,
       observedFact = "File not found",
       inferredCause = "Wrong path",
-      recoveryResult = "SWITCH_TOOL"
+      recoveryResult = "SWITCH_EQUIVALENT_TOOL"
     )
     val step = ExecutionStep(
       id = "step_rec_1",
       stepNumber = 3,
       type = StepType.RECOVERY,
-      title = "Recovery: SWITCH_TOOL",
+      title = "Recovery: SWITCH_EQUIVALENT_TOOL",
       content = structuredErr.format(),
       outcome = ToolExecutionOutcome.EXECUTION_FAILED.name,
-      recoveryStrategy = RecoveryStrategy.SWITCH_TOOL.name,
+      recoveryStrategy = RecoveryStrategy.SWITCH_EQUIVALENT_TOOL.name,
       failureCategory = ToolFailureClass.INVALID_INPUT.name,
       actionStatus = com.example.agent.core.ActionExecutionStatus.FAILED,
       actionableStepId = "act_1",
@@ -633,7 +639,7 @@ class WorkflowReliabilityAndRecoveryTest {
     assertNotNull(restored)
     val restoredStep = restored!!.executionFeed.single()
     assertEquals(ToolExecutionOutcome.EXECUTION_FAILED.name, restoredStep.outcome)
-    assertEquals(RecoveryStrategy.SWITCH_TOOL.name, restoredStep.recoveryStrategy)
+    assertEquals(RecoveryStrategy.SWITCH_EQUIVALENT_TOOL.name, restoredStep.recoveryStrategy)
     assertEquals(ToolFailureClass.INVALID_INPUT.name, restoredStep.failureCategory)
     assertEquals(com.example.agent.core.ActionExecutionStatus.FAILED, restoredStep.actionStatus)
     assertEquals("act_1", restoredStep.actionableStepId)
@@ -646,7 +652,7 @@ class WorkflowReliabilityAndRecoveryTest {
   fun testToolRegistryConcurrentAccess_ThreadSafeWithoutNullOrCorruption() = runBlocking {
     val registry = com.example.agent.core.ToolRegistry()
     val artifactManager = com.example.agent.core.ArtifactManager(workspaceDir)
-    val jobs = (1..16).map { workerIdx ->
+    val jobs: List<Job> = (1..16).map { workerIdx ->
       kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Default) {
         for (i in 1..40) {
           val dummyTool = com.example.agent.core.CreateDirectoryTool(workspaceDir, artifactManager)

@@ -57,35 +57,39 @@ class CommandLinter {
     // 2. Track stderr suppression (2>/dev/null) without blocking standard shell discovery idioms (find, which, netstat || ss)
     val isSuppressed = errRedirectRegex.containsMatchIn(trimmed) || pipeTrueRegex.containsMatchIn(trimmed)
 
-    // 4. Writing outside the E2B workspace (/home/user) and /tmp scratch
-    val writeMatch = externalWriteRegex.find(trimmed)
-    if (writeMatch != null) {
-      val targetPath = writeMatch.groupValues[1]
-      val isE2bHome = targetPath.startsWith("/home/user")
-      val isTmp = targetPath.startsWith("/tmp")
+    val isHeredocPython = trimmed.startsWith("python3 - <<") || trimmed.startsWith("python - <<")
 
-      if (!isE2bHome && !isTmp) {
-        return CommandLintResult(
-          isAllowed = false,
-          ruleId = "LINT_004",
-          message = "Disallowed write to '$targetPath' outside the workspace. All intermediate and deliverable files must be written inside /home/user (or /tmp for scratch)."
-        )
+    // 4. Writing outside the E2B workspace (/home/user) and /tmp scratch (applied to shell commands)
+    if (!isHeredocPython) {
+      val writeMatch = externalWriteRegex.find(trimmed)
+      if (writeMatch != null) {
+        val targetPath = writeMatch.groupValues[1]
+        val isE2bHome = targetPath.startsWith("/home/user")
+        val isTmp = targetPath.startsWith("/tmp")
+
+        if (!isE2bHome && !isTmp) {
+          return CommandLintResult(
+            isAllowed = false,
+            ruleId = "LINT_004",
+            message = "Disallowed write to '$targetPath' outside the workspace. All intermediate and deliverable files must be written inside /home/user (or /tmp for scratch)."
+          )
+        }
       }
-    }
 
-    // 5. Changing directory outside the E2B workspace
-    val cdMatch = foreignCdRegex.find(trimmed)
-    if (cdMatch != null) {
-      val targetDir = cdMatch.groupValues[1]
-      val isE2bHome = targetDir.startsWith("/home/user")
-      val isTmp = targetDir.startsWith("/tmp")
+      // 5. Changing directory outside the E2B workspace
+      val cdMatch = foreignCdRegex.find(trimmed)
+      if (cdMatch != null) {
+        val targetDir = cdMatch.groupValues[1]
+        val isE2bHome = targetDir.startsWith("/home/user")
+        val isTmp = targetDir.startsWith("/tmp")
 
-      if (!isE2bHome && !isTmp) {
-        return CommandLintResult(
-          isAllowed = false,
-          ruleId = "LINT_005",
-          message = "Disallowed directory navigation to '$targetDir'. Working directory is confined to the workspace (/home/user) or /tmp. Store and access files within /home/user."
-        )
+        if (!isE2bHome && !isTmp) {
+          return CommandLintResult(
+            isAllowed = false,
+            ruleId = "LINT_005",
+            message = "Disallowed directory navigation to '$targetDir'. Working directory is confined to the workspace (/home/user) or /tmp. Store and access files within /home/user."
+          )
+        }
       }
     }
 
