@@ -1401,10 +1401,15 @@ class AgentEngine(
       val normalizedCall = registry.normalizeToolCall(call)
       val evalConclusion = if (item.isSkippedLoop) {
         EvaluationConclusion(
+          callId = call.callId,
+          toolName = call.toolName,
           isSatisfied = false,
-          failureCategory = ToolFailureClass.DETERMINISTIC,
-          recoveryStrategy = RecoveryStrategy.SWITCH_TOOL,
-          explanation = observation.error ?: observation.summary
+          madeProgress = false,
+          failureCategory = ActionFailureCategory.REPEATED_ACTION,
+          recoveryStrategy = RecoveryStrategy.SWITCH_EQUIVALENT_TOOL,
+          explanation = observation.error ?: observation.summary,
+          isDeterministic = true,
+          toolFailureClass = ToolFailureClass.INVALID_INPUT
         )
       } else {
         recoveryManager.evaluateExecution(normalizedCall, toolResult, observation, evalContext)
