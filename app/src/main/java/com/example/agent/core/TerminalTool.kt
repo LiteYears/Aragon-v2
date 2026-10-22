@@ -140,21 +140,31 @@ class TerminalTool(
     val lines = trimmed.lines().map { it.trim() }.filter { it.isNotEmpty() }
     if (lines.isEmpty()) return false
     val firstLine = lines.first()
+    val shellCommandPrefixes = listOf(
+      "python ", "python3 ", "python\t", "python3\t",
+      "bash ", "sh ", "zsh ", "pip ", "pip3 ", "sudo ", "apt ", "apt-get ",
+      "cd ", "export ", "echo ", "git ", "cat ", "ls ", "mkdir ", "rm ",
+      "cp ", "mv ", "curl ", "wget ", "chmod ", "chown ", "find ", "grep ",
+      "sed ", "awk ", "tar ", "unzip ", "zip ", "env ", "which ", "touch ",
+      "head ", "tail ", "wc ", "sort ", "uniq ", "./", "/", "#!/bin/bash", "#!/bin/sh", "#!/usr/bin/env bash"
+    )
+    if (shellCommandPrefixes.any { firstLine.startsWith(it) } || firstLine.contains("<<")) {
+      return false
+    }
     if (firstLine.startsWith("import ") ||
       firstLine.startsWith("from ") ||
       firstLine.startsWith("def ") ||
       firstLine.startsWith("class ") ||
       firstLine.startsWith("async def ") ||
       firstLine.startsWith("with open(") ||
-      firstLine.startsWith("if __name__ == '__main__':")
+      firstLine.startsWith("if __name__ == '__main__':") ||
+      firstLine.startsWith("if __name__ == \"__main__\":")
     ) {
       return true
     }
     if (lines.size >= 2) {
       val pyKeywords = listOf("import ", "from ", "def ", "class ", "elif ", "except:", "except ", "finally:", "try:", "with open(")
-      if (lines.count { l -> pyKeywords.any { kw -> l.startsWith(kw) } } >= 1 &&
-        !firstLine.startsWith("echo ") && !firstLine.startsWith("git ") && !firstLine.startsWith("cat ")
-      ) {
+      if (lines.count { l -> pyKeywords.any { kw -> l.startsWith(kw) } } >= 1) {
         return true
       }
     }

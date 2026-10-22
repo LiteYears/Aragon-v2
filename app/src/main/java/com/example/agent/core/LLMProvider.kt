@@ -235,17 +235,30 @@ sealed class LLMDecision {
  *    responses to be preceded by their originating assistant tool call).
  */
 object MessageHistoryBounder {
-  /** Messages are windowed or compacted beyond this total size. */
-  const val TRIGGER_SIZE = 28
+  /** Messages are windowed beyond this total size. */
+  const val TRIGGER_SIZE = 24
 
   /** Number of trailing messages kept verbatim once windowing engages. */
-  const val TAIL_SIZE = 20
+  const val TAIL_SIZE = 18
 
   /** Length ceiling above which older tool observation responses are safely compacted. */
-  const val MAX_COMPACTED_OBSERVATION_CHARS = 400
+  const val MAX_COMPACTED_OBSERVATION_CHARS = 600
 
   fun bound(messages: List<AgentMessage>): List<AgentMessage> {
-    if (messages.size <= TRIGGER_SIZE) return messages
+    if (messages.size <= TRIGGER_SIZE) {
+      // Even before windowing engages, compact older tool observations (>6 messages back)
+      // so the prompt token count does not balloon and slow down TTFT / token streaming.
+      return messages.mapIndexed { idx, msg ->
+        val isRecent = idx >= (messages.size - 6)
+        if (!isRecent && msg.role == MessageRole.TOOL && msg.content.length > MAX_COMPACTED_OBSERVATION_CHARS) {
+          val excerpt = msg.content.take(MAX_COMPACTED_OBSERVATION_CHARS)
+          val omitted = msg.content.length - MAX_COMPACTED_OBSERVATION_CHARS
+          msg.copy(content = "$excerpt\n[... $omitted characters omitted for context efficiency; consult disk deliverables for state ...]")
+        } else {
+          msg
+        }
+      }
+    }
 
     val initialUserMsg = messages.firstOrNull { it.role == MessageRole.USER }
     var tailStartIndex = messages.size - TAIL_SIZE

@@ -378,7 +378,7 @@ class DeliverableTracker(
       }
     }
 
-    // 3. Extension-based fuzzy match for docx/xlsx if user asked for a generic document
+    // 3. Extension-based match if user asked for a generic document or single deliverable of that format
     if (ext in listOf("docx", "doc")) {
       return candidateFiles.firstOrNull {
         it.extension.lowercase(Locale.ROOT) in listOf("docx", "doc") && it.length() > 500
@@ -386,6 +386,14 @@ class DeliverableTracker(
     } else if (ext in listOf("xlsx", "xls")) {
       return candidateFiles.firstOrNull {
         it.extension.lowercase(Locale.ROOT) in listOf("xlsx", "xls") && it.length() > 300
+      }
+    } else if (ext == "pdf") {
+      return candidateFiles.firstOrNull {
+        it.extension.lowercase(Locale.ROOT) == "pdf" && it.length() > 100
+      }
+    } else if (reqBase in setOf("report", "document", "summary", "brief", "briefing", "output", "result", "results", "data", "script")) {
+      return candidateFiles.firstOrNull {
+        it.extension.lowercase(Locale.ROOT) == ext && ArtifactValidatorRegistry.validateExistingFile(it).isValid
       }
     }
     return null

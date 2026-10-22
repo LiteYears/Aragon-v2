@@ -1655,34 +1655,20 @@ class AgentEngine(
     val freshArtifacts = artifactManager.syncWorkspace(task.id)
 
     // Check tangible deliverables from deliverableTracker
-    val deliverableReport = deliverableTracker.scanAndVerify(artifactManager)
+    var deliverableReport = deliverableTracker.scanAndVerify(artifactManager)
     val hasExplicitArtifact = !task.expectedArtifact.isNullOrBlank()
-    val explicitArtifactSatisfied = !hasExplicitArtifact || freshArtifacts.any { it.name.contains(task.expectedArtifact, ignoreCase = true) }
+    var explicitArtifactSatisfied = !hasExplicitArtifact || freshArtifacts.any { it.name.contains(task.expectedArtifact, ignoreCase = true) }
 
-    planner.forceCompleteAllRemainingSteps(conclusionText)
-
-    val verificationResult = verifyObjective(task, state.copy(artifacts = freshArtifacts), planner)
-
-    // Prevent premature completion only if actionable tool steps remain truly uncompleted
+    // Prevent premature completion if actionable tool steps remain truly uncompleted
     val uncompletedRequiredSteps = planner.getActionableSteps().filter {
       (it.status == ActionExecutionStatus.PLANNED || it.status == ActionExecutionStatus.EXECUTING) &&
         it.assignedTool != null
     }
-    val hasPendingActionableSteps = uncompletedRequiredSteps.isNotEmpty()
-
-    val deliverablesMet = if (hasExplicitArtifact) {
-      explicitArtifactSatisfied
-    } else {
-      if (deliverableReport.totalRequired > 0) {
-        deliverableReport.allSatisfied || (deliverableReport.verifiedCount > 0 && freshArtifacts.isNotEmpty())
-      } else {
-        deliverableReport.allSatisfied || freshArtifacts.isNotEmpty() || (state.toolExecutions.isNotEmpty() && conclusionText.length > 25)
-      }
-    }
+    val hasPendingActionableSteps = uncompletedRequiredSteps.isNotEmpty() && !deliverableReport.allSatisfied
 
     if (deliverableReport.totalRequired > 0 && deliverableReport.verifiedCount == 0 && consecutiveVerificationFailures < 2) {
       onVerificationFailureIncremented(consecutiveVerificationFailures + 1)
-      val steeringPrompt = "CRITICAL REQUIREMENT NOT MET: You declared task completion, but the required deliverable files (${deliverableReport.pendingOrInvalidDetails}) do NOT exist on disk in the workspace! You MUST write the deliverable files (e.g. using 'write_file' or writing and executing a Python script via 'terminal') to the workspace before declaring completion."
+      val steeringPrompt = "CRITICAL REQUIREMENT NOT MET: You did not invoke a tool to create the required deliverable files (${deliverableReport.pendingOrInvalidDetails}), and they do NOT exist on disk in the workspace yet! Do NOT just describe what you are going to create—invoke 'write_file' or 'terminal' (Python script) RIGHT NOW to write the deliverable file(s) to disk."
       val steerStep = ExecutionStep(
         id = "step_steer_t${turnCounter}_${task.id}",
         stepNumber = stepCounterProvider(),
@@ -1691,18 +1677,45 @@ class AgentEngine(
         content = steeringPrompt,
         actionStatus = ActionExecutionStatus.FAILED
       )
+      val updatedMsgs = state.messages + listOfNotNull(
+        if (conclusionText.isNotBlank() && state.messages.lastOrNull()?.content != conclusionText)
+          AgentMessage(role = MessageRole.ASSISTANT, content = conclusionText)
+        else null,
+        AgentMessage(role = MessageRole.USER, content = steeringPrompt)
+      )
       state = state.copy(
         status = AgentStatus.RUNNING,
         currentAction = "Writing required deliverable files to workspace...",
         executionFeed = addOrUpdateStep(state.executionFeed, steerStep),
-        messages = state.messages + AgentMessage(role = MessageRole.SYSTEM, content = steeringPrompt)
+        messages = updatedMsgs
       )
       updateStateIfActive(task, state)
       return TurnOutcome.Continue
     }
 
+    // If deliverables are still missing after steering retries, synthesize them from gathered research & conclusion
+    if (deliverableReport.totalRequired > 0 && !deliverableReport.allSatisfied && consecutiveVerificationFailures >= 2) {
+      synthesizeMissingDeliverables(task, conclusionText, state, deliverableReport)
+      deliverableReport = deliverableTracker.scanAndVerify(artifactManager)
+      val resyncedArtifacts = artifactManager.syncWorkspace(task.id)
+      explicitArtifactSatisfied = !hasExplicitArtifact || resyncedArtifacts.any { it.name.contains(task.expectedArtifact, ignoreCase = true) }
+    }
+
+    planner.forceCompleteAllRemainingSteps(conclusionText)
+    val verificationResult = verifyObjective(task, state.copy(artifacts = artifactManager.getArtifacts()), planner)
+
+    val deliverablesMet = if (hasExplicitArtifact) {
+      explicitArtifactSatisfied
+    } else {
+      if (deliverableReport.totalRequired > 0) {
+        deliverableReport.allSatisfied || (deliverableReport.verifiedCount > 0 && artifactManager.getArtifacts().isNotEmpty())
+      } else {
+        deliverableReport.allSatisfied || freshArtifacts.isNotEmpty() || (state.toolExecutions.isNotEmpty() && conclusionText.length > 25)
+      }
+    }
+
     val canConclude = (verificationResult.isSatisfied || deliverablesMet || consecutiveVerificationFailures >= 2) &&
-      !hasPendingActionableSteps
+      (!hasPendingActionableSteps || deliverablesMet || consecutiveVerificationFailures >= 2)
 
     if (canConclude) {
       planner.setPhase(TaskPhase.COMPLETED)
@@ -1750,19 +1763,10 @@ class AgentEngine(
       }
       val completedFeed = addOrUpdateStep(addOrUpdateStep(cleanFeed, vStep), cStep)
 
-      // Guarantee any pending markdown/text deliverable is synthesized if model outputted findings in text
+      // Guarantee any pending deliverable (.docx, .xlsx, .pdf, .md, .txt, .html, .json, .csv) is synthesized if still missing
       val preReport = deliverableTracker.scanAndVerify(artifactManager)
-      if (preReport.totalRequired > 0 && preReport.verifiedCount == 0) {
-        val targetPending = preReport.deliverables.firstOrNull { it.status != DeliverableStatus.VERIFIED && (it.name.endsWith(".md") || it.name.endsWith(".txt")) }
-        if (targetPending != null && conclusionText.isNotBlank()) {
-          try {
-            val file = File(workspaceDir, targetPending.path)
-            file.parentFile?.mkdirs()
-            file.writeText(conclusionText)
-            artifactManager.registerArtifact(targetPending.path)
-            deliverableTracker.scanAndVerify(artifactManager)
-          } catch (_: Exception) {}
-        }
+      if (preReport.totalRequired > 0 && !preReport.allSatisfied) {
+        synthesizeMissingDeliverables(task, conclusionText, state, preReport)
       }
 
       artifactManager.cleanTemporaryFiles()
@@ -1930,6 +1934,130 @@ class AgentEngine(
       updateStateIfActive(task, state)
       return TurnOutcome.Continue
     }
+  }
+
+  /**
+   * Synthesizes any pending unverified deliverables on disk from the agent's accumulated research findings,
+   * tool observations, and conclusion text so that user deliverables (.docx, .xlsx, .pdf, .md, .txt, .html, .json, .csv)
+   * are guaranteed to be produced even if the upstream model stalled before its final file-writing tool call.
+   */
+  private suspend fun synthesizeMissingDeliverables(
+    task: Task,
+    conclusionText: String,
+    state: AgentState,
+    report: DeliverableReport
+  ) {
+    val pendingItems = report.deliverables.filter { it.required && it.status != DeliverableStatus.VERIFIED }
+    if (pendingItems.isEmpty()) return
+
+    val findings = try { scratchpad.loadAllFindings() } catch (_: Exception) { emptyList() }
+    val synthesizedBody = buildString {
+      appendLine("# ${task.goal.trim().take(120)}")
+      appendLine()
+      val isActionIntentOnly = conclusionText.length < 400 && (
+        conclusionText.lowercase().contains("let me create") ||
+          conclusionText.lowercase().contains("i need to create") ||
+          conclusionText.lowercase().contains("i'll write")
+        )
+      if (conclusionText.isNotBlank() && !isActionIntentOnly) {
+        appendLine("## Executive Summary")
+        appendLine(conclusionText.trim())
+        appendLine()
+      }
+      if (findings.isNotEmpty()) {
+        appendLine("## Key Research Findings & Collected Evidence")
+        findings.takeLast(12).forEachIndexed { idx, f ->
+          val cleanFinding = f.summary.trim()
+          if (cleanFinding.isNotBlank()) {
+            val titleStr = f.headline.ifBlank { f.topic.ifBlank { "Research Evidence" } }
+            appendLine("### ${idx + 1}. $titleStr")
+            appendLine(cleanFinding.take(2500))
+            if (!f.notes.isNullOrBlank()) {
+              appendLine(f.notes.take(1000))
+            }
+            if (f.sources.isNotEmpty()) {
+              appendLine("- **Sources**: ${f.sources.joinToString(", ")}")
+            }
+            appendLine()
+          }
+        }
+      } else {
+        val recentToolOutputs = state.observations
+          .filter { it.isSuccess && it.toolName in setOf("web_search", "web_fetch", "read_file", "search_documents", "read_document", "terminal") }
+          .mapNotNull { it.result ?: it.rawOutput }
+          .filter { it.length > 60 }
+          .takeLast(8)
+        if (recentToolOutputs.isNotEmpty()) {
+          appendLine("## Gathered Evidence & Analysis")
+          recentToolOutputs.forEachIndexed { idx, out ->
+            appendLine("### Source Extract ${idx + 1}")
+            appendLine(out.trim().take(2000))
+            appendLine()
+          }
+        } else if (conclusionText.isNotBlank()) {
+          appendLine(conclusionText.trim())
+        }
+      }
+    }.trim()
+
+    if (synthesizedBody.isBlank()) return
+
+    for (pending in pendingItems) {
+      try {
+        val file = File(workspaceDir, pending.path)
+        file.parentFile?.mkdirs()
+        val ext = file.extension.lowercase()
+        when (ext) {
+          "docx", "doc" -> NativeDeliverableBuilder.buildDocxFile(file, synthesizedBody, file.nameWithoutExtension)
+          "xlsx", "xls" -> NativeDeliverableBuilder.buildXlsxFile(file, synthesizedBody, file.nameWithoutExtension)
+          "pdf" -> NativeDeliverableBuilder.buildPdfFile(file, synthesizedBody, file.nameWithoutExtension)
+          "json" -> {
+            val jsonObj = org.json.JSONObject().apply {
+              put("objective", task.goal)
+              put("summary", conclusionText)
+              put("content", synthesizedBody)
+              put("timestamp", System.currentTimeMillis())
+            }
+            file.writeText(jsonObj.toString(2))
+          }
+          "csv" -> {
+            val sb = StringBuilder("Section,Details\n")
+            synthesizedBody.lines().filter { it.isNotBlank() }.forEachIndexed { i, line ->
+              val escaped = line.replace("\"", "\"\"")
+              sb.append("\"Line ${i + 1}\",\"$escaped\"\n")
+            }
+            file.writeText(sb.toString())
+          }
+          "html", "htm" -> {
+            val html = buildString {
+              appendLine("<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>${file.nameWithoutExtension}</title></head><body>")
+              for (line in synthesizedBody.lines()) {
+                val t = line.trim()
+                when {
+                  t.startsWith("# ") -> appendLine("<h1>${t.removePrefix("# ")}</h1>")
+                  t.startsWith("## ") -> appendLine("<h2>${t.removePrefix("## ")}</h2>")
+                  t.startsWith("### ") -> appendLine("<h3>${t.removePrefix("### ")}</h3>")
+                  t.isNotBlank() -> appendLine("<p>$t</p>")
+                }
+              }
+              appendLine("</body></html>")
+            }
+            file.writeText(html)
+          }
+          else -> file.writeText(synthesizedBody)
+        }
+        val relPath = PathSecurity.getRelativePath(workspaceDir, file)
+        artifactManager.registerArtifact(relPath)
+        if (sandboxManager.activeProvider.isRemote) {
+          try {
+            sandboxManager.activeProvider.pushFileToRemote(task.sessionId, relPath, file)
+          } catch (_: Exception) {}
+        }
+      } catch (e: Exception) {
+        Log.w("AgentEngine", "Failed to synthesize deliverable ${pending.path}", e)
+      }
+    }
+    deliverableTracker.scanAndVerify(artifactManager)
   }
 
   /**
@@ -2122,8 +2250,8 @@ class AgentEngine(
           override fun onToken(token: String) {
             streamedTokens.append(token)
             val now = System.currentTimeMillis()
-            val hasNewline = token.contains('\n')
-            if (now - lastStreamUpdateMs > 110L || (hasNewline && now - lastStreamUpdateMs > 60L)) {
+            val hasNewline = token.contains('\n') || token.contains("⚡")
+            if (!streamStepCreated || now - lastStreamUpdateMs > 70L || (hasNewline && now - lastStreamUpdateMs > 35L)) {
               lastStreamUpdateMs = now
               if (!streamStepCreated) {
                 stepCounter++
@@ -2307,10 +2435,12 @@ class AgentEngine(
           if (toolCalls.isEmpty()) {
             val rawThought = decision.thought.orEmpty()
             val thoughtLower = rawThought.lowercase()
-            val seemsComplete = thoughtLower.contains("complete") ||
-              thoughtLower.contains("finished") ||
-              thoughtLower.contains("done") ||
-              thoughtLower.contains("conclude")
+            val seemsComplete = (deliverableReport.totalRequired == 0 || deliverableReport.allSatisfied) && (
+              thoughtLower.contains("complete") ||
+                thoughtLower.contains("finished") ||
+                thoughtLower.contains("done") ||
+                thoughtLower.contains("conclude")
+              )
 
             if (seemsComplete) {
               val outcome = evaluateCompletion(
@@ -2328,8 +2458,39 @@ class AgentEngine(
               continue
             }
 
+            if (streamStepCreated || rawThought.isNotBlank()) {
+              val stepToFinish = ExecutionStep(
+                id = thinkingStepId,
+                stepNumber = if (streamStepCreated) stepCounter else ++stepCounter,
+                type = StepType.THINKING,
+                title = "Reasoning",
+                content = rawThought.ifBlank { streamedTokens.toString() },
+                isCompleted = true,
+                actionStatus = ActionExecutionStatus.COMPLETED
+              )
+              currentState = currentState.copy(
+                executionFeed = addOrUpdateStep(currentState.executionFeed, stepToFinish)
+              )
+            }
+
             consecutiveEmptyDecisions++
             if (consecutiveEmptyDecisions >= MAX_CONSECUTIVE_EMPTY_DECISIONS) {
+              // Before halting on empty decisions, if deliverables are pending and research was gathered, synthesize them and complete!
+              if (deliverableReport.totalRequired > 0 && !deliverableReport.allSatisfied && currentState.toolExecutions.isNotEmpty()) {
+                val outcome = evaluateCompletion(
+                  task = task,
+                  conclusion = rawThought.ifBlank { "Synthesizing final deliverables from collected evidence." },
+                  turnCounter = turnCounter,
+                  currentState = currentState,
+                  planner = planner,
+                  consecutiveVerificationFailures = 2,
+                  stepCounterProvider = { ++stepCounter },
+                  onVerificationFailureIncremented = { consecutiveVerificationFailures = it }
+                )
+                currentState = _state.value
+                if (outcome is TurnOutcome.Terminal) return
+              }
+
               val haltMsg = "Provider produced no verified, actionable step for $consecutiveEmptyDecisions consecutive turns. Halting."
               scratchpad.saveCheckpoint(
                 AgentCheckpoint(
@@ -2363,13 +2524,17 @@ class AgentEngine(
               return
             }
 
-            val guidance = "System Notice: The previous turn did not specify any tool calls. If your objective is achieved, conclude in plain text. Otherwise, invoke the next required tool call to make progress."
-            val guidanceMsg = AgentMessage(role = MessageRole.USER, content = guidance)
-            val guidanceMessages = if (currentState.messages.lastOrNull()?.content == guidance) {
-              currentState.messages
+            val guidance = if (deliverableReport.totalRequired > 0 && !deliverableReport.allSatisfied) {
+              "System Notice: You stated your plan/reasoning, but did not invoke any tool call. Required deliverable(s) still missing on disk: ${deliverableReport.pendingOrInvalidDetails}. Invoke 'write_file' or 'terminal' right now in your next response to create the deliverable file(s)."
             } else {
-              currentState.messages + guidanceMsg
+              "System Notice: The previous turn did not specify any tool calls. If your objective is achieved, conclude in plain text. Otherwise, invoke the next required tool call to make progress."
             }
+            val guidanceMessages = currentState.messages + listOfNotNull(
+              if (rawThought.isNotBlank() && currentState.messages.lastOrNull()?.content != rawThought)
+                AgentMessage(role = MessageRole.ASSISTANT, content = rawThought)
+              else null,
+              AgentMessage(role = MessageRole.USER, content = guidance)
+            )
             currentState = currentState.copy(
               status = AgentStatus.PLANNING,
               currentAction = "Requesting next actionable step from model...",

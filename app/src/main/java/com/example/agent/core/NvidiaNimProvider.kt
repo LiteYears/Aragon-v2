@@ -27,9 +27,9 @@ data class NvidiaNimConfig(
   val apiKey: String = "",
   val apiKeys: List<String> = if (apiKey.isNotBlank()) listOf(apiKey) else emptyList(),
   val temperature: Double? = 0.2,
-  val maxTokens: Int? = 4096,
+  val maxTokens: Int? = 8192,
   val topP: Double? = null,
-  val timeoutSeconds: Long = 45,
+  val timeoutSeconds: Long = 90,
   val enableReasoning: Boolean = true
 ) {
   companion object {
@@ -107,8 +107,8 @@ class NvidiaNimProvider(
 
   private val sharedHttpClient = AgentHttp.client.newBuilder()
     .connectTimeout(30, TimeUnit.SECONDS)
-    .readTimeout(60, TimeUnit.SECONDS)
-    .writeTimeout(60, TimeUnit.SECONDS)
+    .readTimeout(90, TimeUnit.SECONDS)
+    .writeTimeout(90, TimeUnit.SECONDS)
     .build()
 
   @Volatile
@@ -220,11 +220,9 @@ class NvidiaNimProvider(
     val poolSize = pool.size
     val startIndex = if (poolSize == 1) 0 else Math.floorMod(keyCounter.getAndIncrement(), poolSize)
 
-    // Health-aware key preference: rotating start offset, skipping cooling-down and
-    // quarantined credentials. A key is never penalized for model or payload errors.
-    val eligibleKeyIndices = (0 until poolSize)
-      .map { (startIndex + it) % poolSize }
-      .filter { keyHealth.isEligible(pool[it], now) }
+    // Health- and load-aware key preference: prioritizes idle (not in-flight), non-degraded,
+    // zero-failure, least-recently-used keys starting from the rotating offset.
+    var eligibleKeyIndices = keyHealth.selectBestKeyIndices(pool, startIndex, now)
 
     val quarantinedCount = pool.count { keyHealth.stateOf(it).quarantined }
     val coolingCount = (poolSize - eligibleKeyIndices.size - quarantinedCount).coerceAtLeast(0)
@@ -233,28 +231,33 @@ class NvidiaNimProvider(
       val earliestCooldown = pool.minOf { keyHealth.stateOf(it).cooldownUntilMs }
       val retryAfterMs = if (earliestCooldown == Long.MAX_VALUE) null
         else (earliestCooldown - now).coerceAtLeast(0L)
-      val reason = if (quarantinedCount == poolSize) {
-        "All $poolSize configured NVIDIA API keys were rejected with authentication errors and are quarantined. Update the keys in Settings to continue."
-      } else {
-        val waitSeconds = ((retryAfterMs ?: 0L) / 1000L).coerceAtLeast(1L)
-        "All $poolSize configured NVIDIA API keys are cooling down after rate limits or quota errors. Earliest retry in ${waitSeconds}s."
+      // If a key will finish cooling down within 4.5 seconds, wait briefly and use it rather than failing the turn
+      if (quarantinedCount < poolSize && retryAfterMs != null && retryAfterMs in 1L..4_500L) {
+        delay(retryAfterMs + 50L)
+        eligibleKeyIndices = keyHealth.selectBestKeyIndices(pool, startIndex, System.currentTimeMillis())
       }
-      return@withContext LLMDecision.ProviderError(
-        message = reason,
-        kind = if (quarantinedCount == poolSize) ProviderFailureKind.AUTH else ProviderFailureKind.RATE_LIMITED,
-        retryAfterMs = retryAfterMs
-      )
+      if (eligibleKeyIndices.isEmpty()) {
+        val reason = if (quarantinedCount == poolSize) {
+          "All $poolSize configured NVIDIA API keys were rejected with authentication errors and are quarantined. Update the keys in Settings to continue."
+        } else {
+          val waitSeconds = ((retryAfterMs ?: 0L) / 1000L).coerceAtLeast(1L)
+          "All $poolSize configured NVIDIA API keys are cooling down after rate limits or quota errors. Earliest retry in ${waitSeconds}s."
+        }
+        return@withContext LLMDecision.ProviderError(
+          message = reason,
+          kind = if (quarantinedCount == poolSize) ProviderFailureKind.AUTH else ProviderFailureKind.RATE_LIMITED,
+          retryAfterMs = retryAfterMs
+        )
+      }
     }
 
     // Capability-aware model cascade: configured model first, then models with
     // documented tool-calling evidence, then remaining verified reasoning fallbacks.
     val candidateModels = buildCandidateModels(activeConfig.model)
 
-    // Bounded routing plan. The primary model is attempted across up to
-    // MAX_PRIMARY_KEY_ATTEMPTS healthy keys (credential failover never sacrifices
-    // the configured model). Fallback models are then attempted with a bounded
-    // number of keys. Total HTTP attempts per decision stay within
-    // MAX_ROUTING_ATTEMPTS no matter how many keys are configured.
+    // Bounded routing plan. The primary model is attempted across all eligible healthy keys
+    // (up to MAX_PRIMARY_KEY_ATTEMPTS) so credential failover never sacrifices the configured model.
+    // Fallback models are then attempted with a bounded number of keys.
     val primaryModel = candidateModels.first()
     val plan = mutableListOf<Pair<Int, String>>()
     for (k in 0 until eligibleKeyIndices.size.coerceAtMost(MAX_PRIMARY_KEY_ATTEMPTS)) {
@@ -304,28 +307,35 @@ class NvidiaNimProvider(
         }
       }
 
-      val result = executeChatCompletion(
-        apiKeyToUse = candidateKey,
-        keyLabel = keySlotLabel,
-        modelToUse = model,
-        systemPrompt = effectiveSystemPrompt,
-        taskIntent = taskIntent,
-        messages = messages,
-        tools = tools,
-        useNativeTools = useNativeToolsForModel,
-        streamListener = streamListener
-      )
+      val callStartMs = System.currentTimeMillis()
+      keyHealth.markDispatchStart(candidateKey, callStartMs)
+      val result = try {
+        executeChatCompletion(
+          apiKeyToUse = candidateKey,
+          keyLabel = keySlotLabel,
+          modelToUse = model,
+          systemPrompt = effectiveSystemPrompt,
+          taskIntent = taskIntent,
+          messages = messages,
+          tools = tools,
+          useNativeTools = useNativeToolsForModel,
+          streamListener = streamListener
+        )
+      } finally {
+        keyHealth.markDispatchEnd(candidateKey)
+      }
+      val callDurationMs = (System.currentTimeMillis() - callStartMs).coerceAtLeast(1L)
 
       when (result) {
         is LLMDecision.ExecuteTool -> {
-          keyHealth.recordSuccess(candidateKey)
+          keyHealth.recordSuccess(candidateKey, latencyMs = callDurationMs)
           val thoughtNotice = if (isFallbackModel) {
             "[Pool: $keySlotLabel / Model: $model] ${result.thought ?: ""}"
           } else result.thought
           return@withContext result.copy(thought = thoughtNotice)
         }
         is LLMDecision.Complete -> {
-          keyHealth.recordSuccess(candidateKey)
+          keyHealth.recordSuccess(candidateKey, latencyMs = callDurationMs)
           val thoughtNotice = if (isFallbackModel) {
             "[Pool: $keySlotLabel / Model: $model] ${result.thought ?: ""}"
           } else result.thought
@@ -425,14 +435,14 @@ class NvidiaNimProvider(
   }
 
   companion object {
-    /** Primary model is attempted across at most this many healthy keys before model fallback. */
-    private const val MAX_PRIMARY_KEY_ATTEMPTS = 3
+    /** Primary model is attempted across all configured healthy keys (up to 15) before model fallback. */
+    private const val MAX_PRIMARY_KEY_ATTEMPTS = 15
 
     /** Each fallback model is attempted across at most this many healthy keys. */
     private const val MAX_FALLBACK_KEY_ATTEMPTS = 2
 
-    /** Hard ceiling on HTTP attempts per decideNextAction call, regardless of pool size. */
-    private const val MAX_ROUTING_ATTEMPTS = 6
+    /** Hard ceiling on HTTP attempts per decideNextAction call across primary + fallback models. */
+    private const val MAX_ROUTING_ATTEMPTS = 15
 
     /** Same key/model may be retried once per transient (5xx/network) failure, globally bounded. */
     private const val MAX_TRANSIENT_RETRIES = 2
@@ -487,17 +497,21 @@ class NvidiaNimProvider(
       val mediaType = "application/json; charset=utf-8".toMediaType()
       val requestBody = requestJson.toString().toRequestBody(mediaType)
 
-      val request = Request.Builder()
+      val requestBuilder = Request.Builder()
         .url(endpoint)
         .addHeader("Authorization", "Bearer ${apiKeyToUse.trim()}")
         .addHeader("Content-Type", "application/json")
         .addHeader("Accept", if (streamListener != null) "text/event-stream, application/json" else "application/json")
-        .post(requestBody)
-        .build()
+      if (streamListener != null) {
+        // Prevent GZIP chunk buffering and proxy caching on Server-Sent Events streams
+        requestBuilder.addHeader("Accept-Encoding", "identity")
+        requestBuilder.addHeader("Cache-Control", "no-cache")
+      }
+      val request = requestBuilder.post(requestBody).build()
 
-      val httpClient = if (activeConfig.timeoutSeconds != 60L) {
+      val httpClient = if (activeConfig.timeoutSeconds != 90L) {
         sharedHttpClient.newBuilder()
-          .connectTimeout(activeConfig.timeoutSeconds, TimeUnit.SECONDS)
+          .connectTimeout(25, TimeUnit.SECONDS)
           .readTimeout(activeConfig.timeoutSeconds, TimeUnit.SECONDS)
           .writeTimeout(activeConfig.timeoutSeconds, TimeUnit.SECONDS)
           .build()
@@ -586,6 +600,12 @@ class NvidiaNimProvider(
         val accumulatedContent = StringBuilder()
         val accumulatedReasoning = StringBuilder()
         val toolCallBuffers = mutableMapOf<Int, Triple<String, String, StringBuilder>>()
+        val announcedToolIndices = mutableSetOf<Int>()
+        var lastToolArgsProgressLen = 0
+        var separatedContentFromReasoning = false
+        var streamFinishReason = ""
+        var streamInterrupted = false
+        val streamStartMs = System.currentTimeMillis()
 
         try {
           response.body?.use { body ->
@@ -602,6 +622,10 @@ class NvidiaNimProvider(
                   val choices = chunkObj.optJSONArray("choices")
                   if (choices != null && choices.length() > 0) {
                     val choice = choices.optJSONObject(0)
+                    val fr = choice?.optCleanString("finish_reason").orEmpty()
+                    if (fr.isNotBlank()) {
+                      streamFinishReason = fr
+                    }
                     val delta = choice?.optJSONObject("delta")
                     if (delta != null) {
                       val contentDelta = delta.optCleanString("content")
@@ -614,9 +638,14 @@ class NvidiaNimProvider(
                       }
                       if (contentDelta.isNotEmpty()) {
                         accumulatedContent.append(contentDelta)
-                        // Only stream contentDelta into live thinking preview if reasoning_content wasn't already streamed,
-                        // preventing double-reasoning display during SSE streaming.
                         if (accumulatedReasoning.isEmpty()) {
+                          streamListener?.onToken(contentDelta)
+                        } else {
+                          // Stream content tokens after reasoning_content unless it's duplicating reasoning verbatim
+                          if (!separatedContentFromReasoning) {
+                            separatedContentFromReasoning = true
+                            streamListener?.onToken("\n\n")
+                          }
                           streamListener?.onToken(contentDelta)
                         }
                       }
@@ -637,10 +666,16 @@ class NvidiaNimProvider(
                             val argsBuilder = existing?.third ?: StringBuilder()
                             argsBuilder.append(fnArgs)
                             toolCallBuffers[idx] = Triple(id, fnName, argsBuilder)
-                            // If the model streams tool calls directly without prior reasoning/content text,
-                            // notify streamListener as soon as the tool name is known so UI shows immediate responsiveness.
-                            if (existing == null && fnName.isNotBlank() && accumulatedReasoning.isEmpty() && accumulatedContent.isEmpty()) {
-                              streamListener?.onToken("Preparing tool action: $fnName...\n")
+                            // Always notify streamListener as soon as a tool call starts and as large arguments stream in,
+                            // even if reasoning_content was already emitted, so the UI never freezes during tool generation.
+                            if (fnName.isNotBlank() && announcedToolIndices.add(idx)) {
+                              val prefix = if (accumulatedReasoning.isNotEmpty() || accumulatedContent.isNotEmpty()) "\n\n" else ""
+                              streamListener?.onToken("${prefix}⚡ Preparing tool action: $fnName")
+                            }
+                            val totalArgsChars = toolCallBuffers.values.sumOf { it.third.length }
+                            if (totalArgsChars - lastToolArgsProgressLen >= 240) {
+                              lastToolArgsProgressLen = totalArgsChars
+                              streamListener?.onToken(".")
                             }
                           }
                         }
@@ -653,7 +688,16 @@ class NvidiaNimProvider(
           }
         } catch (ce: CancellationException) {
           throw ce
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+          streamInterrupted = true
+        }
+
+        val streamElapsedMs = (System.currentTimeMillis() - streamStartMs).coerceAtLeast(1L)
+        val totalStreamedChars = accumulatedReasoning.length + accumulatedContent.length + toolCallBuffers.values.sumOf { it.third.length }
+        if (streamInterrupted || (streamElapsedMs > 18_000L && totalStreamedChars * 1000L / streamElapsedMs < 18L)) {
+          // Mark this key as soft-degraded so the next turn rotates to a fresh, unthrottled key in the pool
+          keyHealth.recordSlowOrInterruptedStream(apiKeyToUse)
+        }
 
         val rawContentText = accumulatedContent.toString().trim()
         val thinkRegex = Regex("<think>(.*?)</think>", RegexOption.DOT_MATCHES_ALL)
@@ -680,7 +724,7 @@ class NvidiaNimProvider(
           toolCallBuffers.values.mapNotNull { (callId, fnName, argsBuilder) ->
             if (fnName.isBlank()) return@mapNotNull null
             val rawArgs = argsBuilder.toString()
-            val argsMap = parseArguments(rawArgs)
+            val argsMap = parseArguments(rawArgs, fnName)
             ToolCall(
               callId = if (callId.isNotBlank()) callId else ToolCall.generateCallId("stream", (System.currentTimeMillis() % 100000).toInt()),
               toolName = fnName,
@@ -688,7 +732,7 @@ class NvidiaNimProvider(
             )
           }
         } else {
-          extractToolCalls(null, rawContentText, tools)
+          extractToolCalls(null, rawContentText.ifBlank { reasoningText }, tools)
         }
 
         val combinedThought = mergeReasoningAndContent(
@@ -704,6 +748,19 @@ class NvidiaNimProvider(
           )
         } else if (contentText.isNotBlank() || reasoningText.isNotBlank()) {
           val finalConclusion = cleanContentConclusion(contentText).ifBlank { combinedThought }
+          // Do not misclassify reasoning-only turns, truncated streams, or "intent-to-act" planning turns as final task conclusion
+          if (tools.isNotEmpty() && (
+              (contentText.isBlank() && reasoningText.isNotBlank()) ||
+                streamInterrupted ||
+                streamFinishReason.equals("length", ignoreCase = true) ||
+                isActionIntentWithoutToolCall(finalConclusion)
+            )
+          ) {
+            return LLMDecision.ExecuteTool(
+              toolCalls = emptyList(),
+              thought = combinedThought.ifBlank { finalConclusion }
+            )
+          }
           return LLMDecision.Complete(
             conclusion = finalConclusion,
             thought = if (reasoningText.isNotBlank()) reasoningText else "Agent concluded task."
@@ -747,6 +804,7 @@ class NvidiaNimProvider(
       val firstChoice = choices.optJSONObject(0)
         ?: return LLMDecision.ProviderError("NVIDIA NIM response choice[0] is not a valid JSON object.", kind = ProviderFailureKind.EMPTY_RESPONSE)
 
+      val finishReason = firstChoice.optCleanString("finish_reason")
       val messageObj = firstChoice.optJSONObject("message")
         ?: return LLMDecision.ProviderError("NVIDIA NIM response choice missing required 'message' object.", kind = ProviderFailureKind.EMPTY_RESPONSE)
 
@@ -759,7 +817,7 @@ class NvidiaNimProvider(
         .trim()
 
       // 7. Multi-Format Tool Calls Extraction
-      val parsedToolCalls = extractToolCalls(messageObj, contentText, tools)
+      val parsedToolCalls = extractToolCalls(messageObj, contentText.ifBlank { reasoningText }, tools)
 
       val combinedThought = mergeReasoningAndContent(
         reasoningText = reasoningText,
@@ -777,6 +835,16 @@ class NvidiaNimProvider(
         val finalConclusion = cleanContentConclusion(contentText).ifBlank { combinedThought }
         if (finalConclusion.isBlank()) {
           LLMDecision.ProviderError("NVIDIA NIM returned neither tool calls nor message content.", kind = ProviderFailureKind.EMPTY_RESPONSE)
+        } else if (tools.isNotEmpty() && (
+            (contentText.isBlank() && reasoningText.isNotBlank()) ||
+              finishReason.equals("length", ignoreCase = true) ||
+              isActionIntentWithoutToolCall(finalConclusion)
+          )
+        ) {
+          LLMDecision.ExecuteTool(
+            toolCalls = emptyList(),
+            thought = combinedThought.ifBlank { finalConclusion }
+          )
         } else {
           LLMDecision.Complete(
             conclusion = finalConclusion,
@@ -863,7 +931,7 @@ class NvidiaNimProvider(
         val funcName = funcObj.optString("name").trim()
         if (funcName.isNotBlank()) {
           val argsRaw = funcObj.opt("arguments")
-          val argsMap = parseArguments(argsRaw)
+          val argsMap = parseArguments(argsRaw, funcName)
           results.add(ToolCall(callId = callId, toolName = funcName, arguments = argsMap))
         }
       }
@@ -872,7 +940,7 @@ class NvidiaNimProvider(
 
     // 2. Meta/Llama 3 <|python_tag|> format
     if (contentText.contains("<|python_tag|>")) {
-      val tagPattern = Pattern.compile("<\\|python_tag\\|>\\s*(\\{.*?\\})", Pattern.DOTALL)
+      val tagPattern = Pattern.compile("<\\|python_tag\\|>\\s*(\\{.*\\})", Pattern.DOTALL)
       val matcher = tagPattern.matcher(contentText)
       while (matcher.find()) {
         val jsonStr = matcher.group(1) ?: continue
@@ -883,7 +951,29 @@ class NvidiaNimProvider(
 
     // 2b. <tool_call>...</tool_call> XML format (Qwen / Hermes / GLM / Nemotron)
     if (contentText.contains("<tool_call>")) {
-      val tcPattern = Pattern.compile("<tool_call>\\s*(\\{.*?\\})\\s*</tool_call>", Pattern.DOTALL)
+      // Check for <function=name><parameter=key>val</parameter></function> XML format inside <tool_call>
+      val xmlFnPattern = Pattern.compile("<function=([a-zA-Z0-9_.-]+)>(.*?)(?:</function>|</tool_call>|$)", Pattern.DOTALL)
+      val xmlMatcher = xmlFnPattern.matcher(contentText)
+      while (xmlMatcher.find()) {
+        val fnName = xmlMatcher.group(1)?.trim() ?: continue
+        val body = xmlMatcher.group(2) ?: ""
+        if (body.contains("<parameter=")) {
+          val paramPattern = Pattern.compile("<parameter=([a-zA-Z0-9_.-]+)>\\s*(.*?)\\s*(?:</parameter>|(?=<parameter=)|$)", Pattern.DOTALL)
+          val paramMatcher = paramPattern.matcher(body)
+          val argsMap = mutableMapOf<String, Any?>()
+          while (paramMatcher.find()) {
+            val pKey = paramMatcher.group(1)?.trim() ?: continue
+            val pVal = paramMatcher.group(2)?.trim() ?: ""
+            argsMap[pKey] = pVal
+          }
+          if (argsMap.isNotEmpty()) {
+            results.add(ToolCall(callId = "call_${UUID.randomUUID()}", toolName = fnName, arguments = argsMap))
+          }
+        }
+      }
+      if (results.isNotEmpty()) return results
+
+      val tcPattern = Pattern.compile("<tool_call>\\s*(\\{.*?)\\s*(?:</tool_call>|$)", Pattern.DOTALL)
       val matcher = tcPattern.matcher(contentText)
       while (matcher.find()) {
         val jsonStr = matcher.group(1) ?: continue
@@ -894,14 +984,14 @@ class NvidiaNimProvider(
 
     // 2c. Llama 3.1/3.3 <function=tool_name>{...}</function> format
     if (contentText.contains("<function=")) {
-      val fnPattern = Pattern.compile("<function=([a-zA-Z0-9_.-]+)>\\s*(\\{.*?\\})\\s*</function>", Pattern.DOTALL)
+      val fnPattern = Pattern.compile("<function=([a-zA-Z0-9_.-]+)>\\s*(\\{.*?)\\s*(?:</function>|$)", Pattern.DOTALL)
       val matcher = fnPattern.matcher(contentText)
       while (matcher.find()) {
         val fnName = matcher.group(1)?.trim() ?: continue
         val argsStr = matcher.group(2)?.trim() ?: continue
         val canonical = ToolRegistry.resolveCanonicalName(fnName)
         if (toolNames.isEmpty() || toolNames.contains(fnName) || toolNames.contains(canonical)) {
-          val argsMap = parseArguments(argsStr)
+          val argsMap = parseArguments(argsStr, fnName)
           results.add(
             ToolCall(
               callId = "call_${UUID.randomUUID()}",
@@ -916,7 +1006,7 @@ class NvidiaNimProvider(
 
     // 3. Embedded JSON markdown block ```json ... ```
     if (contentText.contains("```")) {
-      val codeBlockPattern = Pattern.compile("```(?:json)?\\s*(\\{.*?\\})\\s*```", Pattern.DOTALL)
+      val codeBlockPattern = Pattern.compile("```(?:json)?\\s*(\\{.*?)\\s*(?:```|$)", Pattern.DOTALL)
       val matcher = codeBlockPattern.matcher(contentText)
       while (matcher.find()) {
         val jsonStr = matcher.group(1) ?: continue
@@ -936,12 +1026,12 @@ class NvidiaNimProvider(
 
     // 5. ReAct format: Action: <name>\nAction Input: <json>
     if (contentText.contains("Action:")) {
-      val reactPattern = Pattern.compile("Action:\\s*([a-zA-Z0-9_]+)\\s*Action Input:\\s*(\\{.*?\\})", Pattern.DOTALL)
+      val reactPattern = Pattern.compile("Action:\\s*([a-zA-Z0-9_]+)\\s*Action Input:\\s*(\\{.*\\})", Pattern.DOTALL)
       val matcher = reactPattern.matcher(contentText)
       while (matcher.find()) {
         val actionName = matcher.group(1)?.trim() ?: continue
         val actionInput = matcher.group(2)?.trim() ?: continue
-        val argsMap = parseArguments(actionInput)
+        val argsMap = parseArguments(actionInput, actionName)
         results.add(
           ToolCall(
             callId = "call_${UUID.randomUUID()}",
@@ -958,7 +1048,8 @@ class NvidiaNimProvider(
 
   private fun parseSingleToolJson(jsonStr: String, knownToolNames: Set<String>): ToolCall? {
     return try {
-      val obj = JSONObject(jsonStr)
+      val repaired = sanitizeJsonStringLiterals(jsonStr.trim()).replace(Regex(",\\s*([}\\]])"), "$1")
+      val obj = try { JSONObject(jsonStr) } catch (_: Exception) { JSONObject(repaired) }
       val name = obj.optString("name", obj.optString("tool", "")).trim()
       val canonical = ToolRegistry.resolveCanonicalName(name)
       val isKnown = knownToolNames.isEmpty() || knownToolNames.contains(name) || knownToolNames.contains(canonical)
@@ -981,7 +1072,7 @@ class NvidiaNimProvider(
     }
   }
 
-  private fun parseArguments(argsRaw: Any?): Map<String, Any?> {
+  private fun parseArguments(argsRaw: Any?, toolName: String = ""): Map<String, Any?> {
     return when (argsRaw) {
       is JSONObject -> jsonObjectToMap(argsRaw)
       is String -> {
@@ -999,7 +1090,14 @@ class NvidiaNimProvider(
               val repaired = sanitizeJsonStringLiterals(trimmed).replace(Regex(",\\s*([}\\]])"), "$1")
               jsonObjectToMap(JSONObject(repaired))
             } catch (_: Exception) {
-              emptyMap()
+              val salvaged = salvageTruncatedToolArguments(trimmed, toolName)
+              if (salvaged.isNotEmpty()) {
+                salvaged
+              } else if (trimmed.length > 20) {
+                mapOf("_parse_error" to "Truncated or malformed JSON arguments (${trimmed.length} chars)")
+              } else {
+                emptyMap()
+              }
             }
           }
         } else {
@@ -1009,6 +1107,79 @@ class NvidiaNimProvider(
       null, JSONObject.NULL -> emptyMap()
       else -> emptyMap()
     }
+  }
+
+  /**
+   * Attempts to salvage tool arguments when the LLM output was cut off mid-stream or had unescaped quotes.
+   * For read-only or simple single-string tools, or completed JSON fields, extracts key-value pairs;
+   * if a script/file content field was truncated mid-stream, returns emptyMap so _parse_error triggers a clean retry.
+   */
+  private fun salvageTruncatedToolArguments(raw: String, toolName: String): Map<String, Any?> {
+    // Try closing open string and braces if it was nearly complete
+    for (suffix in listOf("\"}", "\n\"}", "\"} }", "}", "\"]}", "\"]")) {
+      try {
+        val candidate = sanitizeJsonStringLiterals(raw + suffix)
+        val parsed = jsonObjectToMap(JSONObject(candidate))
+        if (parsed.isNotEmpty()) {
+          // Only accept auto-closed JSON if it's not a truncated write_file or terminal script missing its end
+          val canonical = ToolRegistry.resolveCanonicalName(toolName)
+          val isCodeOrWrite = canonical in listOf("terminal", "write_file", "edit_file")
+          if (!isCodeOrWrite || raw.trimEnd().endsWith("}") || raw.trimEnd().endsWith("\"")) {
+            return parsed
+          }
+        }
+      } catch (_: Exception) {}
+    }
+    return emptyMap()
+  }
+
+  /**
+   * Detects when a model response is merely announcing an upcoming tool action (e.g. "Let me create the Word document...",
+   * "I'll write a Python script to...", "Now I need to create...") or was cut off mid-sentence rather than delivering a conclusion.
+   */
+  private fun isActionIntentWithoutToolCall(text: String): Boolean {
+    val trimmed = text.trim()
+    if (trimmed.isEmpty()) return false
+    // Cut off mid-sentence (does not end with terminal punctuation, quote, bracket, or code fence)
+    val lastChar = trimmed.last()
+    if (trimmed.length in 20..900 && lastChar !in listOf('.', '!', '?', '`', '"', '\'', ')', ']', '}', '*', '-', '|')) {
+      return true
+    }
+    if (trimmed.endsWith(":")) return true
+
+    // Short-to-medium planning thoughts that state what the agent is about to do next
+    if (trimmed.length < 700) {
+      val lower = trimmed.lowercase()
+      val tail = lower.takeLast(260)
+      val intentPatterns = listOf(
+        "let me create",
+        "let me write",
+        "let me generate",
+        "let me build",
+        "let me run",
+        "let me execute",
+        "let me save",
+        "let's create",
+        "let's write",
+        "i'll write a python",
+        "i will write a python",
+        "i'll create the",
+        "i will create the",
+        "i'll generate the",
+        "i will generate the",
+        "i need to create",
+        "now i need to create",
+        "now i have python-docx",
+        "now let me create",
+        "now i will create",
+        "now i'll create",
+        "using python-docx"
+      )
+      if (intentPatterns.any { tail.contains(it) }) {
+        return true
+      }
+    }
+    return false
   }
 
   private fun sanitizeJsonStringLiterals(raw: String): String {
@@ -1250,8 +1421,10 @@ class NvidiaNimProvider(
         MessageRole.SYSTEM -> {
           activeToolCallIds.clear()
           val sysObj = JSONObject()
-          sysObj.put("role", "system")
-          sysObj.put("content", msg.content)
+          // Strict vLLM/TRT-LLM chat templates (GLM-5, Llama-3.3, Mistral, Qwen) only allow role="system"
+          // as the very first message; mid-conversation steering directives must be sent as role="user".
+          sysObj.put("role", if (messagesArray.length() == 0) "system" else "user")
+          sysObj.put("content", if (messagesArray.length() == 0) msg.content else "[System Directive]: ${msg.content}")
           messagesArray.put(sysObj)
         }
 
