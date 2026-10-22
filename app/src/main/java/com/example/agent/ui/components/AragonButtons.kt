@@ -177,8 +177,8 @@ fun AragonFeedButton(
     Box(
       contentAlignment = Alignment.Center,
       modifier = Modifier
-        .height(24.dp)
-        .padding(horizontal = 9.dp)
+        .height(28.dp)
+        .padding(horizontal = 12.dp, vertical = 2.dp)
     ) {
       Text(
         text = text,
@@ -444,8 +444,8 @@ fun AragonHeaderButton(
     Box(
       contentAlignment = Alignment.Center,
       modifier = Modifier
-        .height(30.dp)
-        .padding(horizontal = 12.dp)
+        .height(32.dp)
+        .padding(horizontal = 14.dp, vertical = 2.dp)
     ) {
       Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -571,7 +571,7 @@ fun AragonActionButton(
   modifier: Modifier = Modifier,
   variant: AragonButtonVariant = AragonButtonVariant.DEFAULT,
   enabled: Boolean = true,
-  height: Dp = 30.dp,
+  height: Dp = 32.dp,
   testTag: String = "action_button"
 ) {
   val shape = RoundedCornerShape(16.dp)
@@ -619,7 +619,7 @@ fun AragonActionButton(
       contentAlignment = Alignment.Center,
       modifier = Modifier
         .height(height)
-        .padding(horizontal = 12.dp)
+        .padding(horizontal = 14.dp, vertical = 2.dp)
     ) {
       Text(
         text = text,

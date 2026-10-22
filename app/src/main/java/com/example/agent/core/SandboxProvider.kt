@@ -1345,38 +1345,36 @@ class E2BSandboxProvider(
 python3 -c "import os, json, base64
 
 res = {}
-root_base = '/home/user'
-ignored_dirs = {'workspace', 'notes', 'documents', 'bin', 'lib', 'tmp', 'temp', 'cache', 'logs', '__pycache__', 'node_modules', 'venv', '.venv', '.git', '.cache', '.config', '.local', '.sessions', '.scratchpad', '.observations', '.exec', '.mcp_data'}
-ignored_exts = {'.db', '.db-wal', '.db-shm', '.db-journal', '.pyc', '.so', '.a', '.tmp', '.part'}
+scan_roots = [('/home/user', '/home/user'), ('/tmp', '/tmp')]
+ignored_dirs = {'notes', 'documents', 'bin', 'lib', 'cache', 'logs', '__pycache__', 'node_modules', 'venv', '.venv', '.git', '.cache', '.config', '.local', '.sessions', '.scratchpad', '.observations', '.exec', '.mcp_data'}
+ignored_exts = {'.db', '.db-wal', '.db-shm', '.db-journal', '.pyc', '.so', '.a', '.part'}
 ignored_files = {'data.db', 'data.db-wal', 'data.db-shm', 'data.db-journal', 'task_history.jsonl', 'checkpoint.json', 'research.jsonl', 'aragon_exec_script.py'}
 
-for root, dirs, files in os.walk(root_base, followlinks=False):
-    dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.startswith('.') and not os.path.islink(os.path.join(root, d))]
-    for f in files:
-        if f.startswith('.') or f in ignored_files:
-            continue
-        _, ext = os.path.splitext(f)
-        if ext.lower() in ignored_exts:
-            continue
-        full = os.path.join(root, f)
-        if os.path.islink(full):
-            try:
-                target_real = os.path.realpath(full)
-                if not target_real.startswith(root_base + '/') and target_real != root_base:
-                    continue
-                if not os.path.isfile(target_real):
-                    continue
-            except Exception:
+for root_base, prefix in scan_roots:
+    if not os.path.exists(root_base):
+        continue
+    for root, dirs, files in os.walk(root_base, followlinks=False):
+        dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.startswith('.') and not os.path.islink(os.path.join(root, d))]
+        for f in files:
+            if f.startswith('.') or f in ignored_files:
                 continue
-        try:
-            if os.path.isfile(full) and not os.path.islink(full) and os.path.getsize(full) < 10000000:
-                p = os.path.relpath(full, root_base)
-                while p.startswith('workspace/'):
-                    p = p[len('workspace/'):]
-                with open(full, 'rb') as fp:
-                    res[p] = base64.b64encode(fp.read()).decode('ascii')
-        except Exception:
-            pass
+            _, ext = os.path.splitext(f)
+            if ext.lower() in ignored_exts:
+                continue
+            full = os.path.join(root, f)
+            try:
+                if os.path.isfile(full) and not os.path.islink(full) and 0 < os.path.getsize(full) < 10000000:
+                    p = os.path.relpath(full, root_base)
+                    while p.startswith('workspace/'):
+                        p = p[len('workspace/'):]
+                    if root_base == '/tmp':
+                        if ext.lower() not in {'.md', '.docx', '.xlsx', '.pdf', '.csv', '.json', '.txt'}:
+                            continue
+                        p = os.path.basename(full)
+                    with open(full, 'rb') as fp:
+                        res[p] = base64.b64encode(fp.read()).decode('ascii')
+            except Exception:
+                pass
 
 print('___ARAGON_SYNC_START___' + json.dumps(res) + '___ARAGON_SYNC_END___')
 "

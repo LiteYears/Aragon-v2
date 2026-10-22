@@ -2148,9 +2148,9 @@ class InternalMcpTransport(
       })
     } else {
       arr.put(JSONObject().apply {
-        put("uri", "workspace://manifest")
-        put("name", "Workspace Manifest")
-        put("description", "List of all current workspace files, sizes, and formats")
+        put("uri", "${config.id}://manifest")
+        put("name", "${config.name} Manifest")
+        put("description", "List of current workspace files, sizes, and formats exposed by ${config.name}")
         put("mimeType", "application/json")
       })
     }

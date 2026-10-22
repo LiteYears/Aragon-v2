@@ -147,14 +147,39 @@ fun WorkspaceFileExplorer(
   val codeExtensions = remember { listOf("py", "sh", "js", "ts", "kt", "java", "cpp", "c", "h", "rs", "go", "rb", "css") }
   val dataExtensions = remember { listOf("json", "jsonl", "csv", "xlsx", "xls", "tsv", "xml", "yaml", "yml", "sql", "db") }
 
+  // Authoritatively assemble all verified deliverables across the workspace
+  val allDeliverablesList = remember(deliverables, items) {
+    val fromItems = items.filter { !it.isDirectory && it.isDeliverable }
+    val fromTracked = deliverables
+      .filter { it.status == DeliverableStatus.VERIFIED && it.sizeBytes > 0 }
+      .map { d ->
+        FileExplorerItem(
+          name = d.name,
+          relativePath = d.path,
+          isDirectory = false,
+          size = d.sizeBytes,
+          lastModified = d.lastModified,
+          childCount = 0,
+          extension = d.name.substringAfterLast('.', "").lowercase(Locale.ROOT),
+          isDeliverable = true,
+          deliverableStatus = d.status,
+          absolutePath = "",
+          lineCount = 0,
+          qualityScore = d.qualityScore,
+          sha256 = d.sha256
+        )
+      }
+    (fromItems + fromTracked).distinctBy { it.relativePath.ifBlank { it.name } }
+  }
+
   // Filter items by category, search query, and sort order
-  val filteredItems = remember(items, searchQuery, activeCategory, sortBy) {
+  val filteredItems = remember(items, allDeliverablesList, searchQuery, activeCategory, sortBy) {
     var list = items
 
     // 1. Category Filter (Directories are only included in ALL or if they match name)
     list = when (activeCategory) {
       FileCategoryFilter.ALL -> list
-      FileCategoryFilter.DELIVERABLES -> list.filter { it.isDeliverable }
+      FileCategoryFilter.DELIVERABLES -> allDeliverablesList
       FileCategoryFilter.DOCS -> list.filter { !it.isDirectory && it.extension in docsExtensions }
       FileCategoryFilter.CODE -> list.filter { !it.isDirectory && it.extension in codeExtensions }
       FileCategoryFilter.DATA -> list.filter { !it.isDirectory && it.extension in dataExtensions }
@@ -186,7 +211,7 @@ fun WorkspaceFileExplorer(
   val totalDirCount = items.count { it.isDirectory }
   val totalFileCount = items.count { !it.isDirectory }
   val totalSizeBytes = items.filter { !it.isDirectory }.sumOf { it.size }
-  val deliverablesCount = items.count { it.isDeliverable }
+  val deliverablesCount = allDeliverablesList.size
   val docsCount = items.count { !it.isDirectory && it.extension in docsExtensions }
   val codeCount = items.count { !it.isDirectory && it.extension in codeExtensions }
   val dataCount = items.count { !it.isDirectory && it.extension in dataExtensions }
@@ -278,8 +303,17 @@ fun WorkspaceFileExplorer(
       }
     } else {
       val directoryItems = remember(filteredItems) { filteredItems.filter { it.isDirectory } }
-      val deliverableItems = remember(filteredItems) { filteredItems.filter { !it.isDirectory && it.isDeliverable } }
-      val standardFileItems = remember(filteredItems) { filteredItems.filter { !it.isDirectory && !it.isDeliverable } }
+      val deliverableItems = remember(filteredItems, allDeliverablesList, activeCategory) {
+        if (activeCategory == FileCategoryFilter.DELIVERABLES) {
+          filteredItems
+        } else {
+          (allDeliverablesList + filteredItems.filter { !it.isDirectory && it.isDeliverable }).distinctBy { it.relativePath.ifBlank { it.name } }
+        }
+      }
+      val standardFileItems = remember(filteredItems, deliverableItems) {
+        val delivPaths = deliverableItems.map { it.relativePath.ifBlank { it.name } }.toSet()
+        filteredItems.filter { !it.isDirectory && !it.isDeliverable && (it.relativePath.ifBlank { it.name } !in delivPaths) }
+      }
 
       if (viewMode == ExplorerViewMode.LIST) {
         LazyColumn(
@@ -713,13 +747,13 @@ fun WorkspaceMinimalCommandHeader(
         Spacer(modifier = Modifier.width(6.dp))
 
         // Quick UP & Refresh
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
           if (segments.isNotEmpty()) {
             AragonActionButton(
               text = "UP",
               onClick = onNavigateUp,
               variant = AragonButtonVariant.MUTED,
-              height = 24.dp,
+              height = 28.dp,
               testTag = "navigate_up_btn"
             )
           }
@@ -727,7 +761,7 @@ fun WorkspaceMinimalCommandHeader(
             text = "REFRESH",
             onClick = onRefresh,
             variant = AragonButtonVariant.MUTED,
-            height = 24.dp,
+            height = 28.dp,
             testTag = "refresh_explorer_btn"
           )
         }
@@ -747,7 +781,7 @@ fun WorkspaceMinimalCommandHeader(
           text = "+ FILE",
           onClick = onNewFile,
           variant = AragonButtonVariant.PRIMARY,
-          height = 26.dp,
+          height = 30.dp,
           testTag = "toolbar_new_file_btn"
         )
 
@@ -755,7 +789,7 @@ fun WorkspaceMinimalCommandHeader(
           text = "+ FOLDER",
           onClick = onNewFolder,
           variant = AragonButtonVariant.DEFAULT,
-          height = 26.dp,
+          height = 30.dp,
           testTag = "toolbar_new_folder_btn"
         )
 
@@ -763,7 +797,7 @@ fun WorkspaceMinimalCommandHeader(
           text = if (viewMode == ExplorerViewMode.LIST) "GRID" else "LIST",
           onClick = onToggleViewMode,
           variant = AragonButtonVariant.MUTED,
-          height = 26.dp,
+          height = 30.dp,
           testTag = "toggle_view_mode_btn"
         )
 
@@ -772,7 +806,7 @@ fun WorkspaceMinimalCommandHeader(
             text = "SORT: ${sortBy.label.substringBefore(' ')}",
             onClick = { showSortDropdown = true },
             variant = AragonButtonVariant.MUTED,
-            height = 26.dp,
+            height = 30.dp,
             testTag = "sort_by_btn"
           )
 

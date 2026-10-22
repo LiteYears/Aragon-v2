@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -158,12 +159,14 @@ fun McpServersDialog(
   ) {
     Surface(
       modifier = Modifier
-        .fillMaxWidth(0.96f)
-        .fillMaxHeight(0.92f),
-      shape = RoundedCornerShape(22.dp),
-      color = Color(0xFF0C0C12),
-      shadowElevation = 20.dp,
-      border = BorderStroke(1.dp, Color(0xFF1E1E2C))
+        .fillMaxWidth()
+        .padding(horizontal = 16.dp, vertical = 20.dp)
+        .widthIn(max = 520.dp)
+        .heightIn(min = 380.dp, max = 620.dp),
+      shape = RoundedCornerShape(20.dp),
+      color = Color(0xFF0A0A0F),
+      shadowElevation = 24.dp,
+      border = BorderStroke(1.dp, Color(0xFF222232))
     ) {
       Column(modifier = Modifier.fillMaxSize()) {
         val customServers = remember(servers) {
@@ -717,59 +720,59 @@ private fun ServersTabContent(
                     shape = RoundedCornerShape(4.dp),
                     border = BorderStroke(1.dp, AmoledBorderSubtle),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledTextPrimary),
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 1.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 3.dp),
                     modifier = Modifier
-                      .height(22.dp)
+                      .height(26.dp)
                       .testTag("mcp_ping_btn_${config.id}")
                   ) {
                     if (isPinging) {
-                      CircularProgressIndicator(modifier = Modifier.size(9.dp), strokeWidth = 1.dp, color = AmoledActionPrimary)
+                      CircularProgressIndicator(modifier = Modifier.size(10.dp), strokeWidth = 1.2.dp, color = AmoledActionPrimary)
                     } else {
-                      Text("PING", fontFamily = JetBrainsMonoFontFamily, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)
+                      Text("PING", fontFamily = JetBrainsMonoFontFamily, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                     }
                   }
 
                   // Sync / Reconnect button
                   OutlinedButton(
                     onClick = { onReconnectServer(config.id) },
-                    shape = RoundedCornerShape(4.dp),
+                    shape = RoundedCornerShape(5.dp),
                     border = BorderStroke(1.dp, AmoledBorderSubtle),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledTextSecondary),
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 1.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 3.dp),
                     modifier = Modifier
-                      .height(22.dp)
+                      .height(26.dp)
                       .testTag("mcp_reconnect_btn_${config.id}")
                   ) {
-                    Text("SYNC", fontFamily = JetBrainsMonoFontFamily, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)
+                    Text("SYNC", fontFamily = JetBrainsMonoFontFamily, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                   }
                 }
 
                 // Edit button
                 OutlinedButton(
                   onClick = { onEditServer(config) },
-                  shape = RoundedCornerShape(4.dp),
+                  shape = RoundedCornerShape(5.dp),
                   border = BorderStroke(1.dp, AmoledBorderSubtle),
                   colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledTextPrimary),
-                  contentPadding = PaddingValues(horizontal = 6.dp, vertical = 1.dp),
+                  contentPadding = PaddingValues(horizontal = 8.dp, vertical = 3.dp),
                   modifier = Modifier
-                    .height(22.dp)
+                    .height(26.dp)
                     .testTag("mcp_edit_btn_${config.id}")
                 ) {
-                  Text("EDIT", fontFamily = JetBrainsMonoFontFamily, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)
+                  Text("EDIT", fontFamily = JetBrainsMonoFontFamily, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                 }
 
                 // Delete button
                 OutlinedButton(
                   onClick = { onRemoveServer(config.id) },
-                  shape = RoundedCornerShape(4.dp),
+                  shape = RoundedCornerShape(5.dp),
                   border = BorderStroke(1.dp, AmoledStatusError.copy(alpha = 0.4f)),
                   colors = ButtonDefaults.outlinedButtonColors(contentColor = AmoledStatusError),
-                  contentPadding = PaddingValues(horizontal = 6.dp, vertical = 1.dp),
+                  contentPadding = PaddingValues(horizontal = 8.dp, vertical = 3.dp),
                   modifier = Modifier
-                    .height(22.dp)
+                    .height(26.dp)
                     .testTag("mcp_delete_btn_${config.id}")
                 ) {
-                  Text("DEL", fontFamily = JetBrainsMonoFontFamily, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)
+                  Text("DEL", fontFamily = JetBrainsMonoFontFamily, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                 }
               }
             }
@@ -866,7 +869,7 @@ private fun ToolsTabContent(
       modifier = Modifier.fillMaxSize(),
       verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-      items(filteredTools, key = { it.namespacedName }) { tool ->
+      itemsIndexed(filteredTools, key = { index, tool -> "${tool.serverId}_${tool.namespacedName}_$index" }) { _, tool ->
         var expanded by remember { mutableStateOf(false) }
         var showPlayground by remember { mutableStateOf(false) }
         var inputArgsJson by remember(tool.namespacedName) {
@@ -1152,7 +1155,7 @@ private fun ResourcesTabContent(
     modifier = Modifier.fillMaxSize(),
     verticalArrangement = Arrangement.spacedBy(8.dp)
   ) {
-    items(resources, key = { it.uri }) { res ->
+    itemsIndexed(resources, key = { index, res -> "${res.serverId}_${res.uri}_$index" }) { _, res ->
       Surface(
         shape = RoundedCornerShape(10.dp),
         color = Color(0xFF0F0F13),
@@ -1250,7 +1253,7 @@ private fun PromptsTabContent(
     modifier = Modifier.fillMaxSize(),
     verticalArrangement = Arrangement.spacedBy(8.dp)
   ) {
-    items(prompts, key = { "${it.serverId}__${it.name}" }) { p ->
+    itemsIndexed(prompts, key = { index, p -> "${p.serverId}__${p.name}_$index" }) { _, p ->
       Surface(
         shape = RoundedCornerShape(10.dp),
         color = Color(0xFF0F0F13),

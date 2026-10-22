@@ -456,7 +456,7 @@ private fun TypographyNavigationCard(
     Row(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(horizontal = 12.dp, vertical = 11.dp),
+        .padding(horizontal = 14.dp, vertical = 12.dp),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -558,7 +558,7 @@ private fun TypographyToolCard(
     Column(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(horizontal = 11.dp, vertical = 9.dp)
+        .padding(horizontal = 13.dp, vertical = 11.dp)
     ) {
       Row(
         modifier = Modifier.fillMaxWidth(),

@@ -1663,10 +1663,35 @@ class AgentEngine(
     val deliverablesMet = if (hasExplicitArtifact) {
       explicitArtifactSatisfied
     } else {
-      deliverableReport.allSatisfied || freshArtifacts.isNotEmpty() || (state.toolExecutions.isNotEmpty() && conclusionText.length > 25) || deliverableReport.totalRequired == 0
+      if (deliverableReport.totalRequired > 0) {
+        deliverableReport.allSatisfied || (deliverableReport.verifiedCount > 0 && freshArtifacts.isNotEmpty())
+      } else {
+        deliverableReport.allSatisfied || freshArtifacts.isNotEmpty() || (state.toolExecutions.isNotEmpty() && conclusionText.length > 25)
+      }
     }
 
-    val canConclude = (verificationResult.isSatisfied || deliverablesMet || consecutiveVerificationFailures >= 1) &&
+    if (deliverableReport.totalRequired > 0 && deliverableReport.verifiedCount == 0 && consecutiveVerificationFailures < 2) {
+      onVerificationFailureIncremented(consecutiveVerificationFailures + 1)
+      val steeringPrompt = "CRITICAL REQUIREMENT NOT MET: You declared task completion, but the required deliverable files (${deliverableReport.pendingOrInvalidDetails}) do NOT exist on disk in the workspace! You MUST write the deliverable files (e.g. using 'write_file', 'build_pdf_document', 'docx_builder', 'xlsx_builder', or 'execute_code') to the workspace before declaring completion."
+      val steerStep = ExecutionStep(
+        id = "step_steer_t${turnCounter}_${task.id}",
+        stepNumber = stepCounterProvider(),
+        type = StepType.RECOVERY,
+        title = "Deliverable Missing on Disk",
+        content = steeringPrompt,
+        actionStatus = ActionExecutionStatus.FAILED
+      )
+      state = state.copy(
+        status = AgentStatus.RUNNING,
+        currentAction = "Writing required deliverable files to workspace...",
+        executionFeed = addOrUpdateStep(state.executionFeed, steerStep),
+        messages = state.messages + AgentMessage(role = MessageRole.SYSTEM, content = steeringPrompt)
+      )
+      updateStateIfActive(task, state)
+      return TurnOutcome.Continue
+    }
+
+    val canConclude = (verificationResult.isSatisfied || deliverablesMet || consecutiveVerificationFailures >= 2) &&
       !hasPendingActionableSteps
 
     if (canConclude) {
@@ -1714,6 +1739,21 @@ class AgentEngine(
         state.executionFeed
       }
       val completedFeed = addOrUpdateStep(addOrUpdateStep(cleanFeed, vStep), cStep)
+
+      // Guarantee any pending markdown/text deliverable is synthesized if model outputted findings in text
+      val preReport = deliverableTracker.scanAndVerify(artifactManager)
+      if (preReport.totalRequired > 0 && preReport.verifiedCount == 0) {
+        val targetPending = preReport.deliverables.firstOrNull { it.status != DeliverableStatus.VERIFIED && (it.name.endsWith(".md") || it.name.endsWith(".txt")) }
+        if (targetPending != null && conclusionText.isNotBlank()) {
+          try {
+            val file = File(workspaceDir, targetPending.path)
+            file.parentFile?.mkdirs()
+            file.writeText(conclusionText)
+            artifactManager.registerArtifact(targetPending.path)
+            deliverableTracker.scanAndVerify(artifactManager)
+          } catch (_: Exception) {}
+        }
+      }
 
       artifactManager.cleanTemporaryFiles()
       val finalArtifacts = artifactManager.syncWorkspace(task.id)
