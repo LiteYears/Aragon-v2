@@ -713,17 +713,25 @@ class AutonomousSandboxProvider : LLMProvider {
     }
 
     // 2. Look for deliverable files in intent/user message, prioritizing target output extensions
-    val fileRegex = Regex("""([a-zA-Z0-9_\-./]+\.(docx|md|json|csv|sh|py|html|txt))""", RegexOption.IGNORE_CASE)
-    val matches = fileRegex.findAll("$intent $userMsg").map { it.groupValues[1].trim('.', ',', '"', '\'', '`') }.toList()
+    val combined = "$intent $userMsg"
+    val fileRegex = Regex("""([a-zA-Z0-9_\-./]+\.(docx|pdf|xlsx|md|json|csv|sh|py|html|txt))""", RegexOption.IGNORE_CASE)
+    val matches = fileRegex.findAll(combined).map { it.groupValues[1].trim('.', ',', '"', '\'', '`') }.toList()
     if (matches.isNotEmpty()) {
       val preferredDeliverable = matches.lastOrNull { m ->
         val ext = m.substringAfterLast('.', "").lowercase()
-        ext in listOf("docx", "md", "json", "html")
+        ext in listOf("docx", "pdf", "xlsx", "md", "json", "html")
       } ?: matches.last()
       return preferredDeliverable
     }
 
-    return "report.md"
+    // 3. Natural-language deliverable inference aligned with DeliverableTracker
+    val lower = combined.lowercase()
+    return when {
+      lower.contains("word file") || lower.contains("word doc") || lower.contains(" into word") || lower.contains(" to word") || lower.contains(".docx") -> "document.docx"
+      lower.contains("excel") || lower.contains("spreadsheet") || lower.contains(".xlsx") -> "spreadsheet.xlsx"
+      lower.contains("pdf file") || lower.contains("pdf document") || lower.contains(" into pdf") || lower.contains(" to pdf") || lower.contains(".pdf") -> "report.pdf"
+      else -> "report.md"
+    }
   }
 
   private fun generateDefaultDeliverableContent(filename: String, goal: String): String {

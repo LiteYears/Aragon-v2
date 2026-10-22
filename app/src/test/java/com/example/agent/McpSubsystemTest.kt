@@ -199,4 +199,33 @@ class McpSubsystemTest {
 
     client.disconnect()
   }
+
+  @Test
+  fun testInternalMcpFilesystemPathSecurityAndProtectedFileGuard() = runBlocking {
+    val workspace = tempFolder.newFolder("ws_fs_sec")
+    val fsConfig = McpServerConfig(
+      id = "filesystem",
+      name = "Filesystem MCP",
+      transport = McpTransportType.INTERNAL,
+      url = "internal://filesystem"
+    )
+
+    val client = McpClient(config = fsConfig, workspaceDir = workspace)
+    client.connect()
+
+    // 1. Attempt path traversal outside workspace
+    val traversalRes = client.callTool("write_file", mapOf("path" to "../escape.txt", "content" to "pwned"))
+    assertTrue("Traversal call returns MCP tool error result", traversalRes.isSuccess)
+    val traversalOut = traversalRes.getOrThrow()
+    assertTrue("Path traversal must be rejected with isError=true", traversalOut.isError)
+    assertTrue("Error message must mention security/traversal", traversalOut.rawText.contains("escapes workspace", ignoreCase = true) || traversalOut.rawText.contains("Security", ignoreCase = true))
+
+    // 2. Attempt overwriting protected database file data.db
+    val dbOverwriteRes = client.callTool("write_file", mapOf("path" to "data.db", "content" to "corrupt"))
+    assertTrue(dbOverwriteRes.isSuccess)
+    val dbOverwriteOut = dbOverwriteRes.getOrThrow()
+    assertTrue("Protected system file write must be rejected with isError=true", dbOverwriteOut.isError)
+
+    client.disconnect()
+  }
 }

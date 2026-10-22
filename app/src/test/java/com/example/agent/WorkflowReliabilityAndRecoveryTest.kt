@@ -500,6 +500,173 @@ class WorkflowReliabilityAndRecoveryTest {
     )
   }
 
+  @Test
+  fun testSingleEvaluationPerDispatch_ReadOnlySecondCallNotFalselySkippedAndTransientRetriesOnce() = runBlocking {
+    val registry = com.example.agent.core.ToolRegistry()
+    val artifactManager = com.example.agent.core.ArtifactManager(workspaceDir)
+    registry.register(com.example.agent.core.ListDirectoryTool(workspaceDir, artifactManager))
+
+    var transientFailCount = 0
+    val flakyTool = object : com.example.agent.core.Tool {
+      override val name: String = "flaky_net"
+      override val description: String = "Flaky network tool"
+      override val schema = com.example.agent.core.ToolSchema(emptyList())
+      override val category = com.example.agent.core.ToolCategory.WEB_RESEARCH
+      override val target = com.example.agent.core.ToolTarget.LOCAL_NETWORK
+      override val permissions = setOf(com.example.agent.core.ToolPermission.NETWORK_ACCESS)
+      override suspend fun execute(callId: String, arguments: Map<String, Any?>): ToolResult {
+        transientFailCount++
+        return ToolResult(
+          callId = callId,
+          toolName = name,
+          status = ToolStatus.FAILED,
+          arguments = arguments,
+          output = null,
+          error = "Connection timed out",
+          errorType = ToolErrorCode.TIMEOUT_EXCEEDED,
+          duration = 50L,
+          exitCode = 1
+        )
+      }
+    }
+    registry.register(flakyTool)
+
+    val executor = com.example.agent.core.ToolExecutor(registry, artifactManager)
+    val recoveryManager = UnifiedRecoveryManager()
+    val approvalManager = com.example.agent.core.ApprovalManager()
+    val dispatcher = com.example.agent.core.ToolDispatcher(registry, executor, recoveryManager, approvalManager)
+
+    // 1. Simulate AgentEngine flow: dispatch with evaluateRecovery = false, then evaluate once in engine
+    val lsCall1 = ToolCall("call_ls_1", "list_directory", mapOf("path" to "."))
+    val (res1, obs1) = dispatcher.dispatch(lsCall1, "task_1", evaluateRecovery = false)
+    recoveryManager.evaluateExecution(registry.normalizeToolCall(lsCall1), res1, obs1, null)
+
+    // A second legitimate call to list_directory MUST proceed, not be falsely skipped due to double-recording
+    val lsCall2 = ToolCall("call_ls_2", "list_directory", mapOf("path" to "."))
+    val preFlight2 = recoveryManager.checkPreFlight(registry.normalizeToolCall(lsCall2))
+    assertTrue("Second read-only tool call must Proceed, not be falsely loop-skipped", preFlight2 is PreFlightDecision.Proceed)
+
+    // 2. Transient failure on first attempt must get RETRY_WITH_BACKOFF (1 retry allowed), not premature REVISE_PLAN
+    val netCall1 = ToolCall("call_net_1", "flaky_net", emptyMap())
+    val (netRes1, netObs1) = dispatcher.dispatch(netCall1, "task_1", evaluateRecovery = false)
+    val eval1 = recoveryManager.evaluateExecution(registry.normalizeToolCall(netCall1), netRes1, netObs1, null)
+    assertEquals(RecoveryStrategy.RETRY_WITH_BACKOFF, eval1.recoveryStrategy)
+    assertTrue(
+      "After 1st transient failure, pre-flight must still allow the retry attempt",
+      recoveryManager.checkPreFlight(registry.normalizeToolCall(netCall1)) is PreFlightDecision.Proceed
+    )
+  }
+
+  @Test
+  fun testUnifiedRecoveryStatePersistence_PreservesBlockedOperationsVerbatimError() {
+    val recovery1 = UnifiedRecoveryManager()
+    val call = ToolCall("call_missing", "read_file", mapOf("path" to "missing_doc.txt"))
+    val res = ToolResult(
+      callId = "call_missing",
+      toolName = "read_file",
+      status = ToolStatus.FAILED,
+      arguments = call.arguments,
+      output = null,
+      error = "File 'missing_doc.txt' does not exist in workspace.",
+      errorType = ToolErrorCode.SANDBOX_ERROR,
+      duration = 5L,
+      exitCode = 1
+    )
+    val obs = com.example.agent.core.Observation(
+      callId = "call_missing",
+      toolName = "read_file",
+      status = ToolStatus.FAILED,
+      isSuccess = false,
+      inputsSummary = "path=missing_doc.txt",
+      result = null,
+      error = res.error,
+      errorType = res.errorType,
+      summary = res.error ?: "",
+      outcome = ToolExecutionOutcome.EXECUTION_FAILED
+    )
+    recovery1.evaluateExecution(call, res, obs, null)
+
+    val exported = recovery1.exportStateJson()
+    val recovery2 = UnifiedRecoveryManager()
+    recovery2.restoreStateJson(exported)
+
+    val preFlight = recovery2.checkPreFlight(call)
+    assertTrue(preFlight is PreFlightDecision.BlockDeterministicFailure)
+    val block = preFlight as PreFlightDecision.BlockDeterministicFailure
+    assertEquals("File 'missing_doc.txt' does not exist in workspace.", block.priorError)
+  }
+
+  @Test
+  fun testTaskRecordSerialization_PreservesExecutionStepRecoveryAndOutcomeMetadata() {
+    val structuredErr = com.example.agent.core.StructuredErrorReport(
+      failedOperation = "read_file(path=missing.txt)",
+      exactToolError = "File 'missing.txt' does not exist",
+      failureClass = ToolFailureClass.INVALID_INPUT,
+      exitCode = 1,
+      observedFact = "File not found",
+      inferredCause = "Wrong path",
+      recoveryResult = "SWITCH_TOOL"
+    )
+    val step = ExecutionStep(
+      id = "step_rec_1",
+      stepNumber = 3,
+      type = StepType.RECOVERY,
+      title = "Recovery: SWITCH_TOOL",
+      content = structuredErr.format(),
+      outcome = ToolExecutionOutcome.EXECUTION_FAILED.name,
+      recoveryStrategy = RecoveryStrategy.SWITCH_TOOL.name,
+      failureCategory = ToolFailureClass.INVALID_INPUT.name,
+      actionStatus = com.example.agent.core.ActionExecutionStatus.FAILED,
+      actionableStepId = "act_1",
+      waveIndex = 2,
+      structuredError = structuredErr
+    )
+    val record = com.example.agent.core.TaskRecord(
+      id = "task_ser_1",
+      sessionId = "sess_1",
+      goal = "Test serialization",
+      status = AgentStatus.COMPLETED,
+      executionFeed = listOf(step)
+    )
+    val json = record.toJsonString()
+    val restored = com.example.agent.core.TaskRecord.fromJson(json)
+    assertNotNull(restored)
+    val restoredStep = restored!!.executionFeed.single()
+    assertEquals(ToolExecutionOutcome.EXECUTION_FAILED.name, restoredStep.outcome)
+    assertEquals(RecoveryStrategy.SWITCH_TOOL.name, restoredStep.recoveryStrategy)
+    assertEquals(ToolFailureClass.INVALID_INPUT.name, restoredStep.failureCategory)
+    assertEquals(com.example.agent.core.ActionExecutionStatus.FAILED, restoredStep.actionStatus)
+    assertEquals("act_1", restoredStep.actionableStepId)
+    assertEquals(2, restoredStep.waveIndex)
+    assertNotNull(restoredStep.structuredError)
+    assertEquals("File 'missing.txt' does not exist", restoredStep.structuredError?.exactToolError)
+  }
+
+  @Test
+  fun testToolRegistryConcurrentAccess_ThreadSafeWithoutNullOrCorruption() = runBlocking {
+    val registry = com.example.agent.core.ToolRegistry()
+    val artifactManager = com.example.agent.core.ArtifactManager(workspaceDir)
+    val jobs = (1..16).map { workerIdx ->
+      kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+        for (i in 1..40) {
+          val dummyTool = com.example.agent.core.CreateDirectoryTool(workspaceDir, artifactManager)
+          val customTool = object : com.example.agent.core.Tool by dummyTool {
+            override val name: String = "concurrent_tool_${workerIdx}_$i"
+          }
+          registry.register(customTool)
+          val all = registry.getAllTools()
+          assertTrue(all.none { it == null })
+          val manifest = com.example.agent.core.CapabilityManifest.build(registry)
+          assertTrue(manifest.tools.isNotEmpty())
+          if (i % 3 == 0) {
+            registry.unregister(customTool.name)
+          }
+        }
+      }
+    }
+    jobs.forEach { it.join() }
+  }
+
   // Helper using reflection to access private verifyObjective
   private fun invokeVerifyObjective(
     engine: AgentEngine,

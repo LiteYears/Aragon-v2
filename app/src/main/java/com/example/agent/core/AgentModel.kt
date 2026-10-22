@@ -546,6 +546,13 @@ data class TaskRecord(
         if (step.stderr != null) sObj.put("stderr", step.stderr)
         sObj.put("timestamp", step.timestamp)
         sObj.put("isCompleted", step.isCompleted)
+        if (step.outcome != null) sObj.put("outcome", step.outcome)
+        if (step.recoveryStrategy != null) sObj.put("recoveryStrategy", step.recoveryStrategy)
+        if (step.failureCategory != null) sObj.put("failureCategory", step.failureCategory)
+        if (step.actionStatus != null) sObj.put("actionStatus", step.actionStatus.name)
+        if (step.actionableStepId != null) sObj.put("actionableStepId", step.actionableStepId)
+        if (step.waveIndex != null) sObj.put("waveIndex", step.waveIndex)
+        if (step.structuredError != null) sObj.put("structuredError", step.structuredError.toJson())
         if (step.attachments.isNotEmpty()) {
           val attArr = org.json.JSONArray()
           for (att in step.attachments) {
@@ -761,6 +768,15 @@ data class TaskRecord(
                 stderr = if (sObj.has("stderr")) sObj.optString("stderr") else null,
                 timestamp = sObj.optLong("timestamp", System.currentTimeMillis()),
                 isCompleted = sObj.optBoolean("isCompleted", true),
+                outcome = if (sObj.has("outcome") && !sObj.isNull("outcome")) sObj.optString("outcome") else null,
+                recoveryStrategy = if (sObj.has("recoveryStrategy") && !sObj.isNull("recoveryStrategy")) sObj.optString("recoveryStrategy") else null,
+                failureCategory = if (sObj.has("failureCategory") && !sObj.isNull("failureCategory")) sObj.optString("failureCategory") else null,
+                actionStatus = if (sObj.has("actionStatus") && !sObj.isNull("actionStatus")) {
+                  try { ActionExecutionStatus.valueOf(sObj.optString("actionStatus")) } catch (_: Exception) { null }
+                } else null,
+                actionableStepId = if (sObj.has("actionableStepId") && !sObj.isNull("actionableStepId")) sObj.optString("actionableStepId") else null,
+                waveIndex = if (sObj.has("waveIndex") && !sObj.isNull("waveIndex")) sObj.optInt("waveIndex") else null,
+                structuredError = sObj.optJSONObject("structuredError")?.let { StructuredErrorReport.fromJson(it) },
                 attachments = mutableListOf<FileAttachment>().apply {
                   sObj.optJSONArray("attachments")?.let { aArr ->
                     for (j in 0 until aArr.length()) {
