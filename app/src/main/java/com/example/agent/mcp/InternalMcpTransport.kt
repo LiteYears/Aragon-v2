@@ -270,6 +270,9 @@ class InternalMcpTransport(
   private fun isSystemServer(): Boolean {
     val id = config.id.lowercase()
     val url = config.url.lowercase()
+    if (id.contains("filesystem") || url.contains("filesystem") || id == "fs" || url == "internal://filesystem") {
+      return false
+    }
     return id.contains("system") || id.contains("device") || id.contains("diagnostics") || url.contains("system")
   }
 
@@ -1031,7 +1034,8 @@ class InternalMcpTransport(
         val contentArr = JSONArray().apply {
           put(JSONObject().apply {
             put("type", "text")
-            put("text", "Error executing MCP tool '$name': ${e.message}")
+            val errorPrefix = if (e is SecurityException) "Security error executing MCP tool '$name': " else "Error executing MCP tool '$name': "
+            put("text", "$errorPrefix${e.message}")
           })
         }
         put("content", contentArr)

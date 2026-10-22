@@ -1,5 +1,7 @@
 package com.example.agent.core
 
+import com.alibaba.opensandbox.codeinterpreter.domain.models.execd.executions.CodeContext
+import com.alibaba.opensandbox.codeinterpreter.domain.models.execd.executions.RunCodeRequest
 import com.alibaba.opensandbox.sandbox.domain.models.execd.executions.RunCommandRequest
 import com.alibaba.opensandbox.sandbox.Sandbox
 import kotlinx.coroutines.CancellationException
