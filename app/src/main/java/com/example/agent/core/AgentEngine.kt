@@ -173,9 +173,9 @@ class AgentEngine(
     registry.register(DiffFilesTool(workspaceDir, artifactManager))
     registry.register(DeleteFileTool(workspaceDir, artifactManager, sandboxProvider = sandboxProvider, sessionIdProvider = { _state.value.sessionId }))
     registry.register(MoveFileTool(workspaceDir, artifactManager, sandboxProvider = sandboxProvider, sessionIdProvider = { _state.value.sessionId }))
-    registry.register(CopyFileTool(workspaceDir, artifactManager))
+    registry.register(CopyFileTool(workspaceDir, artifactManager, sandboxProvider = sandboxProvider, sessionIdProvider = { _state.value.sessionId }))
     registry.register(CreateDirectoryTool(workspaceDir, artifactManager))
-    registry.register(DeleteDirectoryTool(workspaceDir, artifactManager))
+    registry.register(DeleteDirectoryTool(workspaceDir, artifactManager, sandboxProvider = sandboxProvider, sessionIdProvider = { _state.value.sessionId }))
     registry.register(FileExistsTool(workspaceDir, artifactManager, sandboxProvider = sandboxProvider, sessionIdProvider = { _state.value.sessionId }))
     registry.register(FileMetadataTool(workspaceDir, artifactManager, sandboxProvider = sandboxProvider, sessionIdProvider = { _state.value.sessionId }))
 
@@ -242,6 +242,8 @@ class AgentEngine(
     (registry.getTool("apply_patch") as? ApplyPatchTool)?.sandboxProvider = active
     (registry.getTool("delete_file") as? DeleteFileTool)?.sandboxProvider = active
     (registry.getTool("move_file") as? MoveFileTool)?.sandboxProvider = active
+    (registry.getTool("copy_file") as? CopyFileTool)?.sandboxProvider = active
+    (registry.getTool("delete_directory") as? DeleteDirectoryTool)?.sandboxProvider = active
     (registry.getTool("file_exists") as? FileExistsTool)?.sandboxProvider = active
     (registry.getTool("file_metadata") as? FileMetadataTool)?.sandboxProvider = active
     (registry.getTool("install_package") as? InstallPackageTool)?.sandboxProvider = active
@@ -1026,8 +1028,11 @@ class AgentEngine(
 
         val asyncDispatches = wave.calls.map { call ->
           scope.async(Dispatchers.IO) {
-            val result = dispatcher.dispatch(call, task.id, toolContext)
-            ExecutedToolResult(call, result.first, result.second)
+            val result = dispatcher.dispatch(call, task.id, toolContext, evaluateRecovery = false)
+            val isSkipped = result.first.errorType == ToolErrorCode.REPETITION_GUARD ||
+              (result.first.errorType == ToolErrorCode.UNSUPPORTED_OPERATION &&
+                result.first.error?.startsWith("Deterministic Failure Repeat Guard:") == true)
+            ExecutedToolResult(call, result.first, result.second, isSkippedLoop = isSkipped)
           }
         }
         val waveResults = asyncDispatches.awaitAll()
@@ -1136,8 +1141,9 @@ class AgentEngine(
             continue
           }
 
-          // Pre-flight decision checks
-          when (val preFlight = recoveryManager.checkPreFlight(toolCall)) {
+          // Pre-flight decision checks on normalized tool call
+          val normalizedCall = registry.normalizeToolCall(toolCall)
+          when (val preFlight = recoveryManager.checkPreFlight(normalizedCall)) {
             is PreFlightDecision.HaltLoop -> {
               fatalHaltMessage = preFlight.fatalMessage
               waveHalted = true
@@ -1252,7 +1258,7 @@ class AgentEngine(
           } else {
             toolContext
           }
-          val (toolResult, observation) = dispatcher.dispatch(toolCall, task.id, effectiveContext)
+          val (toolResult, observation) = dispatcher.dispatch(toolCall, task.id, effectiveContext, evaluateRecovery = false)
           results.add(ExecutedToolResult(toolCall, toolResult, observation, isSkippedLoop = false))
 
           if (toolResult.status == ToolStatus.FAILED || toolResult.status == ToolStatus.CANCELLED) {
@@ -1392,7 +1398,17 @@ class AgentEngine(
         sessionId = task.sessionId,
         workspaceDir = workspaceDir
       )
-      val evalConclusion = recoveryManager.evaluateExecution(call, toolResult, observation, evalContext)
+      val normalizedCall = registry.normalizeToolCall(call)
+      val evalConclusion = if (item.isSkippedLoop) {
+        EvaluationConclusion(
+          isSatisfied = false,
+          failureCategory = ToolFailureClass.DETERMINISTIC,
+          recoveryStrategy = RecoveryStrategy.SWITCH_TOOL,
+          explanation = observation.error ?: observation.summary
+        )
+      } else {
+        recoveryManager.evaluateExecution(normalizedCall, toolResult, observation, evalContext)
+      }
 
       // Emit distinct evaluation/recovery step to keep evaluator conclusions separate from raw tool observations
       if (!evalConclusion.isSatisfied || evalConclusion.failureCategory != null || item.isSkippedLoop) {

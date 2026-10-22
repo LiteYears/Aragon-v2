@@ -987,6 +987,10 @@ class UnifiedRecoveryManager(
     deterministicFailures.forEach { (k, v) -> detFailObj.put(k, v) }
     root.put("deterministicFailures", detFailObj)
 
+    val blockedObj = JSONObject()
+    blockedOperations.forEach { (k, v) -> blockedObj.put(k, v.toJson()) }
+    root.put("blockedOperations", blockedObj)
+
     val recordsArr = JSONArray()
     recoveryRecords.forEach { recordsArr.put(it.toJson()) }
     root.put("records", recordsArr)
@@ -1022,6 +1026,20 @@ class UnifiedRecoveryManager(
         while (keys.hasNext()) {
           val k = keys.next()
           deterministicFailures[k] = detFailObj.optString(k, "")
+        }
+      }
+
+      blockedOperations.clear()
+      val blockedObj = root.optJSONObject("blockedOperations")
+      if (blockedObj != null) {
+        val keys = blockedObj.keys()
+        while (keys.hasNext()) {
+          val k = keys.next()
+          blockedObj.optJSONObject(k)?.let { reportJson ->
+            StructuredErrorReport.fromJson(reportJson)?.let { report ->
+              blockedOperations[k] = report
+            }
+          }
         }
       }
 

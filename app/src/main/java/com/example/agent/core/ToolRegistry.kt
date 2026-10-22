@@ -22,6 +22,7 @@ data class ToolValidationError(
  * Never aliases shell binaries or registers hypothetical/fake tools.
  */
 class ToolRegistry {
+  private val lock = Any()
   private val tools = LinkedHashMap<String, Tool>()
   private val changeListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
 
@@ -46,7 +47,9 @@ class ToolRegistry {
    */
   fun register(tool: Tool) {
     require(tool.name.isNotBlank()) { "Tool name cannot be blank" }
-    tools[tool.name] = tool
+    synchronized(lock) {
+      tools[tool.name] = tool
+    }
     notifyToolsChanged()
   }
 
@@ -54,7 +57,9 @@ class ToolRegistry {
    * Unregisters a tool by name.
    */
   fun unregister(name: String): Tool? {
-    val removed = tools.remove(name)
+    val removed = synchronized(lock) {
+      tools.remove(name)
+    }
     if (removed != null) {
       notifyToolsChanged()
     }
@@ -67,8 +72,11 @@ class ToolRegistry {
    */
   fun replace(tool: Tool): Tool? {
     require(tool.name.isNotBlank()) { "Tool name cannot be blank" }
-    val old = tools.remove(tool.name)
-    tools[tool.name] = tool
+    val old = synchronized(lock) {
+      val prev = tools.remove(tool.name)
+      tools[tool.name] = tool
+      prev
+    }
     notifyToolsChanged()
     return old
   }
@@ -230,18 +238,20 @@ class ToolRegistry {
    */
   fun resolveToolName(name: String): String {
     val clean = name.trim()
-    if (tools.containsKey(clean)) return clean
     val canonical = resolveCanonicalName(clean)
-    if (tools.containsKey(canonical)) return canonical
-
-    // Smart MCP tool resolution:
-    // Handle dot notation (e.g. "sqlite.query" -> "sqlite__query") or hyphen notation
     val doubleUnderscore = clean.replace(".", "__").replace("-", "_").replace(":", "__")
-    if (tools.containsKey(doubleUnderscore)) return doubleUnderscore
+    synchronized(lock) {
+      if (tools.containsKey(clean)) return clean
+      if (tools.containsKey(canonical)) return canonical
 
-    // Handle un-namespaced tool calls (e.g. model calls "query" or "describe_table")
-    val mcpSuffixMatches = tools.keys.filter { it.endsWith("__$clean") }
-    if (mcpSuffixMatches.size == 1) return mcpSuffixMatches.first()
+      // Smart MCP tool resolution:
+      // Handle dot notation (e.g. "sqlite.query" -> "sqlite__query") or hyphen notation
+      if (tools.containsKey(doubleUnderscore)) return doubleUnderscore
+
+      // Handle un-namespaced tool calls (e.g. model calls "query" or "describe_table")
+      val mcpSuffixMatches = tools.keys.filter { it.endsWith("__$clean") }
+      if (mcpSuffixMatches.size == 1) return mcpSuffixMatches.first()
+    }
 
     return canonical
   }
@@ -251,9 +261,9 @@ class ToolRegistry {
    */
   fun getTool(name: String): Tool? {
     val resolved = resolveToolName(name)
-    val exact = tools[resolved]
-    if (exact != null) return exact
-    return tools.values.firstOrNull { it.name.equals(resolved, ignoreCase = true) }
+    return synchronized(lock) {
+      tools[resolved] ?: tools.values.firstOrNull { it.name.equals(resolved, ignoreCase = true) }
+    }
   }
 
   /**
@@ -426,7 +436,9 @@ class ToolRegistry {
     }
 
     // 7. Universal Schema-Driven Alias & Case/Snake Normalization
-    val targetTool = tools[canonicalName] ?: tools.values.firstOrNull { it.name.equals(canonicalName, ignoreCase = true) }
+    val targetTool = synchronized(lock) {
+      tools[canonicalName] ?: tools.values.firstOrNull { it.name.equals(canonicalName, ignoreCase = true) }
+    }
     if (targetTool != null) {
       for (param in targetTool.schema.parameters) {
         if (!normArgs.containsKey(param.name)) {
@@ -453,13 +465,14 @@ class ToolRegistry {
    * Returns only tools that are currently available and executable in the environment.
    */
   fun getAvailableTools(): List<Tool> {
-    return tools.values.filter { it.isAvailable() }
+    val snapshot = synchronized(lock) { tools.values.toList() }
+    return snapshot.filter { it.isAvailable() }
   }
 
   /**
    * Returns all registered tools.
    */
-  fun getAllTools(): List<Tool> = tools.values.toList()
+  fun getAllTools(): List<Tool> = synchronized(lock) { tools.values.toList() }
 
   /**
    * Performs structured schema and availability validation for a tool call.

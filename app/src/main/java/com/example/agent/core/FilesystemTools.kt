@@ -2131,7 +2131,9 @@ class MoveFileTool(
  */
 class CopyFileTool(
   val workspaceDir: File,
-  private val artifactManager: ArtifactManager
+  private val artifactManager: ArtifactManager,
+  var sandboxProvider: SandboxProvider? = null,
+  var sessionIdProvider: () -> String = { "default" }
 ) : Tool {
   override val name: String = "copy_file"
   override val description: String = "Copy a file or directory within the sandbox workspace."
@@ -2231,6 +2233,14 @@ class CopyFileTool(
         dstFile.parentFile?.mkdirs()
         srcFile.copyRecursively(dstFile, overwrite = true)
         artifactManager.registerArtifact(dst, createdByCallId = callId)
+
+        val e2b = sandboxProvider as? E2BSandboxProvider
+        val sid = sessionIdProvider()
+        if (e2b != null && e2b.hasActiveRunningSession(sid) && dstFile.isFile) {
+          try {
+            e2b.pushFileToRemote(sid, dst, dstFile)
+          } catch (_: Exception) {}
+        }
 
         val summary = "Successfully copied '$src' to '$dst' in workspace."
         ToolResult(
@@ -2355,7 +2365,9 @@ class CreateDirectoryTool(
  */
 class DeleteDirectoryTool(
   val workspaceDir: File,
-  private val artifactManager: ArtifactManager
+  private val artifactManager: ArtifactManager,
+  var sandboxProvider: SandboxProvider? = null,
+  var sessionIdProvider: () -> String = { "default" }
 ) : Tool {
   override val name: String = "delete_directory"
   override val description: String = "Delete a directory from the sandbox workspace."
@@ -2452,6 +2464,13 @@ class DeleteDirectoryTool(
         }
 
         artifactManager.syncWorkspace()
+        val e2b = sandboxProvider as? E2BSandboxProvider
+        val sid = sessionIdProvider()
+        if (e2b != null && e2b.hasActiveRunningSession(sid)) {
+          try {
+            e2b.deletePathInRemote(sid, pathStr)
+          } catch (_: Exception) {}
+        }
         val summary = "Successfully deleted directory '$pathStr'."
         ToolResult(
           callId = callId,

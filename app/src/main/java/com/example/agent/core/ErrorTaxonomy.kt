@@ -58,6 +58,39 @@ data class StructuredErrorReport(
     }
     appendLine("Recovery Result: $recoveryResult")
   }.trim()
+
+  fun toJson(): org.json.JSONObject = org.json.JSONObject().apply {
+    put("failedOperation", failedOperation)
+    put("exactToolError", exactToolError)
+    put("failureClass", failureClass.name)
+    if (exitCode != null) put("exitCode", exitCode)
+    put("observedFact", observedFact)
+    if (inferredCause != null) put("inferredCause", inferredCause)
+    put("recoveryResult", recoveryResult)
+  }
+
+  companion object {
+    fun fromJson(obj: org.json.JSONObject): StructuredErrorReport? {
+      return try {
+        val fc = try {
+          ToolFailureClass.valueOf(obj.optString("failureClass", ToolFailureClass.INVALID_INPUT.name))
+        } catch (_: Exception) {
+          ToolFailureClass.INVALID_INPUT
+        }
+        StructuredErrorReport(
+          failedOperation = obj.optString("failedOperation", ""),
+          exactToolError = obj.optString("exactToolError", ""),
+          failureClass = fc,
+          exitCode = if (obj.has("exitCode")) obj.optInt("exitCode") else null,
+          observedFact = obj.optString("observedFact", ""),
+          inferredCause = if (obj.has("inferredCause") && !obj.isNull("inferredCause")) obj.optString("inferredCause") else null,
+          recoveryResult = obj.optString("recoveryResult", "")
+        )
+      } catch (_: Exception) {
+        null
+      }
+    }
+  }
 }
 
 data class StructuredErrorPayload(

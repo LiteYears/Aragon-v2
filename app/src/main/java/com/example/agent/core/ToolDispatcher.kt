@@ -37,7 +37,8 @@ class ToolDispatcher(
   suspend fun dispatch(
     toolCall: ToolCall,
     taskId: String,
-    context: ToolExecutionContext? = null
+    context: ToolExecutionContext? = null,
+    evaluateRecovery: Boolean = true
   ): Pair<ToolResult, Observation> {
     // 0. Canonical normalization before any lookup or idempotency check
     val normalizedCall = registry.normalizeToolCall(toolCall)
@@ -154,8 +155,10 @@ class ToolDispatcher(
     // 5. Create structured observation
     val observation = executor.createObservation(result)
 
-    // 6. Record execution in Unified Recovery Manager
-    recoveryManager.evaluateExecution(normalizedCall, result, observation, context)
+    // 6. Record execution in Unified Recovery Manager (when not delegated to caller)
+    if (evaluateRecovery) {
+      recoveryManager.evaluateExecution(normalizedCall, result, observation, context)
+    }
 
     if (!isReadOnly) {
       dispatchedCalls[cacheKey] = result

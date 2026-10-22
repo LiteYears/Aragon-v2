@@ -94,12 +94,14 @@ class InternalMcpTransport(
       throw IOException("Internal MCP transport for '${config.id}' is closed")
     }
 
+    var reqId: Any? = null
     try {
       val trimmed = messageJson.trim()
       if (trimmed.isEmpty()) return@withContext
 
       val reqObj = JSONObject(trimmed)
       val id = if (reqObj.has("id") && !reqObj.isNull("id")) reqObj.get("id") else null
+      reqId = id
       val method = reqObj.optString("method")
       val params = reqObj.optJSONObject("params") ?: JSONObject()
 
@@ -109,14 +111,7 @@ class InternalMcpTransport(
         onMessageCallback?.invoke(response.toString())
       }
     } catch (e: Exception) {
-      val errResp = JSONObject().apply {
-        put("jsonrpc", "2.0")
-        put("id", JSONObject.NULL)
-        put("error", JSONObject().apply {
-          put("code", -32603)
-          put("message", "Internal MCP error: ${e.message}")
-        })
-      }
+      val errResp = buildErrorResponse(reqId, -32603, "Internal MCP error: ${e.message}")
       onMessageCallback?.invoke(errResp.toString())
     }
   }
@@ -1839,7 +1834,10 @@ class InternalMcpTransport(
     when (name) {
       "read_file" -> {
         val relPath = args.optString("path").trim()
-        val file = File(workspaceDir, relPath)
+        val file = com.example.agent.core.PathSecurity.resolveSafe(workspaceDir, relPath)
+        if (com.example.agent.core.PathSecurity.isProtectedSystemFile(file.name)) {
+          throw SecurityException("Protected database file '${file.name}' cannot be read as raw text.")
+        }
         if (!file.exists() || !file.isFile) throw IOException("File '$relPath' not found in workspace")
         return buildToolSuccessResult(file.readText())
       }
@@ -1847,7 +1845,10 @@ class InternalMcpTransport(
       "write_file" -> {
         val relPath = args.optString("path").trim()
         val content = args.optString("content", "")
-        val file = File(workspaceDir, relPath)
+        val file = com.example.agent.core.PathSecurity.resolveSafe(workspaceDir, relPath)
+        if (com.example.agent.core.PathSecurity.isProtectedSystemFile(file.name)) {
+          throw SecurityException("Protected system file '${file.name}' cannot be overwritten directly.")
+        }
         file.parentFile?.mkdirs()
         file.writeText(content)
         return buildToolSuccessResult("Wrote ${content.length} characters to '${file.name}' (${file.length()} bytes)")
@@ -1855,7 +1856,11 @@ class InternalMcpTransport(
 
       "list_directory" -> {
         val relPath = args.optString("path", "").trim()
-        val target = if (relPath.isBlank() || relPath == "." || relPath == "/") workspaceDir else File(workspaceDir, relPath.removePrefix("/"))
+        val target = if (relPath.isBlank() || relPath == "." || relPath == "/") {
+          workspaceDir
+        } else {
+          com.example.agent.core.PathSecurity.resolveSafe(workspaceDir, relPath.removePrefix("/"))
+        }
         val files = target.listFiles().orEmpty()
         val arr = JSONArray()
         for (f in files) {
@@ -2207,7 +2212,7 @@ class InternalMcpTransport(
     when (name) {
       "inspect_office_document" -> {
         val path = args.optString("path").trim()
-        val targetFile = File(workspaceDir, path)
+        val targetFile = com.example.agent.core.PathSecurity.resolveSafe(workspaceDir, path)
         if (!targetFile.exists()) throw IllegalArgumentException("Document not found at '$path'")
         val info = JSONObject().apply {
           put("file", path)
